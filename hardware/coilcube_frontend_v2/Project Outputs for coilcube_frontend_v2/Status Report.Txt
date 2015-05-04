@@ -1,0 +1,12 @@
+Output: NC Drill Files
+Type  : NC Drill
+From  : PCB Document [coilcube_v5.PcbDoc]
+   Generated File[coilcube_v5.TXT]
+   Generated File[coilcube_v5.LDP]
+   Generated File[coilcube_v5.DRR]
+
+
+Files Generated   : 3
+Documents Printed : 0
+
+Finished Output Generation At 12:31:32 AM On 5/4/2015

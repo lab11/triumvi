@@ -1,0 +1,24 @@
+Removed Pin From Net: NetName=SW2 Pin=P11-1
+Removed Pin From Net: NetName=SW2 Pin=P11-2
+Removed Pin From Net: NetName=VCC3_GATED1 Pin=Q7-2
+Removed Pin From Net: NetName=GND Pin=R10-1
+Removed Pin From Net: NetName=SW1 Pin=R10-2
+Added Component: Designator=Q12(SOT23-3)
+Added Component: Designator=R23(0603)
+Added Pin To Net: NetName=SW1 Pin=P11-1
+Added Pin To Net: NetName=SW1 Pin=P11-2
+Added Pin To Net: NetName=VCC3 Pin=Q7-2
+Added Pin To Net: NetName=SW Pin=Q12-1
+Added Pin To Net: NetName=GND Pin=Q12-2
+Added Pin To Net: NetName=SW2 Pin=Q12-3
+Added Pin To Net: NetName=SW1 Pin=R10-1
+Added Pin To Net: NetName=GND Pin=R10-2
+Added Pin To Net: NetName=SW Pin=R23-1
+Added Pin To Net: NetName=GND Pin=R23-2
+Change Net Name : Old Net Name=SW1 New Net Name=VOLTAGEMEASUREEN
+Change Net Name : Old Net Name=SW2 New Net Name=NetQ7_1
+Change Net Name : Old Net Name=SW New Net Name=CURRENTMEASUREEN
+Added Member To Class: ClassName=IVSense Member=Component Q12 Si2338DS
+Added Member To Class: ClassName=IVSense Member=Component R23 Chip resistor
+Added Room: Name=harvesting
+Added Room: Name=IVSense

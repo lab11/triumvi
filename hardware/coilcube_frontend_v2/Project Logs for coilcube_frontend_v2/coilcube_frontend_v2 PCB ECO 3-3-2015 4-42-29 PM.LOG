@@ -1,0 +1,4 @@
+Added Component: Designator=R10(0603)
+Added Pin To Net: NetName=GND Pin=R10-1
+Added Pin To Net: NetName=CONTROL Pin=R10-2
+Added Member To Class: ClassName=coilcube_frontend_v2 Member=Component R10 Chip resistor

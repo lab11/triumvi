@@ -1,0 +1,20 @@
+---------------------------------------------------------------------------
+NCDrill File Report For: coilcube_v4.PcbDoc   4/12/2015  12:48:06 AM
+---------------------------------------------------------------------------
+
+Layer Pair : Top Layer to Bottom Layer
+ASCII RoundHoles File : coilcube_v4.TXT
+
+Tool         Hole Size           Hole Type     Hole Count Plated       Tool Travel
+---------------------------------------------------------------------------
+T1        7.9mil (0.20066mm)       Round          2                0.04 Inch (1.10 mm)
+T2        12mil (0.3048mm)         Round          34               7.01 Inch (177.99 mm)
+T3        35mil (0.889mm)          Round          1                0.00 Inch (0.00 mm)
+T4        35.4mil (0.89916mm)      Round          26               5.97 Inch (151.76 mm)
+T5        47.2mil (1.19888mm)      Round          5                2.29 Inch (58.27 mm)
+T6        55.1mil (1.39954mm)      Round          2                0.10 Inch (2.54 mm)
+T7        149.6mil (3.79984mm)     Round          4                5.70 Inch (144.65 mm)
+---------------------------------------------------------------------------
+Totals                                            74               21.11 Inch (536.32 mm)
+
+Total Processing Time (hh:mm:ss) : 00:00:00

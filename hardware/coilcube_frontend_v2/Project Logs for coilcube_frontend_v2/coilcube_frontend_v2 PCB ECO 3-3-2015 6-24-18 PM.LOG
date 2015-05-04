@@ -1,0 +1,5 @@
+Added Component: Designator=P9(1x2 header)
+Added Pin To Net: NetName=V_HARVEST Pin=P9-1
+Added Pin To Net: NetName=V_HARVEST Pin=P9-2
+Added Member To Class: ClassName=coilcube_frontend_v2 Member=Component P9 1 x 2 header
+Added Room: Name=coilcube_frontend_v2
