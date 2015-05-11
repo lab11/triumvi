@@ -86,7 +86,7 @@ volatile uint32_t referenceIntTime;
 
 #define DEBUG_EN 1
 
-// offset = 72 degree, 3.0078 degree / sample, DC = 170
+// 3.0078 degree / sample, DC = 170
 #define TABLE_SIZE 120
 uint16_t sineTable[TABLE_SIZE] = {
 77, 85, 93, 101, 109, 117, 126, 135,
@@ -105,6 +105,15 @@ uint16_t sineTable[TABLE_SIZE] = {
 2, 4, 6, 9, 12, 16, 20, 24,
 29, 34, 39, 45, 52, 58, 65, 72};
 
+
+#define ADC_MAX_VAL 2048
+#define ADC_REF	3.3
+#define INA_GAIN 2
+#define CT_GAIN 0.00033333
+#define SHUNT_RESISTOR 180
+
+#define I_TRANSFORM 13.4277 // 1000/ADC_MAX_VAL*ADC_REF/INA_GAIN/SHUNT_RESISTOR/CT_GAIN, unit is mA
+#define P_TRANSFORM 0.111898 // I_TRANSFORM/TABLE_SIZE, unit is mW
 
 
 static void referenceIntCallBack(uint8_t port, uint8_t pin){
@@ -139,11 +148,6 @@ void sampleCurrentWaveform(){
 		sampleCnt++;
 	}
 }
-
-//void referenceCrossTimeCapture(){
-//	referenceIntTime = get_event_time(GPTIMER_1, GPTIMER_SUBTIMER_A);
-//	referenceCrossInt = 1;
-//}
 
 void currentProcess(uint32_t* timeStamp, uint16_t *data){
 	/*
@@ -192,7 +196,7 @@ void currentProcess(uint32_t* timeStamp, uint16_t *data){
 			signBitI = 0;
 			currentCal = data[i] - vRefADCVal;
 		}
-		currentCal *= 13.4277; // unit is mA
+		currentCal *= I_TRANSFORM; // unit is mA
 		if (signBitI)
 			printf("Time Stamp: %lu\t Current (mA): -%u\r\n", tComp, (int)currentCal);
 		else
@@ -236,11 +240,11 @@ void currentProcess(uint32_t* timeStamp, uint16_t *data){
 		//printf("Energy: %lu\r\n", energyCal);
 	}
 	if (energyCal > 0x7fffffff){
-		avgPower = (energyCal-0x7fffffff)*0.1119; // Unit is mW
+		avgPower = (energyCal-0x7fffffff)*P_TRANSFORM; // Unit is mW
 		printf("Average power: %u mW\r\n", (unsigned int)avgPower);
 	}
 	else{
-		avgPower = (0x7fffffff - energyCal)*0.1119; // Unit is mW
+		avgPower = (0x7fffffff - energyCal)*P_TRANSFORM; // Unit is mW
 		printf("Average power: -%u mW\r\n", (unsigned int)avgPower);
 	}
 }
@@ -288,46 +292,12 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 	// End of Debugging
 	#endif
 
-/* Voltage sense input, connect to an analog comparator to track phase		 */
-/*---------------------------------------------------------------------------*/
-	
-//	// Set PA4, PA5 as analog
-//	ioc_set_over(GPIO_A_NUM, 4, IOC_OVERRIDE_ANA);
-//	ioc_set_over(GPIO_A_NUM, 5, IOC_OVERRIDE_ANA);
-//
-//	// Enable analog comparator
-//	// Vin+ = PA5, connect to voltage input
-//	// Vin- = PA4, connect to reference
-//	REG(SOC_ADC_CMPCTL) |= (0x1<<1);
-//
-//	// Enable PA5 Edge detector interrupt
-//	GPIO_DETECT_EDGE(GPIO_A_BASE, 0x1<<5);
-//	GPIO_TRIGGER_SINGLE_EDGE(GPIO_A_BASE, 0x1<<5);
-//	GPIO_DETECT_RISING(GPIO_A_BASE, 0x1<<5);
-//	GPIO_ENABLE_INTERRUPT(GPIO_A_BASE, 0x1<<5);
-//
-//	// Enable interrupt
-//	nvic_interrupt_enable(NVIC_INT_ADC_CMP);
-//	comparator_register_callback(comparatorCallBack);
-//	nvic_interrupt_enable(NVIC_INT_GPIO_PORT_A);
-//	gpio_register_callback(gpioIntCallBack, GPIO_A_NUM, 5);
-
-/*---------------------------------------------------------------------------*/
-	
-
 
 	ungate_gpt(GPTIMER_1);
 	gpt_set_mode(GPTIMER_1, GPTIMER_SUBTIMER_A, GPTIMER_TAMR_TAMR_PERIODIC);
-	//gpt_set_capture_mode(GPTIMER_1, GPTIMER_SUBTIMER_A, GPTIMER_TnMR_TnCMR_EDGE_TIME);
-	//gpt_set_alternate_mode(GPTIMER_1, GPTIMER_SUBTIMER_A, GPTIMER_TnMR_TnAMS_CAPTURE_MODE);
 	gpt_set_count_dir(GPTIMER_1, GPTIMER_SUBTIMER_A, GPTIMER_TnMR_TnCDIR_COUNT_DOWN);
 	gpt_set_interval_value(GPTIMER_1, GPTIMER_SUBTIMER_A, 0xffffffff);
-	//gpt_enable_interrupt(GPTIMER_1, GPTIMER_SUBTIMER_A, GPTIMER_CAPTURE_EVENT_INT);
-	//nvic_interrupt_enable(NVIC_INT_GPTIMER_1A);
-	//gpt_register_callback(referenceCrossTimeCapture, GPTIMER_1, GPTIMER_SUBTIMER_A, GPTIMER_CAPTURE_EVENT_INT);
 	gpt_enable_event(GPTIMER_1, GPTIMER_SUBTIMER_A);
-	//ioc_set_sel(V_REF_CROSS_INT_GPIO_NUM, V_REF_CROSS_INT_GPIO_PIN, IOC_PXX_SEL_GPT1_ICP1);
-	//ioc_set_over(V_REF_CROSS_INT_GPIO_NUM, V_REF_CROSS_INT_GPIO_PIN, IOC_OVERRIDE_OE);
 
 	uint16_t sampleCnt = 0;
 	
