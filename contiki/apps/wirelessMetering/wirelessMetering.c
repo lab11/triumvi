@@ -276,6 +276,8 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 	GPIO_DETECT_RISING(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
 	// interrupt
 	gpio_register_callback(referenceIntCallBack, V_REF_CROSS_INT_GPIO_NUM, V_REF_CROSS_INT_GPIO_PIN);
+	GPIO_DISABLE_INTERRUPT(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
+	nvic_interrupt_enable(V_REF_CROSS_INT_NVIC_PORT);
 
 
 	etimer_set(&myTimer, CLOCK_SECOND<<2);
@@ -299,7 +301,6 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 	gpt_set_interval_value(GPTIMER_1, GPTIMER_SUBTIMER_A, 0xffffffff);
 	gpt_enable_event(GPTIMER_1, GPTIMER_SUBTIMER_A);
 
-	uint16_t sampleCnt = 0;
 	
 	while(1){
 		PROCESS_YIELD();
@@ -335,7 +336,6 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 					REG(SYSTICK_STCTRL) &= (~SYSTICK_STCTRL_INTEN);
 					GPIO_CLEAR_INTERRUPT(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
 					GPIO_ENABLE_INTERRUPT(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
-					nvic_interrupt_enable(V_REF_CROSS_INT_NVIC_PORT);
 					myState = waitingVoltageInt;
 				}
 			break;
@@ -351,9 +351,6 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 					GPIO_CLR_PIN(V_MEAS_EN_GPIO_BASE, 0x1<<V_MEAS_EN_GPIO_PIN);
 					GPIO_CLR_PIN(I_MEAS_EN_GPIO_BASE, 0x1<<I_MEAS_EN_GPIO_PIN);
 					voltageCompInt = 0;
-					//printf("Reference trigger timer stamp: %u\r\n", referenceIntTime);
-					//for (sampleCnt=0; sampleCnt<BUF_SIZE; sampleCnt++)
-					//	printf("Time Stamp: %u\t ADC Value: %u\r\n", timerVal[sampleCnt], adcVal[sampleCnt]);
 					currentProcess(timerVal, adcVal);
 					leds_toggle(LEDS_RED);
 					myState = init;
