@@ -1,0 +1,7 @@
+*-torch.map
+*.torch
+*.bin
+*.elf
+*.hex
+contiki-torch.a
+obj_torch
