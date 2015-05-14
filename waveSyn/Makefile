@@ -1,5 +1,5 @@
 all:
-	python waveSyn.py
+	python phaseCalc.py
 	gnuplot iplot1.plt
 	eps2png -f IVSyn.eps
 	rm -f IVSyn.eps
