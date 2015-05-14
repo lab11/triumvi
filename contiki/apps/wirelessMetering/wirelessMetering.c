@@ -10,6 +10,8 @@
 #include "dev/sys-ctrl.h"
 #include "dev/gpio.h"
 #include "dev/gptimer.h"
+#include "net/packetbuf.h"
+#include "net/netstack.h"
 #include "adc.h"
 #include "soc-adc.h"
 #include "ioc.h"
@@ -57,6 +59,7 @@ uint8_t spibuf[100];
 
 volatile uint8_t voltageCompInt;
 volatile uint8_t referenceCrossInt;
+volatile uint8_t timeoutInt;
 
 #define BUF_SIZE 120
 uint16_t adcVal[BUF_SIZE];
@@ -64,8 +67,8 @@ uint32_t timerVal[BUF_SIZE];
 volatile uint32_t referenceIntTime;
 
 #define I_ADC_GPIO_NUM	GPIO_A_NUM
-#define I_ADC_GPIO_PIN	6
-#define I_ADC_CHANNEL	SOC_ADC_ADCCON_CH_AIN6
+#define I_ADC_GPIO_PIN	3
+#define I_ADC_CHANNEL	SOC_ADC_ADCCON_CH_AIN3
 
 #define V_REF_ADC_GPIO_NUM	GPIO_A_NUM
 #define V_REF_ADC_GPIO_PIN	4
@@ -86,31 +89,25 @@ volatile uint32_t referenceIntTime;
 
 #define DEBUG_EN 1
 
+/*
 // 3.0078 degree / sample, DC = 170
-#define TABLE_SIZE 120
-uint16_t sineTable[TABLE_SIZE] = {
-77, 85, 93, 101, 109, 117, 126, 135,
-143, 152, 161, 170, 179, 188, 197, 205,
-214, 223, 231, 239, 247, 255, 263, 270,
-277, 284, 290, 296, 302, 307, 312, 317,
-321, 325, 328, 331, 334, 336, 337, 339,
-339, 339, 339, 338, 337, 335, 333, 331,
-328, 324, 320, 316, 311, 306, 301, 295,
-289, 282, 275, 268, 261, 253, 245, 237,
-229, 221, 212, 203, 195, 186, 177, 168,
-159, 150, 141, 133, 124, 116, 107, 99,
-91, 83, 76, 68, 61, 55, 48, 42,
-37, 31, 26, 22, 18, 14, 11, 8,
-5, 3, 2, 1, 0, 0, 0, 1,
-2, 4, 6, 9, 12, 16, 20, 24,
-29, 34, 39, 45, 52, 58, 65, 72};
-
-
 #define ADC_MAX_VAL 2048
 #define ADC_REF	3.3
 #define INA_GAIN 2
 #define CT_GAIN 0.00033333
 #define SHUNT_RESISTOR 180
+
+vRef = 1.53;
+adcRef = 3.3;
+adcMAX = 2048;
+inaGain = 2;
+ctGain = 0.00033333;
+shuntResistor = 180;
+
+current can be calculated as following:
+I = (data - (vRef/adcRef)*adcMax)/adcMax*adcRef/inaGain/shuntResistor/ctGain
+unit is A, multiply by 1000 gets mA
+*/
 
 #define I_TRANSFORM 13.4277 // 1000/ADC_MAX_VAL*ADC_REF/INA_GAIN/SHUNT_RESISTOR/CT_GAIN, unit is mA
 #define P_TRANSFORM 0.111898 // I_TRANSFORM/TABLE_SIZE, unit is mW
@@ -149,27 +146,34 @@ void sampleCurrentWaveform(){
 	}
 }
 
-void currentProcess(uint32_t* timeStamp, uint16_t *data){
-	/*
-	vRef = 1.53;
-	adcRef = 3.3;
-	adcMAX = 2048;
-	inaGain = 2;
-	ctGain = 0.00033333;
-	shuntResistor = 180;
+static void timeoutCallBack(uint32_t gpt_time){
+	timeoutInt = 1;
+	process_poll(&wirelessMeterProcessing);
+}
 
-	current can be calculated as following:
-	I = (data - (vRef/adcRef)*adcMax)/adcMax*adcRef/inaGain/shuntResistor/ctGain
-	where Vref/adcRef*adcMax = 931, and the rest of parameter is 0.013427734
-	unit is A, multiply by 1000 gets mA
-	*/
+void currentProcess(uint32_t* timeStamp, uint16_t *data){
+	uint16_t sineTable[BUF_SIZE] = {
+	29, 34, 40, 46, 52, 58, 65, 72,
+	80, 88, 96, 104, 112, 120, 129, 138,
+	146, 155, 164, 173, 182, 191, 200, 208,
+	217, 226, 234, 242, 250, 258, 265, 272,
+	279, 286, 292, 298, 304, 309, 314, 319,
+	323, 326, 330, 332, 335, 336, 338, 339,
+	339, 339, 339, 338, 337, 335, 332, 330,
+	327, 323, 319, 314, 310, 304, 299, 293,
+	287, 280, 273, 266, 258, 251, 243, 235,
+	226, 218, 209, 200, 192, 183, 174, 165,
+	156, 147, 138, 130, 121, 113, 104, 96,
+	88, 81, 73, 66, 59, 52, 46, 40,
+	35, 29, 25, 20, 16, 13, 9, 7,
+	4, 3, 1, 0, 0, 0, 1, 2,
+	3, 5, 7, 10, 13, 17, 21, 26};
 
 	uint16_t i;
-	uint32_t currentCal, voltageCal;
-	bool signBitI, signBitV;
+	int currentCal, voltageCal;
 	uint16_t vRefADCVal;
 	uint16_t voltRefVal = 170;
-	uint32_t energyCal = 0x7fffffff;
+	int energyCal = 0;
 	float avgPower;
 
 	// Read voltage reference
@@ -187,66 +191,19 @@ void currentProcess(uint32_t* timeStamp, uint16_t *data){
 
 	for (i=0; i<BUF_SIZE; i++){
 		tComp = (referenceIntTime > timeStamp[i])? referenceIntTime - timeStamp[i] : referenceIntTime + (0xffffffff- timeStamp[i]);
-
-		if (data[i] <= vRefADCVal){
-			signBitI = 1;
-			currentCal = vRefADCVal - data[i];
-		}
-		else{
-			signBitI = 0;
-			currentCal = data[i] - vRefADCVal;
-		}
-		currentCal *= I_TRANSFORM; // unit is mA
-		if (signBitI)
-			printf("Time Stamp: %lu\t Current (mA): -%u\r\n", tComp, (int)currentCal);
-		else
-			printf("Time Stamp: %lu\t Current (mA): %u\r\n", tComp, (int)currentCal);
-
+		currentCal = (data[i] - vRefADCVal)*I_TRANSFORM; // unit is mA
+		printf("Time Stamp: %lu\t Current (mA): %d\r\n", tComp, currentCal);
 	}
 	*/
 
 	printf("\r\n");
-	for (i=0;i<TABLE_SIZE;i++){
-		if (data[i] <= vRefADCVal){
-			signBitI = 1;
-			currentCal = vRefADCVal - data[i];
-			//printf("Current: -%lu\t", currentCal);
-		}
-		else{
-			signBitI = 0;
-			currentCal = data[i] - vRefADCVal;
-			//printf("Current: %lu\t", currentCal);
-		}
-
-		if (sineTable[i] <= voltRefVal){
-			signBitV = 1;
-			voltageCal = voltRefVal - sineTable[i];
-			//printf("Voltage: -%lu\t", voltageCal);
-		}
-		else{
-			signBitV = 0;
-			voltageCal = sineTable[i] - voltRefVal;
-			//printf("Voltage: %lu\t", voltageCal);
-		}
-
-		if (signBitI==signBitV){
-			//printf("same sign\t");
-			energyCal += currentCal*voltageCal;
-		}
-		else{
-			//printf("different sign\t");
-			energyCal -= currentCal*voltageCal;
-		}
-		//printf("Energy: %lu\r\n", energyCal);
+	for (i=0;i<BUF_SIZE;i++){
+		currentCal = data[i] - vRefADCVal;
+		voltageCal = sineTable[i] - voltRefVal;
+		energyCal += currentCal*voltageCal;
 	}
-	if (energyCal > 0x7fffffff){
-		avgPower = (energyCal-0x7fffffff)*P_TRANSFORM; // Unit is mW
-		printf("Average power: %u mW\r\n", (unsigned int)avgPower);
-	}
-	else{
-		avgPower = (0x7fffffff - energyCal)*P_TRANSFORM; // Unit is mW
-		printf("Average power: -%u mW\r\n", (unsigned int)avgPower);
-	}
+	avgPower = energyCal*P_TRANSFORM; // Unit is mW
+	printf("Average power: %d mW\r\n", (int)avgPower);
 }
 
 /*---------------------------------------------------------------------------*/
@@ -295,11 +252,22 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 	#endif
 
 
+	// timer1, used for counting samples
 	ungate_gpt(GPTIMER_1);
 	gpt_set_mode(GPTIMER_1, GPTIMER_SUBTIMER_A, GPTIMER_TAMR_TAMR_PERIODIC);
 	gpt_set_count_dir(GPTIMER_1, GPTIMER_SUBTIMER_A, GPTIMER_TnMR_TnCDIR_COUNT_DOWN);
 	gpt_set_interval_value(GPTIMER_1, GPTIMER_SUBTIMER_A, 0xffffffff);
 	gpt_enable_event(GPTIMER_1, GPTIMER_SUBTIMER_A);
+
+	// Timeout
+	ungate_gpt(GPTIMER_2);
+	gpt_configure_timer(GPTIMER_2, GPTIMER_CFG_GPTMCFG_32BIT_TIMER);
+	gpt_set_mode(GPTIMER_2, GPTIMER_SUBTIMER_A, GPTIMER_TAMR_TAMR_PERIODIC);
+	gpt_set_count_dir(GPTIMER_2, GPTIMER_SUBTIMER_A, GPTIMER_TnMR_TnCDIR_COUNT_DOWN);
+	gpt_set_interval_value(GPTIMER_2, GPTIMER_SUBTIMER_A, 0x411ab); // 0x411ab = 16.67 ms
+	gpt_register_callback(timeoutCallBack, GPTIMER_2, GPTIMER_SUBTIMER_A, GPTIMER_TIMEOUT_INT);
+	gpt_enable_interrupt(GPTIMER_2, GPTIMER_SUBTIMER_A, GPTIMER_TIMEOUT_INT);
+	nvic_interrupt_enable(NVIC_INT_GPTIMER_2A);
 
 	
 	while(1){
@@ -337,6 +305,7 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 					GPIO_CLEAR_INTERRUPT(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
 					GPIO_ENABLE_INTERRUPT(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
 					myState = waitingVoltageInt;
+					gpt_enable_event(GPTIMER_2, GPTIMER_SUBTIMER_A);
 				}
 			break;
 
@@ -355,6 +324,17 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 					leds_toggle(LEDS_RED);
 					myState = init;
 					etimer_set(&myTimer, CLOCK_SECOND<<2);
+				}
+				// Didn't get interrupt within 16.67 ms, lost power
+				else if (timeoutInt){
+					timeoutInt = 0;
+					REG(SYSTICK_STCTRL) |= SYSTICK_STCTRL_INTEN;
+					gpt_disable_event(GPTIMER_2, GPTIMER_SUBTIMER_A);
+					GPIO_CLR_PIN(V_MEAS_EN_GPIO_BASE, 0x1<<V_MEAS_EN_GPIO_PIN);
+					GPIO_CLR_PIN(I_MEAS_EN_GPIO_BASE, 0x1<<I_MEAS_EN_GPIO_PIN);
+					GPIO_DISABLE_INTERRUPT(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
+					etimer_set(&myTimer, CLOCK_SECOND<<2);
+					myState = init;
 				}
 			break;
 

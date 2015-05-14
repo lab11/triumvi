@@ -91,6 +91,10 @@ void usb_isr(void);
 #define usb_isr default_handler
 #endif
 
+void gpt_1_a_isr(void);
+void gpt_1_b_isr(void);
+void gpt_2_a_isr(void);
+
 /* Likewise for the UART[01] ISRs */
 #if UART_CONF_ENABLE
 void uart0_isr(void);
@@ -158,9 +162,9 @@ void(*const vectors[])(void) =
   default_handler,            /* 34 Watchdog timer, timer 0 */
   default_handler,            /* 35 Timer 0 subtimer A */
   default_handler,            /* 36 Timer 0 subtimer B */
-  default_handler,            /* 37 Timer 1 subtimer A */
-  default_handler,            /* 38 Timer 1 subtimer B */
-  default_handler,            /* 39 Timer 2 subtimer A */
+  gpt_1_a_isr,                /* 37 Timer 1 subtimer A */
+  gpt_1_b_isr,                /* 38 Timer 1 subtimer B */
+  gpt_2_a_isr,                /* 39 Timer 2 subtimer A */
   default_handler,            /* 40 Timer 2 subtimer B */
   default_handler,            /* 41 Analog Comparator 0 */
   default_handler,            /* 42 RFCore Rx/Tx (Alternate) */
