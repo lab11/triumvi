@@ -17,6 +17,7 @@
 #include "ioc.h"
 #include "nvic.h"
 #include "systick.h"
+#include "cc2538-rf.h"
 
 
 #include <stdio.h>
@@ -87,6 +88,13 @@ volatile uint32_t referenceIntTime;
 #define V_REF_CROSS_INT_GPIO_PIN 2
 #define V_REF_CROSS_INT_NVIC_PORT NVIC_INT_GPIO_PORT_C
 
+// Packet structure:
+// TYPE_ENERGY, ENERGY_UNIT, DATA
+#define METER_TYPE_ENERGY 0xaa
+#define METER_ENERGY_UNIT_mW 0x0
+#define METER_DATA_OFFSET 2
+#define METER_DATA_LENGTH 4
+
 #define DEBUG_EN 1
 
 /*
@@ -129,6 +137,7 @@ typedef enum state{
 	waitingVoltageStable,
 	waitingCurrentStable,
 	waitingVoltageInt,
+	waitingRadioInt,
 	nullState
 } state_t;
 
@@ -151,7 +160,7 @@ static void timeoutCallBack(uint32_t gpt_time){
 	process_poll(&wirelessMeterProcessing);
 }
 
-void currentProcess(uint32_t* timeStamp, uint16_t *data){
+int currentProcess(uint32_t* timeStamp, uint16_t *data){
 	uint16_t sineTable[BUF_SIZE] = {
 	27, 32, 38, 44, 50, 56, 63, 70,
 	78, 85, 93, 101, 109, 118, 126, 135,
@@ -180,19 +189,23 @@ void currentProcess(uint32_t* timeStamp, uint16_t *data){
 	vRefADCVal = adc_get(V_REF_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_512);
 	vRefADCVal = ((vRefADCVal>>4)>2048)? 0 : (vRefADCVal>>4);
 
-	printf("\r\n");
+	//printf("\r\n");
 	for (i=0;i<BUF_SIZE;i++){
 		currentCal = data[i] - vRefADCVal;
 		voltageCal = sineTable[i] - voltRefVal;
 		energyCal += currentCal*voltageCal;
 	}
 	avgPower = energyCal*P_TRANSFORM; // Unit is mW
-	printf("Average power: %d mW\r\n", (int)avgPower);
+	//printf("Average power: %d mW\r\n", (int)avgPower);
+	return (int)avgPower;
 }
 
 /*---------------------------------------------------------------------------*/
 PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 {
+	static uint8_t meterData[METER_DATA_OFFSET+METER_DATA_LENGTH];
+	static int avgPower;
+	uint8_t i;
 
 
 	PROCESS_BEGIN();
@@ -304,10 +317,18 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 					GPIO_CLR_PIN(V_MEAS_EN_GPIO_BASE, 0x1<<V_MEAS_EN_GPIO_PIN);
 					GPIO_CLR_PIN(I_MEAS_EN_GPIO_BASE, 0x1<<I_MEAS_EN_GPIO_PIN);
 					voltageCompInt = 0;
-					currentProcess(timerVal, adcVal);
+					avgPower = currentProcess(timerVal, adcVal);
 					leds_toggle(LEDS_RED);
-					myState = init;
-					etimer_set(&myTimer, CLOCK_SECOND<<2);
+
+					for (i=0; i<METER_DATA_LENGTH; i++){
+						meterData[METER_DATA_OFFSET+i] = (avgPower&(0xff<<(i<<3)))>>(i<<3);
+					}
+					meterData[0] = METER_TYPE_ENERGY;
+					meterData[1] = METER_ENERGY_UNIT_mW;
+					packetbuf_copyfrom(meterData, (METER_DATA_OFFSET+METER_DATA_LENGTH));
+					cc2538_on_and_transmit();
+					etimer_set(&myTimer, CLOCK_SECOND);
+					myState = waitingRadioInt;
 				}
 				// Didn't get interrupt within 16.67 ms, lost power
 				else if (timeoutInt){
@@ -319,6 +340,13 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 					GPIO_DISABLE_INTERRUPT(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
 					etimer_set(&myTimer, CLOCK_SECOND<<2);
 					myState = init;
+				}
+			break;
+
+			case waitingRadioInt:
+				if (etimer_expired(&myTimer)) {
+					myState = init;
+					etimer_set(&myTimer, CLOCK_SECOND<<2);
 				}
 			break;
 
