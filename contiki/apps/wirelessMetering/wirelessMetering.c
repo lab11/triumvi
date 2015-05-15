@@ -98,7 +98,7 @@ volatile uint32_t referenceIntTime;
 #define SHUNT_RESISTOR 180
 
 vRef = 1.53;
-adcRef = 3.3;
+adcRef = 3;
 adcMAX = 2048;
 inaGain = 2;
 ctGain = 0.00033333;
@@ -109,8 +109,8 @@ I = (data - (vRef/adcRef)*adcMax)/adcMax*adcRef/inaGain/shuntResistor/ctGain
 unit is A, multiply by 1000 gets mA
 */
 
-#define I_TRANSFORM 13.4277 // 1000/ADC_MAX_VAL*ADC_REF/INA_GAIN/SHUNT_RESISTOR/CT_GAIN, unit is mA
-#define P_TRANSFORM 0.111898 // I_TRANSFORM/TABLE_SIZE, unit is mW
+#define I_TRANSFORM 12.20715 // 1000/ADC_MAX_VAL*ADC_REF/INA_GAIN/SHUNT_RESISTOR/CT_GAIN, unit is mA
+#define P_TRANSFORM 0.101726 // I_TRANSFORM/TABLE_SIZE, unit is mW
 
 
 static void referenceIntCallBack(uint8_t port, uint8_t pin){
@@ -139,7 +139,7 @@ void sampleCurrentWaveform(){
 	uint16_t temp;
 	while (sampleCnt < BUF_SIZE){
 		timerVal[sampleCnt] = get_event_time(GPTIMER_1, GPTIMER_SUBTIMER_A);
-		temp = adc_get(I_ADC_CHANNEL, SOC_ADC_ADCCON_REF_AVDD5, SOC_ADC_ADCCON_DIV_512);
+		temp = adc_get(I_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_512);
 		temp = ((temp>>4)>2048)? 0 : (temp>>4);
 		adcVal[sampleCnt] = temp;
 		sampleCnt++;
@@ -153,21 +153,21 @@ static void timeoutCallBack(uint32_t gpt_time){
 
 void currentProcess(uint32_t* timeStamp, uint16_t *data){
 	uint16_t sineTable[BUF_SIZE] = {
-	29, 34, 40, 46, 52, 58, 65, 72,
-	80, 88, 96, 104, 112, 120, 129, 138,
-	146, 155, 164, 173, 182, 191, 200, 208,
-	217, 226, 234, 242, 250, 258, 265, 272,
-	279, 286, 292, 298, 304, 309, 314, 319,
-	323, 326, 330, 332, 335, 336, 338, 339,
-	339, 339, 339, 338, 337, 335, 332, 330,
-	327, 323, 319, 314, 310, 304, 299, 293,
-	287, 280, 273, 266, 258, 251, 243, 235,
-	226, 218, 209, 200, 192, 183, 174, 165,
-	156, 147, 138, 130, 121, 113, 104, 96,
-	88, 81, 73, 66, 59, 52, 46, 40,
-	35, 29, 25, 20, 16, 13, 9, 7,
-	4, 3, 1, 0, 0, 0, 1, 2,
-	3, 5, 7, 10, 13, 17, 21, 26};
+	27, 32, 38, 44, 50, 56, 63, 70,
+	78, 85, 93, 101, 109, 118, 126, 135,
+	144, 153, 162, 171, 179, 188, 197, 206,
+	215, 223, 232, 240, 248, 256, 263, 271,
+	278, 284, 291, 297, 303, 308, 313, 318,
+	322, 325, 329, 332, 334, 336, 338, 339,
+	339, 339, 339, 338, 337, 335, 333, 330,
+	327, 324, 320, 315, 311, 305, 300, 294,
+	288, 281, 274, 267, 260, 252, 244, 236,
+	228, 219, 211, 202, 193, 184, 175, 166,
+	157, 148, 140, 131, 122, 114, 105, 97,
+	89, 82, 74, 67, 60, 53, 47, 41,
+	35, 30, 25, 21, 17, 13, 10, 7,
+	5, 3, 1, 1, 0, 0, 1, 1,
+	3, 5, 7, 10, 13, 17, 21, 25};
 
 	uint16_t i;
 	int currentCal, voltageCal;
@@ -177,7 +177,7 @@ void currentProcess(uint32_t* timeStamp, uint16_t *data){
 	float avgPower;
 
 	// Read voltage reference
-	vRefADCVal = adc_get(V_REF_ADC_CHANNEL, SOC_ADC_ADCCON_REF_AVDD5, SOC_ADC_ADCCON_DIV_512);
+	vRefADCVal = adc_get(V_REF_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_512);
 	vRefADCVal = ((vRefADCVal>>4)>2048)? 0 : (vRefADCVal>>4);
 /*
 	uint32_t tComp;
@@ -281,7 +281,7 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 					GPIO_CLR_PIN(GPIO_B_BASE, 0x01<<5); 
 					#endif
 					GPIO_SET_PIN(V_MEAS_EN_GPIO_BASE, 0x1<<V_MEAS_EN_GPIO_PIN);
-					etimer_set(&myTimer, CLOCK_SECOND);
+					etimer_set(&myTimer, 0.3*CLOCK_SECOND);
 					myState = waitingVoltageStable;
 				}
 			break;
@@ -290,7 +290,7 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 			case waitingVoltageStable:
 				if (etimer_expired(&myTimer)) {
 					GPIO_SET_PIN(I_MEAS_EN_GPIO_BASE, 0x1<<I_MEAS_EN_GPIO_PIN);
-					etimer_set(&myTimer, CLOCK_SECOND>>3);
+					etimer_set(&myTimer, 0.05*CLOCK_SECOND);
 					myState = waitingCurrentStable;
 				}
 			break;
