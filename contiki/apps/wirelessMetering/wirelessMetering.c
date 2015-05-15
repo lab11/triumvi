@@ -179,22 +179,6 @@ void currentProcess(uint32_t* timeStamp, uint16_t *data){
 	// Read voltage reference
 	vRefADCVal = adc_get(V_REF_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_512);
 	vRefADCVal = ((vRefADCVal>>4)>2048)? 0 : (vRefADCVal>>4);
-/*
-	uint32_t tComp;
-	uint32_t firstTimeStamp;
-
-	printf("\r\n");
-	if (referenceIntTime < timeStamp[0])
-		firstTimeStamp = referenceIntTime + (0xffffffff - timeStamp[0]);
-	else
-		firstTimeStamp = referenceIntTime - timeStamp[0];
-
-	for (i=0; i<BUF_SIZE; i++){
-		tComp = (referenceIntTime > timeStamp[i])? referenceIntTime - timeStamp[i] : referenceIntTime + (0xffffffff- timeStamp[i]);
-		currentCal = (data[i] - vRefADCVal)*I_TRANSFORM; // unit is mA
-		printf("Time Stamp: %lu\t Current (mA): %d\r\n", tComp, currentCal);
-	}
-	*/
 
 	printf("\r\n");
 	for (i=0;i<BUF_SIZE;i++){
