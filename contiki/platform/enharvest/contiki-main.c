@@ -156,9 +156,9 @@ main(void)
   netstack_init();
 
 #if NETSTACK_CONF_WITH_IPV6
-  memcpy(&uip_lladdr.addr, &linkaddr_node_addr, sizeof(uip_lladdr.addr));
-  queuebuf_init();
-  process_start(&tcpip_process, NULL);
+  //memcpy(&uip_lladdr.addr, &linkaddr_node_addr, sizeof(uip_lladdr.addr));
+  //queuebuf_init();
+  //process_start(&tcpip_process, NULL);
 #endif /* NETSTACK_CONF_WITH_IPV6 */
 
   //process_start(&sensors_process, NULL);
@@ -167,6 +167,7 @@ main(void)
   ENERGEST_ON(ENERGEST_TYPE_CPU);
 
   autostart_start(autostart_processes);
+	CC2538_RF_CSP_ISRFOFF();
 
 #if WATCHDOG_CONF_ENABLE
   watchdog_start();

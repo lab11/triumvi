@@ -109,7 +109,7 @@ vRef = 1.53;
 adcRef = 3;
 adcMAX = 2048;
 inaGain = 2;
-ctGain = 0.00033333;
+ctGain = 0.00033333; 1/3*10^-3
 shuntResistor = 180;
 
 current can be calculated as following:
@@ -311,14 +311,11 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 				if (voltageCompInt){
 					sampleCurrentWaveform();
 					REG(SYSTICK_STCTRL) |= SYSTICK_STCTRL_INTEN;
-					#ifdef DEBUG_EN
-					GPIO_CLR_PIN(GPIO_B_BASE, 0x1<<3);
-					#endif
 					GPIO_CLR_PIN(V_MEAS_EN_GPIO_BASE, 0x1<<V_MEAS_EN_GPIO_PIN);
 					GPIO_CLR_PIN(I_MEAS_EN_GPIO_BASE, 0x1<<I_MEAS_EN_GPIO_PIN);
 					voltageCompInt = 0;
 					avgPower = currentProcess(timerVal, adcVal);
-					leds_toggle(LEDS_RED);
+					//leds_toggle(LEDS_RED);
 
 					for (i=0; i<METER_DATA_LENGTH; i++){
 						meterData[METER_DATA_OFFSET+i] = (avgPower&(0xff<<(i<<3)))>>(i<<3);
@@ -327,8 +324,12 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 					meterData[1] = METER_ENERGY_UNIT_mW;
 					packetbuf_copyfrom(meterData, (METER_DATA_OFFSET+METER_DATA_LENGTH));
 					cc2538_on_and_transmit();
-					etimer_set(&myTimer, CLOCK_SECOND);
-					myState = waitingRadioInt;
+					CC2538_RF_CSP_ISRFOFF();
+					myState = init;
+					etimer_set(&myTimer, CLOCK_SECOND<<2);
+					#ifdef DEBUG_EN
+					GPIO_CLR_PIN(GPIO_B_BASE, 0x1<<3);
+					#endif
 				}
 				// Didn't get interrupt within 16.67 ms, lost power
 				else if (timeoutInt){
@@ -340,13 +341,6 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 					GPIO_DISABLE_INTERRUPT(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
 					etimer_set(&myTimer, CLOCK_SECOND<<2);
 					myState = init;
-				}
-			break;
-
-			case waitingRadioInt:
-				if (etimer_expired(&myTimer)) {
-					myState = init;
-					etimer_set(&myTimer, CLOCK_SECOND<<2);
 				}
 			break;
 

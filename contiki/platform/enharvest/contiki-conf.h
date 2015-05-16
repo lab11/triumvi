@@ -83,7 +83,7 @@ typedef uint32_t rtimer_clock_t;
  * @{
  */
 #ifndef WATCHDOG_CONF_ENABLE
-#define WATCHDOG_CONF_ENABLE	1 /**<Disable the watchdog timer */
+#define WATCHDOG_CONF_ENABLE	0 /**<Disable the watchdog timer */
 #endif
 /** @} */
 /*---------------------------------------------------------------------------*/
