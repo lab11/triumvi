@@ -8,10 +8,11 @@ def main():
 	myDataSetsTimeCollected = False
 	myFile = open('timeCapture.txt', 'r')
 	timePrev = float('inf')
+	timeOffset = 3; # use this to compensate the offsets between phase measurement and real measurement
 	for line in myFile:
 		temp = line.split()
 		if len(temp):
-			time = int(temp[2])
+			time = int(temp[2]) + timeOffset;
 			current = int(temp[5])
 			# new data set
 			if time < timePrev:
