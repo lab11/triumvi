@@ -120,7 +120,7 @@ unit is A, multiply by 1000 gets mA
 #define I_TRANSFORM 12.20715 // 1000/ADC_MAX_VAL*ADC_REF/INA_GAIN/SHUNT_RESISTOR/CT_GAIN, unit is mA
 #define P_TRANSFORM 0.101726 // I_TRANSFORM/TABLE_SIZE, unit is mW
 
-
+// Don't add/remove any lines in this subroutine
 static void referenceIntCallBack(uint8_t port, uint8_t pin){
 	referenceIntTime = get_event_time(GPTIMER_1, GPTIMER_SUBTIMER_A);
 	GPIO_DISABLE_INTERRUPT(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
@@ -189,6 +189,13 @@ int currentProcess(uint32_t* timeStamp, uint16_t *data){
 	vRefADCVal = adc_get(V_REF_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_512);
 	vRefADCVal = ((vRefADCVal>>4)>2048)? 0 : (vRefADCVal>>4);
 
+	// The sine table is calibrated as following:
+	// First time stamp: 332
+	// Time diff: 2233
+	// If the following numbers don't match, the sine table needs to be recalculated
+	//printf("First time stamp: %lu\r\n", referenceIntTime-timeStamp[0]);
+	//printf("Time difference between current samples: %lu\r\n", timeStamp[0]-timeStamp[1]);
+
 	//printf("\r\n");
 	for (i=0;i<BUF_SIZE;i++){
 		currentCal = data[i] - vRefADCVal;
@@ -231,7 +238,7 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 	// interrupt
 	gpio_register_callback(referenceIntCallBack, V_REF_CROSS_INT_GPIO_NUM, V_REF_CROSS_INT_GPIO_PIN);
 	GPIO_DISABLE_INTERRUPT(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
-	nvic_interrupt_enable(V_REF_CROSS_INT_NVIC_PORT);
+	nvic_interrupt_disable(V_REF_CROSS_INT_NVIC_PORT);
 
 
 	etimer_set(&myTimer, CLOCK_SECOND<<2);
@@ -301,6 +308,7 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 					REG(SYSTICK_STCTRL) &= (~SYSTICK_STCTRL_INTEN);
 					GPIO_CLEAR_INTERRUPT(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
 					GPIO_ENABLE_INTERRUPT(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
+					nvic_interrupt_enable(V_REF_CROSS_INT_NVIC_PORT);
 					myState = waitingVoltageInt;
 					gpt_enable_event(GPTIMER_2, GPTIMER_SUBTIMER_A);
 				}
@@ -311,6 +319,7 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 				if (voltageCompInt){
 					sampleCurrentWaveform();
 					REG(SYSTICK_STCTRL) |= SYSTICK_STCTRL_INTEN;
+					nvic_interrupt_disable(V_REF_CROSS_INT_NVIC_PORT);
 					GPIO_CLR_PIN(V_MEAS_EN_GPIO_BASE, 0x1<<V_MEAS_EN_GPIO_PIN);
 					GPIO_CLR_PIN(I_MEAS_EN_GPIO_BASE, 0x1<<I_MEAS_EN_GPIO_PIN);
 					voltageCompInt = 0;
