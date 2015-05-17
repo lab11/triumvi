@@ -24,32 +24,32 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-/*---------------------------------------------------------------------------*/
-#define LOOP_INTERVAL       CLOCK_SECOND
-#define LEDS_OFF_HYSTERISIS (RTIMER_SECOND >> 1)
-#define LEDS_PERIODIC       LEDS_YELLOW
-#define LEDS_BUTTON         LEDS_RED
-#define LEDS_SERIAL_IN      LEDS_ORANGE
-#define LEDS_REBOOT         LEDS_ALL
-#define LEDS_RF_RX          (LEDS_YELLOW | LEDS_ORANGE)
-#define BROADCAST_CHANNEL   129
-/*---------------------------------------------------------------------------*/
-#define MACDEBUG 0
-
-#define DEBUG 1
-#if DEBUG
-#include <stdio.h>
-#define PRINTF(...) printf(__VA_ARGS__)
-#define PRINT6ADDR(addr) PRINTF(" %02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x ", ((uint8_t *)addr)[0], ((uint8_t *)addr)[1], ((uint8_t *)addr)[2], ((uint8_t *)addr)[3], ((uint8_t *)addr)[4], ((uint8_t *)addr)[5], ((uint8_t *)addr)[6], ((uint8_t *)addr)[7], ((uint8_t *)addr)[8], ((uint8_t *)addr)[9], ((uint8_t *)addr)[10], ((uint8_t *)addr)[11], ((uint8_t *)addr)[12], ((uint8_t *)addr)[13], ((uint8_t *)addr)[14], ((uint8_t *)addr)[15])
-#define PRINTLLADDR(lladdr) PRINTF(" %02x:%02x:%02x:%02x:%02x:%02x ",lladdr->addr[0], lladdr->addr[1], lladdr->addr[2], lladdr->addr[3],lladdr->addr[4], lladdr->addr[5])
-#else
-#define PRINTF(...)
-#define PRINT6ADDR(addr)
-#endif
-
-
-uint8_t spibyte = 0;
-uint16_t address = 0xF0;
+///*---------------------------------------------------------------------------*/
+//#define LOOP_INTERVAL       CLOCK_SECOND
+//#define LEDS_OFF_HYSTERISIS (RTIMER_SECOND >> 1)
+//#define LEDS_PERIODIC       LEDS_YELLOW
+//#define LEDS_BUTTON         LEDS_RED
+//#define LEDS_SERIAL_IN      LEDS_ORANGE
+//#define LEDS_REBOOT         LEDS_ALL
+//#define LEDS_RF_RX          (LEDS_YELLOW | LEDS_ORANGE)
+//#define BROADCAST_CHANNEL   129
+///*---------------------------------------------------------------------------*/
+//#define MACDEBUG 0
+//
+//#define DEBUG 1
+//#if DEBUG
+//#include <stdio.h>
+//#define PRINTF(...) printf(__VA_ARGS__)
+//#define PRINT6ADDR(addr) PRINTF(" %02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x ", ((uint8_t *)addr)[0], ((uint8_t *)addr)[1], ((uint8_t *)addr)[2], ((uint8_t *)addr)[3], ((uint8_t *)addr)[4], ((uint8_t *)addr)[5], ((uint8_t *)addr)[6], ((uint8_t *)addr)[7], ((uint8_t *)addr)[8], ((uint8_t *)addr)[9], ((uint8_t *)addr)[10], ((uint8_t *)addr)[11], ((uint8_t *)addr)[12], ((uint8_t *)addr)[13], ((uint8_t *)addr)[14], ((uint8_t *)addr)[15])
+//#define PRINTLLADDR(lladdr) PRINTF(" %02x:%02x:%02x:%02x:%02x:%02x ",lladdr->addr[0], lladdr->addr[1], lladdr->addr[2], lladdr->addr[3],lladdr->addr[4], lladdr->addr[5])
+//#else
+//#define PRINTF(...)
+//#define PRINT6ADDR(addr)
+//#endif
+//
+//
+//uint8_t spibyte = 0;
+//uint16_t address = 0xF0;
 
 static struct etimer myTimer;
 
@@ -141,7 +141,6 @@ typedef enum state{
 	nullState
 } state_t;
 
-state_t myState;
 
 void sampleCurrentWaveform(){
 	uint16_t sampleCnt = 0;
@@ -188,6 +187,9 @@ int currentProcess(uint32_t* timeStamp, uint16_t *data){
 	// Read voltage reference
 	vRefADCVal = adc_get(V_REF_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_512);
 	vRefADCVal = ((vRefADCVal>>4)>2048)? 0 : (vRefADCVal>>4);
+	#ifdef DEBUG_PRINTF
+	printf("Reference reading: %u\r\n", vRefADCVal);
+	#endif
 
 	// The sine table is calibrated as following:
 	// First time stamp: 332
@@ -199,11 +201,16 @@ int currentProcess(uint32_t* timeStamp, uint16_t *data){
 	//printf("\r\n");
 	for (i=0;i<BUF_SIZE;i++){
 		currentCal = data[i] - vRefADCVal;
+		#ifdef DEBUG_PRINTF
+		printf("current: %d\r\n", currentCal);
+		#endif
 		voltageCal = sineTable[i] - voltRefVal;
 		energyCal += currentCal*voltageCal;
 	}
 	avgPower = energyCal*P_TRANSFORM; // Unit is mW
+	#ifdef DEBUG_PRINTF
 	//printf("Average power: %d mW\r\n", (int)avgPower);
+	#endif
 	return (int)avgPower;
 }
 
@@ -213,7 +220,7 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 	static uint8_t meterData[METER_DATA_OFFSET+METER_DATA_LENGTH];
 	static int avgPower;
 	uint8_t i;
-
+	static state_t myState;
 
 	PROCESS_BEGIN();
 	// ADC for current sense
@@ -248,10 +255,10 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 	// Debugging
 	GPIO_SET_OUTPUT(GPIO_B_BASE, 0x1<<3);
 	GPIO_CLR_PIN(GPIO_B_BASE, 0x1<<3);
-	GPIO_SET_OUTPUT(GPIO_B_BASE, 0x01<<6); 
-	GPIO_CLR_PIN(GPIO_B_BASE, 0x01<<6);
 	GPIO_SET_OUTPUT(GPIO_B_BASE, 0x01<<5);
 	GPIO_CLR_PIN(GPIO_B_BASE, 0x01<<5); 
+	GPIO_SET_OUTPUT(GPIO_B_BASE, 0x01<<6); 
+	GPIO_CLR_PIN(GPIO_B_BASE, 0x01<<6);
 	// End of Debugging
 	#endif
 
@@ -324,8 +331,6 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 					GPIO_CLR_PIN(I_MEAS_EN_GPIO_BASE, 0x1<<I_MEAS_EN_GPIO_PIN);
 					voltageCompInt = 0;
 					avgPower = currentProcess(timerVal, adcVal);
-					//leds_toggle(LEDS_RED);
-
 					for (i=0; i<METER_DATA_LENGTH; i++){
 						meterData[METER_DATA_OFFSET+i] = (avgPower&(0xff<<(i<<3)))>>(i<<3);
 					}
