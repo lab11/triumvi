@@ -125,10 +125,14 @@ unit is A, multiply by 1000 gets mA
 #define I_TRANSFORM 24.41406 // 1000/ADC_MAX_VAL*ADC_REF/SHUNT_RESISTOR/CT_GAIN, unit is mA
 #define P_TRANSFORM 0.203451 // I_TRANSFORM/TABLE_SIZE, unit is mW
 
-#define POLY_NEG_OR0 1.28
-#define POLY_NEG_OR1 1.04
-#define POLY_POS_OR0 1.67 // negative
-#define POLY_POS_OR1 0.98
+// The following data is accuired from 98% tile
+// y = POLY_NEG_OR1*x + POLY_NEG_OR0
+#define POLY_NEG_OR1 1.02
+#define POLY_NEG_OR0 5.78
+
+// y = POLY_POS_OR1*x - POLY_POS_OR0
+#define POLY_POS_OR1 0.95
+#define POLY_POS_OR0 3.98 // negative
 
 #define VOLTAGE 0x0
 #define CURRENT 0x1
