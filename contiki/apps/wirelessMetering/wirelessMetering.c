@@ -52,7 +52,7 @@
 //uint16_t address = 0xF0;
 //uint8_t spibuf[100];
 
-static struct etimer myTimer;
+static struct rtimer myRTimer;
 
 PROCESS(wirelessMeterProcessing, "Wireless Metering Process");
 AUTOSTART_PROCESSES(&wirelessMeterProcessing);
@@ -61,6 +61,7 @@ AUTOSTART_PROCESSES(&wirelessMeterProcessing);
 volatile uint8_t voltageCompInt;
 volatile uint8_t referenceCrossInt;
 volatile uint8_t timeoutInt;
+volatile uint8_t rtimerExpired;
 
 #define BUF_SIZE 120
 uint16_t adcVal[BUF_SIZE];
@@ -145,10 +146,11 @@ inline void meterVoltageComparator(uint8_t en);
 static void pGOODIntCallBack(uint8_t port, uint8_t pin);
 static void referenceIntCallBack(uint8_t port, uint8_t pin);
 void sampleCurrentWaveform();
-static void timeoutCallBack(uint32_t gpt_time);
+static void rtimerEvent(struct rtimer *t, void *ptr);
 void stateReset();
 void meterInit();
 int currentProcess(uint32_t* timeStamp, uint16_t *data);
+// End of prototypes
 
 
 
@@ -183,55 +185,48 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 	// End of Debugging
 	#endif
 
-	// Timeout
-	ungate_gpt(GPTIMER_2);
-	gpt_configure_timer(GPTIMER_2, GPTIMER_CFG_GPTMCFG_32BIT_TIMER);
-	gpt_set_mode(GPTIMER_2, GPTIMER_SUBTIMER_A, GPTIMER_TAMR_TAMR_PERIODIC);
-	gpt_set_count_dir(GPTIMER_2, GPTIMER_SUBTIMER_A, GPTIMER_TnMR_TnCDIR_COUNT_DOWN);
-	gpt_set_interval_value(GPTIMER_2, GPTIMER_SUBTIMER_A, 0x411ab); // 0x411ab = 16.67 ms
-	gpt_register_callback(timeoutCallBack, GPTIMER_2, GPTIMER_SUBTIMER_A, GPTIMER_TIMEOUT_INT);
-	gpt_enable_interrupt(GPTIMER_2, GPTIMER_SUBTIMER_A, GPTIMER_TIMEOUT_INT);
-	nvic_interrupt_enable(NVIC_INT_GPTIMER_2A);
-
 	stateReset();
 	static uint8_t sampleCnt = 0;
+
 	
 	while(1){
 		PROCESS_YIELD();
 		switch (myState){
 			// initialization state, release voltage measurement gating
 			case init:
-				if (etimer_expired(&myTimer)) {
+				if (rtimerExpired){
+					rtimerExpired = 0;
 					leds_off(LEDS_GREEN);
 					if (GPIO_READ_PIN(PGOOD_GPIO_BASE, 0x1<<PGOOD_GPIO_PIN)){
 						#ifdef DEBUG_EN
 						GPIO_SET_PIN(GPIO_B_BASE, 0x01<<5); 
 						#endif
 						meterSenseConfig(VOLTAGE, SENSE_ENABLE);
-						etimer_set(&myTimer, 0.3*CLOCK_SECOND);
+						rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.3, 1, &rtimerEvent, NULL);
 						myState = waitingVoltageStable;
 					}
 					else{
-						etimer_restart(&myTimer);
+						rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*2, 1, &rtimerEvent, NULL);
 					}
 				}
 			break;
 
 			// voltage is sattled, enable current measurement
 			case waitingVoltageStable:
-				if (etimer_expired(&myTimer)) {
+				if (rtimerExpired){
+					rtimerExpired = 0;
 					meterSenseConfig(CURRENT, SENSE_ENABLE);
-					etimer_set(&myTimer, 0.05*CLOCK_SECOND);
+					rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.05, 1, &rtimerEvent, NULL);
 					myState = waitingCurrentStable;
 				}
 			break;
 
 			// enable comparator interrupt
 			case waitingCurrentStable:
-				if (etimer_expired(&myTimer)) {
-					gpt_set_interval_value(GPTIMER_2, GPTIMER_SUBTIMER_A, 0x411ab); // 0x411ab = 16.67 ms
-					gpt_enable_event(GPTIMER_2, GPTIMER_SUBTIMER_A);
+				if (rtimerExpired){
+					rtimerExpired = 0;
 					myState = waitingVoltageInt;
+					ungate_gpt(GPTIMER_1);
 					REG(SYSTICK_STCTRL) &= (~SYSTICK_STCTRL_INTEN);
 					meterVoltageComparator(SENSE_ENABLE);
 				}
@@ -244,24 +239,22 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 					stateReset();
 					voltageCompInt = 0;
 					avgPower = currentProcess(timerVal, adcVal);
-					printf("Power: %d\r\n", avgPower);
-					if (sampleCnt<255)
-						sampleCnt++;
-					else
-						leds_on(LEDS_GREEN);
-					//for (i=0; i<METER_DATA_LENGTH; i++){
-					//	meterData[METER_DATA_OFFSET+i] = (avgPower&(0xff<<(i<<3)))>>(i<<3);
-					//}
-					//meterData[0] = METER_TYPE_ENERGY;
-					//meterData[1] = METER_ENERGY_UNIT_mW;
-					//packetbuf_copyfrom(meterData, (METER_DATA_OFFSET+METER_DATA_LENGTH));
-					//cc2538_on_and_transmit();
-					//CC2538_RF_CSP_ISRFOFF();
-				}
-				// Didn't get interrupt within 16.67 ms, lost power
-				else if (timeoutInt){
-					timeoutInt = 0;
-					stateReset();
+					// Debug purposes
+					//printf("Power: %d\r\n", avgPower);
+					//if (sampleCnt<255)
+					//	sampleCnt++;
+					//else
+					//	leds_on(LEDS_GREEN);
+					// End of debugging
+
+					for (i=0; i<METER_DATA_LENGTH; i++){
+						meterData[METER_DATA_OFFSET+i] = (avgPower&(0xff<<(i<<3)))>>(i<<3);
+					}
+					meterData[0] = METER_TYPE_ENERGY;
+					meterData[1] = METER_ENERGY_UNIT_mW;
+					packetbuf_copyfrom(meterData, (METER_DATA_OFFSET+METER_DATA_LENGTH));
+					cc2538_on_and_transmit();
+					CC2538_RF_CSP_ISRFOFF();
 				}
 			break;
 
@@ -326,21 +319,22 @@ void sampleCurrentWaveform(){
 	}
 }
 
-static void timeoutCallBack(uint32_t gpt_time){
-	timeoutInt = 1;
+static void rtimerEvent(struct rtimer *t, void *ptr){
+	rtimerExpired = 1;
 	process_poll(&wirelessMeterProcessing);
 }
+
 
 void stateReset(){
 	REG(SYSTICK_STCTRL) |= SYSTICK_STCTRL_INTEN;
 	meterSenseConfig(CURRENT, SENSE_DISABLE);
 	meterSenseConfig(VOLTAGE, SENSE_DISABLE);
 	meterVoltageComparator(SENSE_DISABLE);
-	gpt_disable_event(GPTIMER_2, GPTIMER_SUBTIMER_A);
+	gate_gpt(GPTIMER_1);
 	#ifdef DEBUG_EN
 	GPIO_CLR_PIN(GPIO_B_BASE, 0x01<<5); 
 	#endif
-	etimer_set(&myTimer, 0.5*CLOCK_SECOND);
+	rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*2, 1, &rtimerEvent, NULL);
 	myState = init;
 }
 
@@ -381,7 +375,7 @@ void meterInit(){
 	nvic_interrupt_disable(V_REF_CROSS_INT_NVIC_PORT);
 
 	// timer1, used for counting samples
-	ungate_gpt(GPTIMER_1);
+	gate_gpt(GPTIMER_1);
 	gpt_set_mode(GPTIMER_1, GPTIMER_SUBTIMER_A, GPTIMER_TAMR_TAMR_PERIODIC);
 	gpt_set_count_dir(GPTIMER_1, GPTIMER_SUBTIMER_A, GPTIMER_TnMR_TnCDIR_COUNT_DOWN);
 	gpt_set_interval_value(GPTIMER_1, GPTIMER_SUBTIMER_A, 0xffffffff);
