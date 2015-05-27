@@ -82,11 +82,9 @@ volatile uint32_t referenceIntTime;
 #define V_REF_ADC_GPIO_PIN	4
 #define V_REF_ADC_CHANNEL	SOC_ADC_ADCCON_CH_AIN4
 
-#define V_MEAS_EN_GPIO_NUM	GPIO_C_NUM
 #define V_MEAS_EN_GPIO_BASE	GPIO_C_BASE
 #define V_MEAS_EN_GPIO_PIN	0
 
-#define I_MEAS_EN_GPIO_NUM	GPIO_C_NUM
 #define I_MEAS_EN_GPIO_BASE	GPIO_C_BASE
 #define I_MEAS_EN_GPIO_PIN	1
 
@@ -94,6 +92,11 @@ volatile uint32_t referenceIntTime;
 #define V_REF_CROSS_INT_GPIO_NUM GPIO_C_NUM
 #define V_REF_CROSS_INT_GPIO_PIN 2
 #define V_REF_CROSS_INT_NVIC_PORT NVIC_INT_GPIO_PORT_C
+
+#define MUX_IO_GPIO_BASE GPIO_C_BASE
+#define MUX_A1_GPIO_PIN 5
+#define MUX_A0_GPIO_PIN 6
+#define MUX_EN_GPIO_PIN 7
 
 // Packet structure:
 // TYPE_ENERGY, ENERGY_UNIT, DATA
@@ -103,6 +106,7 @@ volatile uint32_t referenceIntTime;
 #define METER_DATA_LENGTH 4
 
 #define DEBUG_EN 1
+//#define ADC_EXT_REF
 
 /*
 // 3.0078 degree / sample, DC = 170
@@ -149,6 +153,8 @@ void sampleCurrentWaveform();
 static void rtimerEvent(struct rtimer *t, void *ptr);
 void stateReset();
 void meterInit();
+void setINAGain(uint8_t gain);
+uint8_t getINAGain();
 int currentProcess(uint32_t* timeStamp, uint16_t *data);
 // End of prototypes
 
@@ -169,7 +175,8 @@ volatile static state_t myState;
 /*---------------------------------------------------------------------------*/
 PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 {
-	static uint8_t meterData[METER_DATA_OFFSET+METER_DATA_LENGTH];
+	//static uint8_t meterData[METER_DATA_OFFSET+METER_DATA_LENGTH];
+	static uint8_t meterData[BUF_SIZE];
 	static int avgPower;
 	uint8_t i;
 
@@ -186,8 +193,7 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 	#endif
 
 	stateReset();
-	static uint8_t sampleCnt = 0;
-
+	//static uint8_t sampleCnt = 0;
 	
 	while(1){
 		PROCESS_YIELD();
@@ -206,7 +212,7 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 						myState = waitingVoltageStable;
 					}
 					else{
-						rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*2, 1, &rtimerEvent, NULL);
+						rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*4, 1, &rtimerEvent, NULL);
 					}
 				}
 			break;
@@ -226,6 +232,7 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 				if (rtimerExpired){
 					rtimerExpired = 0;
 					myState = waitingVoltageInt;
+					setINAGain(2);
 					ungate_gpt(GPTIMER_1);
 					REG(SYSTICK_STCTRL) &= (~SYSTICK_STCTRL_INTEN);
 					meterVoltageComparator(SENSE_ENABLE);
@@ -239,6 +246,7 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 					stateReset();
 					voltageCompInt = 0;
 					avgPower = currentProcess(timerVal, adcVal);
+
 					// Debug purposes
 					//printf("Power: %d\r\n", avgPower);
 					//if (sampleCnt<255)
@@ -253,6 +261,21 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 					meterData[0] = METER_TYPE_ENERGY;
 					meterData[1] = METER_ENERGY_UNIT_mW;
 					packetbuf_copyfrom(meterData, (METER_DATA_OFFSET+METER_DATA_LENGTH));
+
+					//meterData[0] = 0xbb;
+					//uint16_t vRefADCVal;
+					//vRefADCVal = adc_get(V_REF_ADC_CHANNEL, SOC_ADC_ADCCON_REF_AVDD5, SOC_ADC_ADCCON_DIV_512);
+					//vRefADCVal = ((vRefADCVal>>4)>2048)? 0 : (vRefADCVal>>4);
+					//meterData[1] = vRefADCVal&0xff;
+					//meterData[2] = (vRefADCVal&0xff00)>>8;
+					//uint8_t byteCnt = 2;
+					//for (i=0; i<BUF_SIZE; i+=3){
+					//	meterData[byteCnt+1] = (adcVal[i]%0xff);
+					//	meterData[byteCnt+2] = ((adcVal[i]&0xff00)>>8);
+					//	byteCnt+=2;
+					//}
+					//packetbuf_copyfrom(meterData, 83);
+
 					cc2538_on_and_transmit();
 					CC2538_RF_CSP_ISRFOFF();
 				}
@@ -312,9 +335,12 @@ void sampleCurrentWaveform(){
 	uint16_t temp;
 	while (sampleCnt < BUF_SIZE){
 		timerVal[sampleCnt] = get_event_time(GPTIMER_1, GPTIMER_SUBTIMER_A);
+		#ifdef ADC_EXT_REF
 		temp = adc_get(I_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_512);
-		temp = ((temp>>4)>2048)? 0 : (temp>>4);
-		adcVal[sampleCnt] = temp;
+		#else
+		temp = adc_get(I_ADC_CHANNEL, SOC_ADC_ADCCON_REF_AVDD5, SOC_ADC_ADCCON_DIV_512);
+		#endif
+		adcVal[sampleCnt] = ((temp>>4)>2048)? 0 : (temp>>4);
 		sampleCnt++;
 	}
 }
@@ -334,7 +360,7 @@ void stateReset(){
 	#ifdef DEBUG_EN
 	GPIO_CLR_PIN(GPIO_B_BASE, 0x01<<5); 
 	#endif
-	rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*2, 1, &rtimerEvent, NULL);
+	rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*4, 1, &rtimerEvent, NULL);
 	myState = init;
 }
 
@@ -349,6 +375,13 @@ void meterInit(){
 	GPIO_CLR_PIN(V_MEAS_EN_GPIO_BASE, 0x1<<V_MEAS_EN_GPIO_PIN);
 	GPIO_SET_OUTPUT(I_MEAS_EN_GPIO_BASE, 0x1<<I_MEAS_EN_GPIO_PIN);
 	GPIO_CLR_PIN(I_MEAS_EN_GPIO_BASE, 0x1<<I_MEAS_EN_GPIO_PIN);
+
+	// GPIO for MUX (select INA gain)
+	GPIO_SET_OUTPUT(MUX_IO_GPIO_BASE, 0x1<<MUX_EN_GPIO_PIN);
+	GPIO_SET_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_EN_GPIO_PIN);
+	GPIO_SET_OUTPUT(MUX_IO_GPIO_BASE, 0x1<<MUX_A1_GPIO_PIN);
+	GPIO_SET_OUTPUT(MUX_IO_GPIO_BASE, 0x1<<MUX_A0_GPIO_PIN);
+	setINAGain(1);
 
 	// GPIO for PGOOD interrupt
 	GPIO_SET_INPUT(PGOOD_GPIO_BASE, 0x1<<PGOOD_GPIO_PIN);
@@ -375,31 +408,76 @@ void meterInit(){
 	nvic_interrupt_disable(V_REF_CROSS_INT_NVIC_PORT);
 
 	// timer1, used for counting samples
-	gate_gpt(GPTIMER_1);
+	ungate_gpt(GPTIMER_1);
 	gpt_set_mode(GPTIMER_1, GPTIMER_SUBTIMER_A, GPTIMER_TAMR_TAMR_PERIODIC);
 	gpt_set_count_dir(GPTIMER_1, GPTIMER_SUBTIMER_A, GPTIMER_TnMR_TnCDIR_COUNT_DOWN);
 	gpt_set_interval_value(GPTIMER_1, GPTIMER_SUBTIMER_A, 0xffffffff);
 	gpt_enable_event(GPTIMER_1, GPTIMER_SUBTIMER_A);
+	gate_gpt(GPTIMER_1);
+}
 
+void setINAGain(uint8_t gain){
+	switch (gain){
+		case 1: // Select S1
+			GPIO_CLR_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A0_GPIO_PIN);
+			GPIO_CLR_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A1_GPIO_PIN);
+		break;
+		case 2: // Select S2
+			GPIO_SET_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A0_GPIO_PIN);
+			GPIO_CLR_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A1_GPIO_PIN);
+		break;
+		case 5: // Select S3
+			GPIO_CLR_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A0_GPIO_PIN);
+			GPIO_SET_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A1_GPIO_PIN);
+		break;
+		case 10: // Select S4
+			GPIO_SET_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A0_GPIO_PIN);
+			GPIO_SET_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A1_GPIO_PIN);
+		break;
+		default:
+		break;
+	}
+}
+
+uint8_t getINAGain(){
+	uint8_t mux_a0_sel = GPIO_READ_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A0_GPIO_PIN)>>MUX_A0_GPIO_PIN;
+	uint8_t mux_a1_sel = GPIO_READ_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A1_GPIO_PIN)>>MUX_A1_GPIO_PIN;
+	uint8_t inaGainArr[4] = {1, 2, 5, 10};
+	return inaGainArr[(mux_a1_sel<<1 | mux_a0_sel)];
 }
 
 int currentProcess(uint32_t* timeStamp, uint16_t *data){
 	uint16_t sineTable[BUF_SIZE] = {
-	38, 44, 50, 56, 63, 70, 77, 85,
-	93, 101, 109, 118, 126, 135, 143, 152,
-	161, 170, 179, 188, 197, 205, 214, 223,
-	231, 239, 247, 255, 263, 270, 277, 284,
-	290, 296, 302, 307, 312, 317, 321, 325,
-	328, 331, 334, 336, 337, 339, 339, 339,
-	339, 338, 337, 335, 333, 331, 328, 324,
-	320, 316, 311, 306, 301, 295, 289, 282,
-	275, 268, 261, 253, 245, 237, 229, 221,
-	212, 203, 195, 186, 177, 168, 159, 150,
-	141, 133, 124, 115, 107, 99, 91, 83,
-	76, 68, 61, 55, 48, 42, 36, 31,
-	26, 22, 17, 14, 10, 8, 5, 3,
-	2, 1, 0, 0, 0, 1, 3, 4,
-	6, 9, 12, 16, 20, 24, 29, 34};
+	//38, 44, 50, 56, 63, 70, 77, 85,
+	//93, 101, 109, 118, 126, 135, 143, 152,
+	//161, 170, 179, 188, 197, 205, 214, 223,
+	//231, 239, 247, 255, 263, 270, 277, 284,
+	//290, 296, 302, 307, 312, 317, 321, 325,
+	//328, 331, 334, 336, 337, 339, 339, 339,
+	//339, 338, 337, 335, 333, 331, 328, 324,
+	//320, 316, 311, 306, 301, 295, 289, 282,
+	//275, 268, 261, 253, 245, 237, 229, 221,
+	//212, 203, 195, 186, 177, 168, 159, 150,
+	//141, 133, 124, 115, 107, 99, 91, 83,
+	//76, 68, 61, 55, 48, 42, 36, 31,
+	//26, 22, 17, 14, 10, 8, 5, 3,
+	//2, 1, 0, 0, 0, 1, 3, 4,
+	//6, 9, 12, 16, 20, 24, 29, 34};
+	17, 21, 25, 30, 36, 41, 47, 54, 60, 
+	67, 75, 82, 90, 98, 106, 115, 123, 
+	132, 141, 149, 158, 167, 176, 185, 194, 
+	203, 211, 220, 228, 237, 245, 253, 260, 
+	268, 275, 282, 288, 294, 300, 306, 311, 
+	316, 320, 324, 327, 330, 333, 335, 337, 
+	338, 339, 339, 339, 338, 337, 335, 333, 
+	331, 328, 324, 321, 316, 312, 307, 301, 
+	295, 289, 283, 276, 269, 262, 254, 246, 
+	238, 230, 221, 213, 204, 195, 187, 178, 
+	169, 160, 151, 142, 133, 125, 116, 108, 
+	99, 91, 84, 76, 69, 62, 55, 48, 
+	42, 37, 31, 26, 22, 17, 14, 10, 
+	7, 5, 3, 1, 0, 0, 0, 0, 
+	1, 2, 4, 6, 8, 12, 15};
 
 	uint16_t i;
 	int currentCal, voltageCal;
@@ -407,19 +485,22 @@ int currentProcess(uint32_t* timeStamp, uint16_t *data){
 	uint16_t voltRefVal = 170;
 	int energyCal = 0;
 	float avgPower;
-	float temp;
-	uint8_t inaGain = 2;
+	uint8_t inaGain = getINAGain();
 
 	// Read voltage reference
+	#ifdef ADC_EXT_REF
 	vRefADCVal = adc_get(V_REF_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_512);
+	#else
+	vRefADCVal = adc_get(V_REF_ADC_CHANNEL, SOC_ADC_ADCCON_REF_AVDD5, SOC_ADC_ADCCON_DIV_512);
+	#endif
 	vRefADCVal = ((vRefADCVal>>4)>2048)? 0 : (vRefADCVal>>4);
 	#ifdef DEBUG_PRINTF
 	printf("Reference reading: %u\r\n", vRefADCVal);
 	#endif
 
 	// The sine table is calibrated as following:
-	// First time stamp: 332
-	// Time diff: 2233
+	// First time stamp: 330
+	// Time diff: 2228
 	// If the following numbers don't match, the sine table needs to be recalculated
 	#ifdef DEBUG_PRINTF
 	printf("First time stamp: %lu\r\n", referenceIntTime-timeStamp[0]);
@@ -429,25 +510,25 @@ int currentProcess(uint32_t* timeStamp, uint16_t *data){
 	//printf("\r\n");
 	for (i=0;i<BUF_SIZE;i++){
 		currentCal = data[i] - vRefADCVal;
-		// User linear regression
+		// Use linear regression
 		// for negative: y = 1.04*x + 1.28
 		// for positive: y = 0.98*x - 1.67
+		#ifdef CURVE_FIT
+		float temp;
 		if (currentCal<0)
 			temp = currentCal*POLY_NEG_OR1 + POLY_NEG_OR0;
 		else
 			temp = currentCal*POLY_POS_OR1 - POLY_POS_OR0;
-		currentCal = (int)(temp/inaGain);
+		currentCal = (int)temp;
+		#endif
 		//
 		#ifdef DEBUG_PRINTF
-		printf("current: %d\r\n", currentCal);
+		printf("current: %d\r\n", (int)(currentCal/inaGain));
 		#endif
 		voltageCal = sineTable[i] - voltRefVal;
 		energyCal += currentCal*voltageCal;
 	}
-	avgPower = energyCal*P_TRANSFORM; // Unit is mW
-	#ifdef DEBUG_PRINTF
-	//printf("Average power: %d mW\r\n", (int)avgPower);
-	#endif
+	avgPower = energyCal*P_TRANSFORM/inaGain; // Unit is mW
 	return (int)avgPower;
 }
 

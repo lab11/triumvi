@@ -33,9 +33,9 @@
 #include "reg.h"
 #include "ieee-addr.h"
 #include "lpm.h"
-#include "spi.h"
-#include "fm25l04b.h"
-#include "rv3049.h"
+//#include "spi.h"
+//#include "fm25l04b.h"
+//#include "rv3049.h"
 
 #include <stdint.h>
 #include <string.h>
