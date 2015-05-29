@@ -138,7 +138,7 @@ typedef uint32_t rtimer_clock_t;
  * @{
  */
 #ifndef UART_CONF_ENABLE
-#define UART_CONF_ENABLE            1 /**< Enable/Disable UART I/O */
+#define UART_CONF_ENABLE            0 /**< Enable/Disable UART I/O */
 #endif
 
 #ifndef UART_CONF_BAUD_RATE
@@ -345,7 +345,7 @@ typedef uint32_t rtimer_clock_t;
  * 0 for PM0, 1 for PM1 and 2 for PM2
  */
 #ifndef LPM_CONF_MAX_PM
-#define LPM_CONF_MAX_PM       3
+#define LPM_CONF_MAX_PM       2
 #endif
 
 #ifndef LPM_CONF_STATS
