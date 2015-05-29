@@ -62,6 +62,8 @@ volatile uint8_t voltageCompInt;
 volatile uint8_t referenceCrossInt;
 volatile uint8_t timeoutInt;
 volatile uint8_t rtimerExpired;
+volatile uint8_t backOffTime;
+volatile uint8_t backOffHistory;
 
 #define BUF_SIZE 120
 uint16_t adcVal[BUF_SIZE];
@@ -107,6 +109,7 @@ volatile uint32_t referenceIntTime;
 
 #define DEBUG_EN 1
 //#define ADC_EXT_REF
+#define CURVE_FIT
 
 /*
 // 3.0078 degree / sample, DC = 170
@@ -180,20 +183,22 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 	static int avgPower;
 	uint8_t i;
 
-	PROCESS_BEGIN();
-	meterInit();
-
 	#ifdef DEBUG_EN
 	// Debugging
 	GPIO_SET_OUTPUT(GPIO_B_BASE, 0x01<<5);
 	GPIO_CLR_PIN(GPIO_B_BASE, 0x01<<5); 
 	GPIO_SET_OUTPUT(GPIO_B_BASE, 0x01<<6); 
-	GPIO_CLR_PIN(GPIO_B_BASE, 0x01<<6);
 	// End of Debugging
 	#endif
 
+	PROCESS_BEGIN();
+	meterInit();
+
+
 	stateReset();
-	//static uint8_t sampleCnt = 0;
+	#ifdef DEBUG_EN
+	GPIO_SET_PIN(GPIO_B_BASE, 0x01<<6);
+	#endif
 	
 	while(1){
 		PROCESS_YIELD();
@@ -202,7 +207,6 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 			case init:
 				if (rtimerExpired){
 					rtimerExpired = 0;
-					leds_off(LEDS_GREEN);
 					if (GPIO_READ_PIN(PGOOD_GPIO_BASE, 0x1<<PGOOD_GPIO_PIN)){
 						#ifdef DEBUG_EN
 						GPIO_SET_PIN(GPIO_B_BASE, 0x01<<5); 
@@ -210,9 +214,16 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 						meterSenseConfig(VOLTAGE, SENSE_ENABLE);
 						rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.3, 1, &rtimerEvent, NULL);
 						myState = waitingVoltageStable;
+						backOffHistory = (backOffHistory<<1) | 0x01;
+						// consecutive 4 samples, decreases sampling interval
+						if (((backOffHistory&0x0f)==0x0f)&&(backOffTime>1))
+							backOffTime = (backOffTime>>1);
 					}
 					else{
-						rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*4, 1, &rtimerEvent, NULL);
+						if (backOffTime<32)
+							backOffTime = (backOffTime<<1);
+						backOffHistory = (backOffHistory<<1) & (~0x01);
+						rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*backOffTime, 1, &rtimerEvent, NULL);
 					}
 				}
 			break;
@@ -248,6 +259,7 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 					avgPower = currentProcess(timerVal, adcVal);
 
 					// Debug purposes
+					//static uint8_t sampleCnt = 0;
 					//printf("Power: %d\r\n", avgPower);
 					//if (sampleCnt<255)
 					//	sampleCnt++;
@@ -268,13 +280,17 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 					//vRefADCVal = ((vRefADCVal>>4)>2048)? 0 : (vRefADCVal>>4);
 					//meterData[1] = vRefADCVal&0xff;
 					//meterData[2] = (vRefADCVal&0xff00)>>8;
-					//uint8_t byteCnt = 2;
+					//meterData[3] = (referenceIntTime-timerVal[0])&0xff;
+					//meterData[4] = ((referenceIntTime-timerVal[0])&0xff00)>>8;
+					//meterData[5] = (timerVal[0]-timerVal[1])&0xff;
+					//meterData[6] = ((timerVal[0]-timerVal[1])&0xff00)>>8;
+					//uint8_t byteCnt = 6;
 					//for (i=0; i<BUF_SIZE; i+=3){
 					//	meterData[byteCnt+1] = (adcVal[i]%0xff);
 					//	meterData[byteCnt+2] = ((adcVal[i]&0xff00)>>8);
 					//	byteCnt+=2;
 					//}
-					//packetbuf_copyfrom(meterData, 83);
+					//packetbuf_copyfrom(meterData, 87);
 
 					cc2538_on_and_transmit();
 					CC2538_RF_CSP_ISRFOFF();
@@ -318,7 +334,12 @@ inline void meterVoltageComparator(uint8_t en){
 // Power is dead, disable the system, go to sleep
 static void pGOODIntCallBack(uint8_t port, uint8_t pin){
 	GPIO_CLEAR_INTERRUPT(PGOOD_GPIO_BASE, 0x1<<PGOOD_GPIO_PIN);
-	watchdog_reboot();
+	//watchdog_reboot();
+	if (backOffTime<32)
+		backOffTime = (backOffTime<<1);
+	backOffHistory = (backOffHistory<<1) & (~0x01);
+	stateReset();
+	process_poll(&wirelessMeterProcessing);
 }
 
 // Don't add/remove any lines in this subroutine
@@ -360,7 +381,7 @@ void stateReset(){
 	#ifdef DEBUG_EN
 	GPIO_CLR_PIN(GPIO_B_BASE, 0x01<<5); 
 	#endif
-	rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*4, 1, &rtimerEvent, NULL);
+	rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*backOffTime, 1, &rtimerEvent, NULL);
 	myState = init;
 }
 
@@ -414,6 +435,9 @@ void meterInit(){
 	gpt_set_interval_value(GPTIMER_1, GPTIMER_SUBTIMER_A, 0xffffffff);
 	gpt_enable_event(GPTIMER_1, GPTIMER_SUBTIMER_A);
 	gate_gpt(GPTIMER_1);
+
+	backOffTime = 4;
+	backOffHistory = 0;
 }
 
 void setINAGain(uint8_t gain){
@@ -448,36 +472,36 @@ uint8_t getINAGain(){
 
 int currentProcess(uint32_t* timeStamp, uint16_t *data){
 	uint16_t sineTable[BUF_SIZE] = {
-	//38, 44, 50, 56, 63, 70, 77, 85,
-	//93, 101, 109, 118, 126, 135, 143, 152,
-	//161, 170, 179, 188, 197, 205, 214, 223,
-	//231, 239, 247, 255, 263, 270, 277, 284,
-	//290, 296, 302, 307, 312, 317, 321, 325,
-	//328, 331, 334, 336, 337, 339, 339, 339,
-	//339, 338, 337, 335, 333, 331, 328, 324,
-	//320, 316, 311, 306, 301, 295, 289, 282,
-	//275, 268, 261, 253, 245, 237, 229, 221,
-	//212, 203, 195, 186, 177, 168, 159, 150,
-	//141, 133, 124, 115, 107, 99, 91, 83,
-	//76, 68, 61, 55, 48, 42, 36, 31,
-	//26, 22, 17, 14, 10, 8, 5, 3,
-	//2, 1, 0, 0, 0, 1, 3, 4,
-	//6, 9, 12, 16, 20, 24, 29, 34};
-	17, 21, 25, 30, 36, 41, 47, 54, 60, 
-	67, 75, 82, 90, 98, 106, 115, 123, 
-	132, 141, 149, 158, 167, 176, 185, 194, 
-	203, 211, 220, 228, 237, 245, 253, 260, 
-	268, 275, 282, 288, 294, 300, 306, 311, 
-	316, 320, 324, 327, 330, 333, 335, 337, 
-	338, 339, 339, 339, 338, 337, 335, 333, 
-	331, 328, 324, 321, 316, 312, 307, 301, 
-	295, 289, 283, 276, 269, 262, 254, 246, 
-	238, 230, 221, 213, 204, 195, 187, 178, 
-	169, 160, 151, 142, 133, 125, 116, 108, 
-	99, 91, 84, 76, 69, 62, 55, 48, 
-	42, 37, 31, 26, 22, 17, 14, 10, 
-	7, 5, 3, 1, 0, 0, 0, 0, 
-	1, 2, 4, 6, 8, 12, 15};
+	65, 72, 79, 87, 95, 103, 111, 120, 128, 
+	137, 146, 155, 164, 172, 181, 190, 199, 
+	208, 216, 225, 233, 241, 249, 257, 265, 
+	272, 279, 285, 292, 298, 303, 309, 314, 
+	318, 322, 326, 329, 332, 334, 336, 337, 
+	338, 339, 339, 338, 338, 336, 334, 332, 
+	329, 326, 323, 318, 314, 309, 304, 298, 
+	292, 286, 280, 273, 265, 258, 250, 242, 
+	234, 226, 217, 209, 200, 191, 182, 173, 
+	165, 156, 147, 138, 129, 121, 112, 104, 
+	96, 88, 80, 73, 66, 59, 52, 46, 
+	40, 34, 29, 24, 20, 16, 12, 9, 
+	6, 4, 2, 1, 0, 0, 0, 0, 
+	1, 3, 4, 7, 10, 13, 17, 21, 
+	25, 30, 35, 41, 47, 53, 60};
+	//17, 21, 25, 30, 36, 41, 47, 54, 60, 
+	//67, 75, 82, 90, 98, 106, 115, 123, 
+	//132, 141, 149, 158, 167, 176, 185, 194, 
+	//203, 211, 220, 228, 237, 245, 253, 260, 
+	//268, 275, 282, 288, 294, 300, 306, 311, 
+	//316, 320, 324, 327, 330, 333, 335, 337, 
+	//338, 339, 339, 339, 338, 337, 335, 333, 
+	//331, 328, 324, 321, 316, 312, 307, 301, 
+	//295, 289, 283, 276, 269, 262, 254, 246, 
+	//238, 230, 221, 213, 204, 195, 187, 178, 
+	//169, 160, 151, 142, 133, 125, 116, 108, 
+	//99, 91, 84, 76, 69, 62, 55, 48, 
+	//42, 37, 31, 26, 22, 17, 14, 10, 
+	//7, 5, 3, 1, 0, 0, 0, 0, 
+	//1, 2, 4, 6, 8, 12, 15};
 
 	uint16_t i;
 	int currentCal, voltageCal;
