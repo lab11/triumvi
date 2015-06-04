@@ -64,6 +64,9 @@ volatile uint8_t timeoutInt;
 volatile uint8_t rtimerExpired;
 volatile uint8_t backOffTime;
 volatile uint8_t backOffHistory;
+static const uint8_t inaGainArr[4] = {1, 2, 5, 10};
+volatile uint8_t inaGainIDX;
+#define MAX_INA_GAIN_IDX 3
 
 #define BUF_SIZE 120
 uint16_t adcVal[BUF_SIZE];
@@ -118,13 +121,7 @@ volatile uint32_t referenceIntTime;
 #define ADC_REF	3.3
 #define INA_GAIN 2
 #define CT_GAIN 0.00033333
-#define SHUNT_RESISTOR 180
-
-vRef = 1.53;
-adcRef = 3;
-adcMAX = 2048;
-ctGain = 0.00033333; 1/3*10^-3
-shuntResistor = 180;
+#define SHUNT_RESISTOR 90.9
 
 current can be calculated as following:
 I = (data - (vRef/adcRef)*adcMax)/adcMax*adcRef/inaGain/shuntResistor/ctGain
@@ -149,7 +146,7 @@ unit is A, multiply by 1000 gets mA
 #define SENSE_DISABLE 0x0
 
 // Function prototypes
-void meterSenseConfig(uint8_t type, uint8_t en);
+inline void meterSenseConfig(uint8_t type, uint8_t en);
 inline void meterVoltageComparator(uint8_t en);
 static void pGOODIntCallBack(uint8_t port, uint8_t pin);
 static void referenceIntCallBack(uint8_t port, uint8_t pin);
@@ -159,7 +156,10 @@ void stateReset();
 void meterInit();
 void setINAGain(uint8_t gain);
 uint8_t getINAGain();
+inline void meterMUXConfig(uint8_t en);
 int currentProcess(uint32_t* timeStamp, uint16_t *data);
+void increaseINAGain();
+void decreaseINAGain();
 // End of prototypes
 
 
@@ -235,6 +235,7 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 					rtimerExpired = 0;
 					meterSenseConfig(CURRENT, SENSE_ENABLE);
 					rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.05, 1, &rtimerEvent, NULL);
+					meterMUXConfig(SENSE_ENABLE);
 					myState = waitingCurrentStable;
 				}
 			break;
@@ -244,7 +245,7 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 				if (rtimerExpired){
 					rtimerExpired = 0;
 					myState = waitingVoltageInt;
-					setINAGain(5);
+					//setINAGain(5);
 					ungate_gpt(GPTIMER_1);
 					REG(SYSTICK_STCTRL) &= (~SYSTICK_STCTRL_INTEN);
 					meterVoltageComparator(SENSE_ENABLE);
@@ -276,19 +277,22 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 						byteCnt+=2;
 					}
 					packetbuf_copyfrom(meterData, 87);
-					#else
-					avgPower = currentProcess(timerVal, adcVal);
-
-					for (i=0; i<METER_DATA_LENGTH; i++){
-						meterData[METER_DATA_OFFSET+i] = (avgPower&(0xff<<(i<<3)))>>(i<<3);
-					}
-					meterData[0] = METER_TYPE_ENERGY;
-					meterData[1] = METER_ENERGY_UNIT_mW;
-					packetbuf_copyfrom(meterData, (METER_DATA_OFFSET+METER_DATA_LENGTH));
-					#endif
-
 					cc2538_on_and_transmit();
 					CC2538_RF_CSP_ISRFOFF();
+					#else
+					avgPower = currentProcess(timerVal, adcVal);
+					if (avgPower>0){
+						for (i=0; i<METER_DATA_LENGTH; i++){
+							meterData[METER_DATA_OFFSET+i] = (avgPower&(0xff<<(i<<3)))>>(i<<3);
+						}
+						meterData[0] = METER_TYPE_ENERGY;
+						meterData[1] = METER_ENERGY_UNIT_mW;
+						packetbuf_copyfrom(meterData, (METER_DATA_OFFSET+METER_DATA_LENGTH));
+						cc2538_on_and_transmit();
+						CC2538_RF_CSP_ISRFOFF();
+					}
+					#endif
+
 				}
 			break;
 
@@ -299,7 +303,14 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 	PROCESS_END();
 }
 
-void meterSenseConfig(uint8_t type, uint8_t en){
+inline void meterMUXConfig(uint8_t en){
+	if (en==SENSE_ENABLE)
+		GPIO_SET_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_EN_GPIO_PIN);
+	else
+		GPIO_CLR_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_EN_GPIO_PIN);
+}
+
+inline void meterSenseConfig(uint8_t type, uint8_t en){
 	if (type==VOLTAGE){
 		if (en==SENSE_ENABLE)
 			GPIO_SET_PIN(V_MEAS_EN_GPIO_BASE, 0x1<<V_MEAS_EN_GPIO_PIN);
@@ -372,6 +383,7 @@ void stateReset(){
 	meterSenseConfig(CURRENT, SENSE_DISABLE);
 	meterSenseConfig(VOLTAGE, SENSE_DISABLE);
 	meterVoltageComparator(SENSE_DISABLE);
+	meterMUXConfig(SENSE_DISABLE);
 	gate_gpt(GPTIMER_1);
 	#ifdef DEBUG_EN
 	GPIO_CLR_PIN(GPIO_B_BASE, 0x01<<5); 
@@ -394,9 +406,9 @@ void meterInit(){
 
 	// GPIO for MUX (select INA gain)
 	GPIO_SET_OUTPUT(MUX_IO_GPIO_BASE, 0x1<<MUX_EN_GPIO_PIN);
-	GPIO_SET_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_EN_GPIO_PIN);
 	GPIO_SET_OUTPUT(MUX_IO_GPIO_BASE, 0x1<<MUX_A1_GPIO_PIN);
 	GPIO_SET_OUTPUT(MUX_IO_GPIO_BASE, 0x1<<MUX_A0_GPIO_PIN);
+	GPIO_CLR_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_EN_GPIO_PIN);
 	setINAGain(1);
 
 	// GPIO for PGOOD interrupt
@@ -435,23 +447,39 @@ void meterInit(){
 	backOffHistory = 0;
 }
 
+void increaseINAGain(){
+	if (inaGainIDX<MAX_INA_GAIN_IDX){
+		setINAGain(inaGainArr[(inaGainIDX+1)]);
+	}
+}
+
+void decreaseINAGain(){
+	if (inaGainIDX>0){
+		setINAGain(inaGainArr[(inaGainIDX-1)]);
+	}
+}
+
 void setINAGain(uint8_t gain){
 	switch (gain){
 		case 1: // Select S1
 			GPIO_CLR_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A0_GPIO_PIN);
 			GPIO_CLR_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A1_GPIO_PIN);
+			inaGainIDX = 0;
 		break;
 		case 2: // Select S2
 			GPIO_SET_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A0_GPIO_PIN);
 			GPIO_CLR_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A1_GPIO_PIN);
+			inaGainIDX = 1;
 		break;
 		case 5: // Select S3
 			GPIO_CLR_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A0_GPIO_PIN);
 			GPIO_SET_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A1_GPIO_PIN);
+			inaGainIDX = 2;
 		break;
 		case 10: // Select S4
 			GPIO_SET_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A0_GPIO_PIN);
 			GPIO_SET_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A1_GPIO_PIN);
+			inaGainIDX = 3;
 		break;
 		default:
 		break;
@@ -461,7 +489,6 @@ void setINAGain(uint8_t gain){
 uint8_t getINAGain(){
 	uint8_t mux_a0_sel = GPIO_READ_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A0_GPIO_PIN)>>MUX_A0_GPIO_PIN;
 	uint8_t mux_a1_sel = GPIO_READ_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A1_GPIO_PIN)>>MUX_A1_GPIO_PIN;
-	uint8_t inaGainArr[4] = {1, 2, 5, 10};
 	return inaGainArr[(mux_a1_sel<<1 | mux_a0_sel)];
 }
 
@@ -490,6 +517,7 @@ int currentProcess(uint32_t* timeStamp, uint16_t *data){
 	int energyCal = 0;
 	float avgPower;
 	uint8_t inaGain = getINAGain();
+	uint16_t maxADCValue = 0;
 
 	// Read voltage reference
 	#ifdef ADC_EXT_REF
@@ -511,9 +539,15 @@ int currentProcess(uint32_t* timeStamp, uint16_t *data){
 	printf("Time difference between current samples: %lu\r\n", timeStamp[0]-timeStamp[1]);
 	#endif
 
-	//printf("\r\n");
 	for (i=0;i<BUF_SIZE;i++){
 		currentCal = data[i] - vRefADCVal;
+		if (data[i] > maxADCValue)
+			maxADCValue = data[i];
+		// The valid range is from 0.66~2.45 V
+		if ((data[i]>1700)||(data[i]<450)){
+			decreaseINAGain();
+			return -1;
+		}
 		// Use linear regression
 		// for negative: y = 1.04*x + 1.28
 		// for positive: y = 0.98*x - 1.67
@@ -531,6 +565,10 @@ int currentProcess(uint32_t* timeStamp, uint16_t *data){
 		#endif
 		voltageCal = sineTable[i] - voltRefVal;
 		energyCal += currentCal*voltageCal;
+	}
+	if (maxADCValue < 1200){
+		increaseINAGain();
+		return -1;
 	}
 	avgPower = energyCal*P_TRANSFORM/inaGain; // Unit is mW
 	return (int)avgPower;
