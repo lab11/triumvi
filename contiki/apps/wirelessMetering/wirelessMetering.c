@@ -110,6 +110,7 @@ volatile uint32_t referenceIntTime;
 #define DEBUG_EN 1
 //#define ADC_EXT_REF
 #define CURVE_FIT
+//#define CALIBRATE
 
 /*
 // 3.0078 degree / sample, DC = 170
@@ -130,8 +131,8 @@ I = (data - (vRef/adcRef)*adcMax)/adcMax*adcRef/inaGain/shuntResistor/ctGain
 unit is A, multiply by 1000 gets mA
 */
 
-#define I_TRANSFORM 24.41406 // 1000/ADC_MAX_VAL*ADC_REF/SHUNT_RESISTOR/CT_GAIN, unit is mA
-#define P_TRANSFORM 0.203451 // I_TRANSFORM/TABLE_SIZE, unit is mW
+#define I_TRANSFORM 48.34468 // 1000/ADC_MAX_VAL*ADC_REF/SHUNT_RESISTOR/CT_GAIN, unit is mA
+#define P_TRANSFORM 0.402872 // I_TRANSFORM/TABLE_SIZE, unit is mW
 
 // The following data is accuired from 98% tile
 // y = POLY_NEG_OR1*x + POLY_NEG_OR0
@@ -216,7 +217,7 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 						myState = waitingVoltageStable;
 						backOffHistory = (backOffHistory<<1) | 0x01;
 						// consecutive 4 samples, decreases sampling interval
-						if (((backOffHistory&0x0f)==0x0f)&&(backOffTime>1))
+						if (((backOffHistory&0x0f)==0x0f)&&(backOffTime>2))
 							backOffTime = (backOffTime>>1);
 					}
 					else{
@@ -243,7 +244,7 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 				if (rtimerExpired){
 					rtimerExpired = 0;
 					myState = waitingVoltageInt;
-					setINAGain(2);
+					setINAGain(5);
 					ungate_gpt(GPTIMER_1);
 					REG(SYSTICK_STCTRL) &= (~SYSTICK_STCTRL_INTEN);
 					meterVoltageComparator(SENSE_ENABLE);
@@ -256,16 +257,27 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 					sampleCurrentWaveform();
 					stateReset();
 					voltageCompInt = 0;
-					avgPower = currentProcess(timerVal, adcVal);
 
-					// Debug purposes
-					//static uint8_t sampleCnt = 0;
-					//printf("Power: %d\r\n", avgPower);
-					//if (sampleCnt<255)
-					//	sampleCnt++;
-					//else
-					//	leds_on(LEDS_GREEN);
-					// End of debugging
+					#ifdef CALIBRATE
+					meterData[0] = 0xbb;
+					uint16_t vRefADCVal;
+					vRefADCVal = adc_get(V_REF_ADC_CHANNEL, SOC_ADC_ADCCON_REF_AVDD5, SOC_ADC_ADCCON_DIV_512);
+					vRefADCVal = ((vRefADCVal>>4)>2048)? 0 : (vRefADCVal>>4);
+					meterData[1] = vRefADCVal&0xff;
+					meterData[2] = (vRefADCVal&0xff00)>>8;
+					meterData[3] = (referenceIntTime-timerVal[0])&0xff;
+					meterData[4] = ((referenceIntTime-timerVal[0])&0xff00)>>8;
+					meterData[5] = (timerVal[0]-timerVal[1])&0xff;
+					meterData[6] = ((timerVal[0]-timerVal[1])&0xff00)>>8;
+					uint8_t byteCnt = 6;
+					for (i=0; i<BUF_SIZE; i+=3){
+						meterData[byteCnt+1] = (adcVal[i]%0xff);
+						meterData[byteCnt+2] = ((adcVal[i]&0xff00)>>8);
+						byteCnt+=2;
+					}
+					packetbuf_copyfrom(meterData, 87);
+					#else
+					avgPower = currentProcess(timerVal, adcVal);
 
 					for (i=0; i<METER_DATA_LENGTH; i++){
 						meterData[METER_DATA_OFFSET+i] = (avgPower&(0xff<<(i<<3)))>>(i<<3);
@@ -273,24 +285,7 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 					meterData[0] = METER_TYPE_ENERGY;
 					meterData[1] = METER_ENERGY_UNIT_mW;
 					packetbuf_copyfrom(meterData, (METER_DATA_OFFSET+METER_DATA_LENGTH));
-
-					//meterData[0] = 0xbb;
-					//uint16_t vRefADCVal;
-					//vRefADCVal = adc_get(V_REF_ADC_CHANNEL, SOC_ADC_ADCCON_REF_AVDD5, SOC_ADC_ADCCON_DIV_512);
-					//vRefADCVal = ((vRefADCVal>>4)>2048)? 0 : (vRefADCVal>>4);
-					//meterData[1] = vRefADCVal&0xff;
-					//meterData[2] = (vRefADCVal&0xff00)>>8;
-					//meterData[3] = (referenceIntTime-timerVal[0])&0xff;
-					//meterData[4] = ((referenceIntTime-timerVal[0])&0xff00)>>8;
-					//meterData[5] = (timerVal[0]-timerVal[1])&0xff;
-					//meterData[6] = ((timerVal[0]-timerVal[1])&0xff00)>>8;
-					//uint8_t byteCnt = 6;
-					//for (i=0; i<BUF_SIZE; i+=3){
-					//	meterData[byteCnt+1] = (adcVal[i]%0xff);
-					//	meterData[byteCnt+2] = ((adcVal[i]&0xff00)>>8);
-					//	byteCnt+=2;
-					//}
-					//packetbuf_copyfrom(meterData, 87);
+					#endif
 
 					cc2538_on_and_transmit();
 					CC2538_RF_CSP_ISRFOFF();
@@ -472,36 +467,21 @@ uint8_t getINAGain(){
 
 int currentProcess(uint32_t* timeStamp, uint16_t *data){
 	uint16_t sineTable[BUF_SIZE] = {
-	65, 72, 79, 87, 95, 103, 111, 120, 128, 
-	137, 146, 155, 164, 172, 181, 190, 199, 
-	208, 216, 225, 233, 241, 249, 257, 265, 
-	272, 279, 285, 292, 298, 303, 309, 314, 
-	318, 322, 326, 329, 332, 334, 336, 337, 
-	338, 339, 339, 338, 338, 336, 334, 332, 
-	329, 326, 323, 318, 314, 309, 304, 298, 
-	292, 286, 280, 273, 265, 258, 250, 242, 
-	234, 226, 217, 209, 200, 191, 182, 173, 
-	165, 156, 147, 138, 129, 121, 112, 104, 
-	96, 88, 80, 73, 66, 59, 52, 46, 
-	40, 34, 29, 24, 20, 16, 12, 9, 
-	6, 4, 2, 1, 0, 0, 0, 0, 
-	1, 3, 4, 7, 10, 13, 17, 21, 
-	25, 30, 35, 41, 47, 53, 60};
-	//17, 21, 25, 30, 36, 41, 47, 54, 60, 
-	//67, 75, 82, 90, 98, 106, 115, 123, 
-	//132, 141, 149, 158, 167, 176, 185, 194, 
-	//203, 211, 220, 228, 237, 245, 253, 260, 
-	//268, 275, 282, 288, 294, 300, 306, 311, 
-	//316, 320, 324, 327, 330, 333, 335, 337, 
-	//338, 339, 339, 339, 338, 337, 335, 333, 
-	//331, 328, 324, 321, 316, 312, 307, 301, 
-	//295, 289, 283, 276, 269, 262, 254, 246, 
-	//238, 230, 221, 213, 204, 195, 187, 178, 
-	//169, 160, 151, 142, 133, 125, 116, 108, 
-	//99, 91, 84, 76, 69, 62, 55, 48, 
-	//42, 37, 31, 26, 22, 17, 14, 10, 
-	//7, 5, 3, 1, 0, 0, 0, 0, 
-	//1, 2, 4, 6, 8, 12, 15};
+	17, 21, 25, 30, 36, 41, 47, 54, 60, 
+	67, 75, 82, 90, 98, 106, 115, 123, 
+	132, 141, 149, 158, 167, 176, 185, 194, 
+	203, 211, 220, 228, 237, 245, 253, 260, 
+	268, 275, 282, 288, 294, 300, 306, 311, 
+	316, 320, 324, 327, 330, 333, 335, 337, 
+	338, 339, 339, 339, 338, 337, 335, 333, 
+	331, 328, 324, 321, 316, 312, 307, 301, 
+	295, 289, 283, 276, 269, 262, 254, 246, 
+	238, 230, 221, 213, 204, 195, 187, 178, 
+	169, 160, 151, 142, 133, 125, 116, 108, 
+	99, 91, 84, 76, 69, 62, 55, 48, 
+	42, 37, 31, 26, 22, 17, 14, 10, 
+	7, 5, 3, 1, 0, 0, 0, 0, 
+	1, 2, 4, 6, 8, 12, 15};
 
 	uint16_t i;
 	int currentCal, voltageCal;
