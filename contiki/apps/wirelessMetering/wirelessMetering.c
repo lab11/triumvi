@@ -73,6 +73,24 @@ uint16_t adcVal[BUF_SIZE];
 uint32_t timerVal[BUF_SIZE];
 volatile uint32_t referenceIntTime;
 
+int sineTable[BUF_SIZE] = {
+	-153, -148, -144, -139, -134, -128, -122, -116, -109, 
+	-102, -95, -87, -79, -71, -63, -55, -46, 
+	-37, -29, -20, -11, -2, 7, 16, 25, 
+	33, 42, 51, 59, 67, 76, 83, 91, 
+	99, 106, 112, 119, 125, 131, 137, 142, 
+	146, 151, 155, 158, 161, 164, 166, 167, 
+	169, 169, 170, 170, 169, 168, 166, 164, 
+	162, 159, 155, 151, 147, 142, 137, 132, 
+	126, 120, 114, 107, 100, 92, 85, 77, 
+	69, 61, 52, 44, 35, 26, 17, 8, 
+	-1, -9, -18, -27, -36, -45, -53, -62, 
+	-70, -78, -86, -93, -101, -108, -114, -121, 
+	-127, -133, -138, -143, -148, -152, -156, -159, 
+	-162, -164, -166, -168, -169, -170, -170, -169, 
+	-169, -167, -166, -163, -161, -158, -154};
+
+
 
 #define PGOOD_GPIO_NUM	GPIO_B_NUM
 #define PGOOD_GPIO_BASE	GPIO_B_BASE
@@ -157,7 +175,7 @@ void meterInit();
 void setINAGain(uint8_t gain);
 uint8_t getINAGain();
 inline void meterMUXConfig(uint8_t en);
-int currentProcess(uint32_t* timeStamp, uint16_t *data);
+int currentProcess(uint32_t* timeStamp, uint16_t *data, int *avgPower);
 void increaseINAGain();
 void decreaseINAGain();
 // End of prototypes
@@ -168,6 +186,7 @@ typedef enum state{
 	init,
 	waitingVoltageStable,
 	waitingCurrentStable,
+	waitingNegEdge,
 	waitingVoltageInt,
 	waitingRadioInt,
 	nullState
@@ -244,11 +263,20 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 			case waitingCurrentStable:
 				if (rtimerExpired){
 					rtimerExpired = 0;
-					myState = waitingVoltageInt;
-					//setINAGain(5);
+					myState = waitingNegEdge;
+					GPIO_DETECT_FALLING(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
+					meterVoltageComparator(SENSE_ENABLE);
+				}
+			break;
+
+			case waitingNegEdge:
+				if (voltageCompInt){
+					voltageCompInt = 0;
 					ungate_gpt(GPTIMER_1);
 					REG(SYSTICK_STCTRL) &= (~SYSTICK_STCTRL_INTEN);
+					GPIO_DETECT_RISING(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
 					meterVoltageComparator(SENSE_ENABLE);
+					myState = waitingVoltageInt;
 				}
 			break;
 
@@ -280,8 +308,7 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 					cc2538_on_and_transmit();
 					CC2538_RF_CSP_ISRFOFF();
 					#else
-					avgPower = currentProcess(timerVal, adcVal);
-					if (avgPower>0){
+					if (currentProcess(timerVal, adcVal, &avgPower)){
 						for (i=0; i<METER_DATA_LENGTH; i++){
 							meterData[METER_DATA_OFFSET+i] = (avgPower&(0xff<<(i<<3)))>>(i<<3);
 						}
@@ -429,7 +456,6 @@ void meterInit(){
 	ioc_set_over(V_REF_CROSS_INT_GPIO_NUM, V_REF_CROSS_INT_GPIO_PIN, IOC_OVERRIDE_DIS);
 	GPIO_DETECT_EDGE(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
 	GPIO_TRIGGER_SINGLE_EDGE(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
-	GPIO_DETECT_RISING(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
 	// interrupt
 	gpio_register_callback(referenceIntCallBack, V_REF_CROSS_INT_GPIO_NUM, V_REF_CROSS_INT_GPIO_PIN);
 	GPIO_DISABLE_INTERRUPT(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
@@ -492,28 +518,10 @@ uint8_t getINAGain(){
 	return inaGainArr[(mux_a1_sel<<1 | mux_a0_sel)];
 }
 
-int currentProcess(uint32_t* timeStamp, uint16_t *data){
-	uint16_t sineTable[BUF_SIZE] = {
-	17, 21, 25, 30, 36, 41, 47, 54, 60, 
-	67, 75, 82, 90, 98, 106, 115, 123, 
-	132, 141, 149, 158, 167, 176, 185, 194, 
-	203, 211, 220, 228, 237, 245, 253, 260, 
-	268, 275, 282, 288, 294, 300, 306, 311, 
-	316, 320, 324, 327, 330, 333, 335, 337, 
-	338, 339, 339, 339, 338, 337, 335, 333, 
-	331, 328, 324, 321, 316, 312, 307, 301, 
-	295, 289, 283, 276, 269, 262, 254, 246, 
-	238, 230, 221, 213, 204, 195, 187, 178, 
-	169, 160, 151, 142, 133, 125, 116, 108, 
-	99, 91, 84, 76, 69, 62, 55, 48, 
-	42, 37, 31, 26, 22, 17, 14, 10, 
-	7, 5, 3, 1, 0, 0, 0, 0, 
-	1, 2, 4, 6, 8, 12, 15};
-
+int currentProcess(uint32_t* timeStamp, uint16_t *data, int *power){
 	uint16_t i;
-	int currentCal, voltageCal;
+	int currentCal;
 	uint16_t vRefADCVal;
-	uint16_t voltRefVal = 170;
 	int energyCal = 0;
 	float avgPower;
 	uint8_t inaGain = getINAGain();
@@ -563,15 +571,15 @@ int currentProcess(uint32_t* timeStamp, uint16_t *data){
 		#ifdef DEBUG_PRINTF
 		printf("current: %d\r\n", (int)(currentCal/inaGain));
 		#endif
-		voltageCal = sineTable[i] - voltRefVal;
-		energyCal += currentCal*voltageCal;
+		energyCal += currentCal*sineTable[i];
 	}
 	if (maxADCValue < 1200){
 		increaseINAGain();
 		return -1;
 	}
 	avgPower = energyCal*P_TRANSFORM/inaGain; // Unit is mW
-	return (int)avgPower;
+	*power = (int)avgPower;
+	return 1;
 }
 
 /*---------------------------------------------------------------------------*/
