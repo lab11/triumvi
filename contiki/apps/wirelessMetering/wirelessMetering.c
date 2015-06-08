@@ -308,7 +308,7 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 					cc2538_on_and_transmit();
 					CC2538_RF_CSP_ISRFOFF();
 					#else
-					if (currentProcess(timerVal, adcVal, &avgPower)){
+					if (currentProcess(timerVal, adcVal, &avgPower)>0){
 						for (i=0; i<METER_DATA_LENGTH; i++){
 							meterData[METER_DATA_OFFSET+i] = (avgPower&(0xff<<(i<<3)))>>(i<<3);
 						}
@@ -524,7 +524,7 @@ int currentProcess(uint32_t* timeStamp, uint16_t *data, int *power){
 	uint16_t vRefADCVal;
 	int energyCal = 0;
 	float avgPower;
-	uint8_t inaGain = getINAGain();
+	uint8_t inaGain;
 	uint16_t maxADCValue = 0;
 
 	// Read voltage reference
@@ -577,9 +577,12 @@ int currentProcess(uint32_t* timeStamp, uint16_t *data, int *power){
 		increaseINAGain();
 		return -1;
 	}
-	avgPower = energyCal*P_TRANSFORM/inaGain; // Unit is mW
-	*power = (int)avgPower;
-	return 1;
+	else{
+		inaGain = getINAGain();
+		avgPower = energyCal*P_TRANSFORM/inaGain; // Unit is mW
+		*power = (int)avgPower;
+		return 1;
+	}
 }
 
 /*---------------------------------------------------------------------------*/
