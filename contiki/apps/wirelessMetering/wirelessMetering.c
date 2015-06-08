@@ -65,7 +65,6 @@ volatile uint8_t rtimerExpired;
 volatile uint8_t backOffTime;
 volatile uint8_t backOffHistory;
 static const uint8_t inaGainArr[4] = {1, 2, 5, 10};
-volatile uint8_t inaGainIDX;
 #define MAX_INA_GAIN_IDX 3
 
 #define BUF_SIZE 120
@@ -173,7 +172,8 @@ static void rtimerEvent(struct rtimer *t, void *ptr);
 void stateReset();
 void meterInit();
 void setINAGain(uint8_t gain);
-uint8_t getINAGain();
+inline uint8_t getINAIDX();
+inline uint8_t getINAGain();
 inline void meterMUXConfig(uint8_t en);
 int currentProcess(uint32_t* timeStamp, uint16_t *data, int *avgPower);
 void increaseINAGain();
@@ -474,14 +474,16 @@ void meterInit(){
 }
 
 void increaseINAGain(){
-	if (inaGainIDX<MAX_INA_GAIN_IDX){
-		setINAGain(inaGainArr[(inaGainIDX+1)]);
+	uint8_t inaIDX = getINAIDX();
+	if (inaIDX<MAX_INA_GAIN_IDX){
+		setINAGain(inaGainArr[(inaIDX+1)]);
 	}
 }
 
 void decreaseINAGain(){
-	if (inaGainIDX>0){
-		setINAGain(inaGainArr[(inaGainIDX-1)]);
+	uint8_t inaIDX = getINAIDX();
+	if (inaIDX>0){
+		setINAGain(inaGainArr[(inaIDX-1)]);
 	}
 }
 
@@ -490,32 +492,32 @@ void setINAGain(uint8_t gain){
 		case 1: // Select S1
 			GPIO_CLR_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A0_GPIO_PIN);
 			GPIO_CLR_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A1_GPIO_PIN);
-			inaGainIDX = 0;
 		break;
 		case 2: // Select S2
 			GPIO_SET_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A0_GPIO_PIN);
 			GPIO_CLR_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A1_GPIO_PIN);
-			inaGainIDX = 1;
 		break;
 		case 5: // Select S3
 			GPIO_CLR_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A0_GPIO_PIN);
 			GPIO_SET_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A1_GPIO_PIN);
-			inaGainIDX = 2;
 		break;
 		case 10: // Select S4
 			GPIO_SET_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A0_GPIO_PIN);
 			GPIO_SET_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A1_GPIO_PIN);
-			inaGainIDX = 3;
 		break;
 		default:
 		break;
 	}
 }
 
-uint8_t getINAGain(){
+inline uint8_t getINAIDX(){
 	uint8_t mux_a0_sel = GPIO_READ_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A0_GPIO_PIN)>>MUX_A0_GPIO_PIN;
 	uint8_t mux_a1_sel = GPIO_READ_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A1_GPIO_PIN)>>MUX_A1_GPIO_PIN;
-	return inaGainArr[(mux_a1_sel<<1 | mux_a0_sel)];
+	return (mux_a1_sel<<1 | mux_a0_sel);
+}
+
+inline uint8_t getINAGain(){
+	return inaGainArr[getINAIDX()];
 }
 
 int currentProcess(uint32_t* timeStamp, uint16_t *data, int *power){
@@ -526,6 +528,7 @@ int currentProcess(uint32_t* timeStamp, uint16_t *data, int *power){
 	float avgPower;
 	uint8_t inaGain;
 	uint16_t maxADCValue = 0;
+	uint8_t inaIDX = getINAIDX();
 
 	// Read voltage reference
 	#ifdef ADC_EXT_REF
@@ -552,7 +555,7 @@ int currentProcess(uint32_t* timeStamp, uint16_t *data, int *power){
 		if (data[i] > maxADCValue)
 			maxADCValue = data[i];
 		// The valid range is from 0.66~2.45 V
-		if ((data[i]>1700)||(data[i]<450)){
+		if (((data[i]>1700)||(data[i]<450))&&(inaIDX>0)){
 			decreaseINAGain();
 			return -1;
 		}
