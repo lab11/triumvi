@@ -127,7 +127,6 @@ int sineTable[BUF_SIZE] = {
 #define METER_DATA_OFFSET 2
 #define METER_DATA_LENGTH 4
 
-#define DEBUG_EN 1
 //#define ADC_EXT_REF
 #define CURVE_FIT
 //#define CALIBRATE
@@ -178,6 +177,7 @@ inline void meterMUXConfig(uint8_t en);
 int currentProcess(uint32_t* timeStamp, uint16_t *data, int *avgPower);
 void increaseINAGain();
 void decreaseINAGain();
+static void disable_all_ioc_override();
 // End of prototypes
 
 
@@ -203,23 +203,10 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 	static int avgPower;
 	uint8_t i;
 
-	#ifdef DEBUG_EN
-	// Debugging
-	GPIO_SET_OUTPUT(GPIO_B_BASE, 0x01<<5);
-	GPIO_CLR_PIN(GPIO_B_BASE, 0x01<<5); 
-	GPIO_SET_OUTPUT(GPIO_B_BASE, 0x01<<6); 
-	// End of Debugging
-	#endif
-
 	PROCESS_BEGIN();
 	meterInit();
 
-
 	stateReset();
-	#ifdef DEBUG_EN
-	GPIO_SET_PIN(GPIO_B_BASE, 0x01<<6);
-	#endif
-	
 	while(1){
 		PROCESS_YIELD();
 		switch (myState){
@@ -228,20 +215,17 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 				if (rtimerExpired){
 					rtimerExpired = 0;
 					if (GPIO_READ_PIN(PGOOD_GPIO_BASE, 0x1<<PGOOD_GPIO_PIN)){
-						#ifdef DEBUG_EN
-						GPIO_SET_PIN(GPIO_B_BASE, 0x01<<5); 
-						#endif
 						meterSenseConfig(VOLTAGE, SENSE_ENABLE);
 						rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.3, 1, &rtimerEvent, NULL);
 						myState = waitingVoltageStable;
-						backOffHistory = (backOffHistory<<1) | 0x01;
 						// consecutive 4 samples, decreases sampling interval
 						if (((backOffHistory&0x0f)==0x0f)&&(backOffTime>2))
 							backOffTime = (backOffTime>>1);
+						backOffHistory = (backOffHistory<<1) | 0x01;
 					}
 					else{
-						if (backOffTime<32)
-							backOffTime = (backOffTime<<1);
+						if (backOffTime<16)
+							backOffTime = (backOffTime<<2);
 						backOffHistory = (backOffHistory<<1) & (~0x01);
 						rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*backOffTime, 1, &rtimerEvent, NULL);
 					}
@@ -330,6 +314,16 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 	PROCESS_END();
 }
 
+static void disable_all_ioc_override() {
+	uint8_t portnum = 0;
+	uint8_t pinnum = 0;
+	for(portnum = 0; portnum < 4; portnum++) {
+		for(pinnum = 0; pinnum < 8; pinnum++) {
+			ioc_set_over(portnum, pinnum, IOC_OVERRIDE_DIS);
+		}
+	}
+}
+
 inline void meterMUXConfig(uint8_t en){
 	if (en==SENSE_ENABLE)
 		GPIO_SET_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_EN_GPIO_PIN);
@@ -367,9 +361,8 @@ inline void meterVoltageComparator(uint8_t en){
 // Power is dead, disable the system, go to sleep
 static void pGOODIntCallBack(uint8_t port, uint8_t pin){
 	GPIO_CLEAR_INTERRUPT(PGOOD_GPIO_BASE, 0x1<<PGOOD_GPIO_PIN);
-	//watchdog_reboot();
-	if (backOffTime<32)
-		backOffTime = (backOffTime<<1);
+	if (backOffTime<16)
+		backOffTime = (backOffTime<<2);
 	backOffHistory = (backOffHistory<<1) & (~0x01);
 	stateReset();
 	process_poll(&wirelessMeterProcessing);
@@ -412,14 +405,23 @@ void stateReset(){
 	meterVoltageComparator(SENSE_DISABLE);
 	meterMUXConfig(SENSE_DISABLE);
 	gate_gpt(GPTIMER_1);
-	#ifdef DEBUG_EN
-	GPIO_CLR_PIN(GPIO_B_BASE, 0x01<<5); 
-	#endif
 	rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*backOffTime, 1, &rtimerEvent, NULL);
 	myState = init;
 }
 
 void meterInit(){
+
+	GPIO_SET_OUTPUT(GPIO_A_BASE, 0xc3);
+	GPIO_CLR_PIN(GPIO_A_BASE, 0xc3);
+	GPIO_SET_OUTPUT(GPIO_B_BASE, 0xf7);
+	GPIO_CLR_PIN(GPIO_B_BASE, 0xf7);
+	GPIO_SET_OUTPUT(GPIO_C_BASE, 0x18);
+	GPIO_CLR_PIN(GPIO_C_BASE, 0x18);
+	GPIO_SET_OUTPUT(GPIO_D_BASE, 0x3f);
+	GPIO_CLR_PIN(GPIO_D_BASE, 0x3f);
+
+	disable_all_ioc_override();
+
 	// ADC for current sense
 	adc_init();
 	ioc_set_over(I_ADC_GPIO_NUM, I_ADC_GPIO_PIN, IOC_OVERRIDE_ANA);
@@ -436,7 +438,7 @@ void meterInit(){
 	GPIO_SET_OUTPUT(MUX_IO_GPIO_BASE, 0x1<<MUX_A1_GPIO_PIN);
 	GPIO_SET_OUTPUT(MUX_IO_GPIO_BASE, 0x1<<MUX_A0_GPIO_PIN);
 	GPIO_CLR_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_EN_GPIO_PIN);
-	setINAGain(1);
+	setINAGain(10);
 
 	// GPIO for PGOOD interrupt
 	GPIO_SET_INPUT(PGOOD_GPIO_BASE, 0x1<<PGOOD_GPIO_PIN);
@@ -527,7 +529,7 @@ int currentProcess(uint32_t* timeStamp, uint16_t *data, int *power){
 	int energyCal = 0;
 	float avgPower;
 	uint8_t inaGain;
-	uint16_t maxADCValue = 0;
+	int maxADCValue = 0;
 	uint8_t inaIDX = getINAIDX();
 
 	// Read voltage reference
@@ -552,10 +554,9 @@ int currentProcess(uint32_t* timeStamp, uint16_t *data, int *power){
 
 	for (i=0;i<BUF_SIZE;i++){
 		currentCal = data[i] - vRefADCVal;
-		if (data[i] > maxADCValue)
-			maxADCValue = data[i];
-		// The valid range is from 0.66~2.45 V
-		if (((data[i]>1700)||(data[i]<450))&&(inaIDX>0)){
+		if (currentCal > maxADCValue)
+			maxADCValue = currentCal;
+		if (((currentCal>650)||(currentCal<-650))&&(inaIDX>0)){
 			decreaseINAGain();
 			return -1;
 		}
@@ -576,7 +577,7 @@ int currentProcess(uint32_t* timeStamp, uint16_t *data, int *power){
 		#endif
 		energyCal += currentCal*sineTable[i];
 	}
-	if (maxADCValue < 1200){
+	if (maxADCValue < 100){
 		increaseINAGain();
 		return -1;
 	}
