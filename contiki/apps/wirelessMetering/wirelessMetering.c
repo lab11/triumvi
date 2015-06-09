@@ -202,9 +202,14 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 	static uint8_t meterData[BUF_SIZE];
 	static int avgPower;
 	uint8_t i;
+	static uint8_t inaGain;
+	static int powerValid;
 
 	PROCESS_BEGIN();
 	meterInit();
+
+	inaGain = getINAGain();
+	setINAGain(1);
 
 	stateReset();
 	while(1){
@@ -237,8 +242,9 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 				if (rtimerExpired){
 					rtimerExpired = 0;
 					meterSenseConfig(CURRENT, SENSE_ENABLE);
-					rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.05, 1, &rtimerEvent, NULL);
 					meterMUXConfig(SENSE_ENABLE);
+					setINAGain(inaGain);
+					rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.05, 1, &rtimerEvent, NULL);
 					myState = waitingCurrentStable;
 				}
 			break;
@@ -258,6 +264,9 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 					voltageCompInt = 0;
 					ungate_gpt(GPTIMER_1);
 					REG(SYSTICK_STCTRL) &= (~SYSTICK_STCTRL_INTEN);
+	//GPIO_PERIPHERAL_CONTROL(GPIO_A_BASE, 0x18);
+	//ioc_set_over(I_ADC_GPIO_NUM, I_ADC_GPIO_PIN, IOC_OVERRIDE_ANA);
+	//ioc_set_over(V_REF_ADC_GPIO_NUM, V_REF_ADC_GPIO_PIN, IOC_OVERRIDE_ANA);
 					GPIO_DETECT_RISING(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
 					meterVoltageComparator(SENSE_ENABLE);
 					myState = waitingVoltageInt;
@@ -268,6 +277,7 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 			case waitingVoltageInt:
 				if (voltageCompInt){
 					sampleCurrentWaveform();
+	//GPIO_SET_INPUT(GPIO_A_BASE, 0x18);
 					stateReset();
 					voltageCompInt = 0;
 
@@ -292,7 +302,10 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 					cc2538_on_and_transmit();
 					CC2538_RF_CSP_ISRFOFF();
 					#else
-					if (currentProcess(timerVal, adcVal, &avgPower)>0){
+					powerValid = currentProcess(timerVal, adcVal, &avgPower);
+					inaGain = getINAGain();
+					setINAGain(1);
+					if (powerValid>0){
 						for (i=0; i<METER_DATA_LENGTH; i++){
 							meterData[METER_DATA_OFFSET+i] = (avgPower&(0xff<<(i<<3)))>>(i<<3);
 						}
@@ -419,11 +432,15 @@ void meterInit(){
 	GPIO_CLR_PIN(GPIO_C_BASE, 0x18);
 	GPIO_SET_OUTPUT(GPIO_D_BASE, 0x3f);
 	GPIO_CLR_PIN(GPIO_D_BASE, 0x3f);
+	GPIO_SET_INPUT(GPIO_A_BASE, 0x1<<5);
 
 	disable_all_ioc_override();
 
 	// ADC for current sense
 	adc_init();
+	//GPIO_SOFTWARE_CONTROL(GPIO_A_BASE, 0x18);
+	//GPIO_SET_INPUT(GPIO_A_BASE, 0x18);
+
 	ioc_set_over(I_ADC_GPIO_NUM, I_ADC_GPIO_PIN, IOC_OVERRIDE_ANA);
 	ioc_set_over(V_REF_ADC_GPIO_NUM, V_REF_ADC_GPIO_PIN, IOC_OVERRIDE_ANA);
 
