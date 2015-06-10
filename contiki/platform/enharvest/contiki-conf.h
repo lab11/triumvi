@@ -40,7 +40,7 @@ typedef uint32_t rtimer_clock_t;
 #define RTIMER_CLOCK_LT(a,b)     ((int32_t)((a)-(b)) < 0)
 
 /* Enable external 32 kHz crystal */
-#define SYS_CTRL_CONF_OSC32K_USE_XTAL 1
+#define SYS_CTRL_CONF_OSC32K_USE_XTAL 0
 
 /** @} */
 /*---------------------------------------------------------------------------*/

@@ -187,6 +187,7 @@ typedef enum state{
 	waitingVoltageStable,
 	waitingCurrentStable,
 	waitingNegEdge,
+	waitingComparatorStable,
 	waitingVoltageInt,
 	waitingRadioInt,
 	nullState
@@ -262,6 +263,14 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 			case waitingNegEdge:
 				if (voltageCompInt){
 					voltageCompInt = 0;
+					rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.007, 1, &rtimerEvent, NULL);
+					myState = waitingComparatorStable;
+				}
+			break;
+
+			case waitingComparatorStable:
+				if (rtimerExpired){
+					rtimerExpired = 0;
 					ungate_gpt(GPTIMER_1);
 					REG(SYSTICK_STCTRL) &= (~SYSTICK_STCTRL_INTEN);
 	//GPIO_PERIPHERAL_CONTROL(GPIO_A_BASE, 0x18);

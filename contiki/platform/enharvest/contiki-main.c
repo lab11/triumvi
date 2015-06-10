@@ -83,6 +83,8 @@ set_rf_params(void)
     NETSTACK_RADIO.set_value(RADIO_PARAM_CHANNEL, CC2538_RF_CHANNEL);
     NETSTACK_RADIO.set_object(RADIO_PARAM_64BIT_ADDR, ext_addr, 8);
 }
+
+
 /*---------------------------------------------------------------------------*/
 /**
  * \brief Main routine for the cc2538dk platform
@@ -130,19 +132,19 @@ main(void)
   usb_serial_set_input(serial_line_input_byte);
 #endif
 
-  serial_line_init();
+  //serial_line_init();
 
   INTERRUPTS_ENABLE();
 
-  PUTS(CONTIKI_VERSION_STRING);
-  PUTS(BOARD_STRING);
+ // PUTS(CONTIKI_VERSION_STRING);
+ // PUTS(BOARD_STRING);
 
-  PRINTF(" Net: ");
-  PRINTF("%s\n", NETSTACK_NETWORK.name);
-  PRINTF(" MAC: ");
-  PRINTF("%s\n", NETSTACK_MAC.name);
-  PRINTF(" RDC: ");
-  PRINTF("%s\n", NETSTACK_RDC.name);
+ // PRINTF(" Net: ");
+ // PRINTF("%s\n", NETSTACK_NETWORK.name);
+ // PRINTF(" MAC: ");
+ // PRINTF("%s\n", NETSTACK_MAC.name);
+ // PRINTF(" RDC: ");
+ // PRINTF("%s\n", NETSTACK_RDC.name);
 
   /* Initialise the H/W RNG engine. */
   random_init(0);
@@ -150,7 +152,7 @@ main(void)
   udma_init();
 
   process_start(&etimer_process, NULL);
-  ctimer_init();
+//  ctimer_init();
 
   set_rf_params();
   netstack_init();
