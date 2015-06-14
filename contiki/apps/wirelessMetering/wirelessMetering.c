@@ -130,6 +130,7 @@ int sineTable[BUF_SIZE] = {
 //#define ADC_EXT_REF
 #define CURVE_FIT
 //#define CALIBRATE
+#define TWO_LDO
 
 /*
 // 3.0078 degree / sample, DC = 170
@@ -186,8 +187,11 @@ typedef enum state{
 	init,
 	waitingVoltageStable,
 	waitingCurrentStable,
+	#ifndef TWO_LDO
 	waitingNegEdge,
 	waitingComparatorStable,
+	waitingComparatorStable2,
+	#endif
 	waitingVoltageInt,
 	waitingRadioInt,
 	nullState
@@ -254,12 +258,20 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 			case waitingCurrentStable:
 				if (rtimerExpired){
 					rtimerExpired = 0;
+					#ifdef TWO_LDO
+					GPIO_DETECT_RISING(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
+					ungate_gpt(GPTIMER_1);
+					REG(SYSTICK_STCTRL) &= (~SYSTICK_STCTRL_INTEN);
+					myState = waitingVoltageInt;
+					#else
 					myState = waitingNegEdge;
 					GPIO_DETECT_FALLING(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
+					#endif
 					meterVoltageComparator(SENSE_ENABLE);
 				}
 			break;
 
+			#ifndef TWO_LDO
 			case waitingNegEdge:
 				if (voltageCompInt){
 					voltageCompInt = 0;
@@ -271,16 +283,25 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 			case waitingComparatorStable:
 				if (rtimerExpired){
 					rtimerExpired = 0;
+					GPIO_DETECT_RISING(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
+					meterVoltageComparator(SENSE_ENABLE);
+					myState = waitingComparatorStable2;
+				}
+			break;
+
+			case waitingComparatorStable2:
+				if (voltageCompInt){
+					voltageCompInt = 0;
 					ungate_gpt(GPTIMER_1);
 					REG(SYSTICK_STCTRL) &= (~SYSTICK_STCTRL_INTEN);
 	//GPIO_PERIPHERAL_CONTROL(GPIO_A_BASE, 0x18);
 	//ioc_set_over(I_ADC_GPIO_NUM, I_ADC_GPIO_PIN, IOC_OVERRIDE_ANA);
 	//ioc_set_over(V_REF_ADC_GPIO_NUM, V_REF_ADC_GPIO_PIN, IOC_OVERRIDE_ANA);
-					GPIO_DETECT_RISING(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
 					meterVoltageComparator(SENSE_ENABLE);
 					myState = waitingVoltageInt;
 				}
 			break;
+			#endif
 
 			// Start measure current
 			case waitingVoltageInt:
@@ -582,7 +603,7 @@ int currentProcess(uint32_t* timeStamp, uint16_t *data, int *power){
 		currentCal = data[i] - vRefADCVal;
 		if (currentCal > maxADCValue)
 			maxADCValue = currentCal;
-		if (((currentCal>650)||(currentCal<-650))&&(inaIDX>0)){
+		if (((currentCal>570)||(currentCal<-570))&&(inaIDX>0)){
 			decreaseINAGain();
 			return -1;
 		}
