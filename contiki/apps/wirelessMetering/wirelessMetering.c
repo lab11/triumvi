@@ -178,6 +178,7 @@ inline void meterMUXConfig(uint8_t en);
 int currentProcess(uint32_t* timeStamp, uint16_t *data, int *avgPower);
 void increaseINAGain();
 void decreaseINAGain();
+inline int getThreshold(uint8_t inaGain);
 static void disable_all_ioc_override();
 // End of prototypes
 
@@ -584,15 +585,22 @@ inline uint8_t getINAGain(){
 	return inaGainArr[getINAIDX()];
 }
 
+inline int getThreshold(uint8_t inaGain){
+	if (inaGain==10)
+		return 500;
+	else
+		return 650;
+}
+
 int currentProcess(uint32_t* timeStamp, uint16_t *data, int *power){
 	uint16_t i;
 	int currentCal;
 	uint16_t vRefADCVal;
 	int energyCal = 0;
 	float avgPower;
-	uint8_t inaGain;
 	int maxADCValue = 0;
-	uint8_t inaIDX = getINAIDX();
+	uint8_t inaGain = getINAGain();
+	int upperThreshold = getThreshold(inaGain);
 
 	// Read voltage reference
 	#ifdef ADC_EXT_REF
@@ -618,7 +626,7 @@ int currentProcess(uint32_t* timeStamp, uint16_t *data, int *power){
 		currentCal = data[i] - vRefADCVal;
 		if (currentCal > maxADCValue)
 			maxADCValue = currentCal;
-		if (((currentCal>570)||(currentCal<-570))&&(inaIDX>0)){
+		if ((currentCal>upperThreshold)&&(inaGain>1)){
 			decreaseINAGain();
 			return -1;
 		}
@@ -633,18 +641,13 @@ int currentProcess(uint32_t* timeStamp, uint16_t *data, int *power){
 			temp = currentCal*POLY_POS_OR1 - POLY_POS_OR0;
 		currentCal = (int)temp;
 		#endif
-		//
-		#ifdef DEBUG_PRINTF
-		printf("current: %d\r\n", (int)(currentCal/inaGain));
-		#endif
 		energyCal += currentCal*sineTable[i];
 	}
-	if (maxADCValue < 100){
+	if (maxADCValue < 180){
 		increaseINAGain();
 		return -1;
 	}
 	else{
-		inaGain = getINAGain();
 		avgPower = energyCal*P_TRANSFORM/inaGain; // Unit is mW
 		*power = (int)avgPower;
 		return 1;
