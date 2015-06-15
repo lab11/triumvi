@@ -73,21 +73,21 @@ uint32_t timerVal[BUF_SIZE];
 volatile uint32_t referenceIntTime;
 
 int sineTable[BUF_SIZE] = {
-	-153, -148, -144, -139, -134, -128, -122, -116, -109, 
-	-102, -95, -87, -79, -71, -63, -55, -46, 
-	-37, -29, -20, -11, -2, 7, 16, 25, 
-	33, 42, 51, 59, 67, 76, 83, 91, 
-	99, 106, 112, 119, 125, 131, 137, 142, 
-	146, 151, 155, 158, 161, 164, 166, 167, 
-	169, 169, 170, 170, 169, 168, 166, 164, 
-	162, 159, 155, 151, 147, 142, 137, 132, 
-	126, 120, 114, 107, 100, 92, 85, 77, 
-	69, 61, 52, 44, 35, 26, 17, 8, 
-	-1, -9, -18, -27, -36, -45, -53, -62, 
-	-70, -78, -86, -93, -101, -108, -114, -121, 
-	-127, -133, -138, -143, -148, -152, -156, -159, 
-	-162, -164, -166, -168, -169, -170, -170, -169, 
-	-169, -167, -166, -163, -161, -158, -154};
+-144, -139, -134, -128, -122, -116, -109, -102, -95, 
+-87, -79, -71, -63, -55, -46, -38, -29, 
+-20, -11, -2, 7, 16, 25, 33, 42, 
+51, 59, 67, 75, 83, 91, 98, 106, 
+112, 119, 125, 131, 136, 142, 146, 151, 
+155, 158, 161, 164, 166, 167, 169, 169, 
+170, 170, 169, 168, 166, 164, 162, 159, 
+155, 151, 147, 143, 137, 132, 126, 120, 
+114, 107, 100, 92, 85, 77, 69, 61, 
+52, 44, 35, 26, 17, 8, 0, -9, 
+-18, -27, -36, -45, -53, -62, -70, -78, 
+-86, -93, -101, -108, -114, -121, -127, -133, 
+-138, -143, -148, -152, -156, -159, -162, -164, 
+-166, -168, -169, -170, -170, -169, -169, -167, 
+-166, -163, -161, -158, -154, -150, -146}; 
 
 
 
@@ -187,9 +187,9 @@ typedef enum state{
 	init,
 	waitingVoltageStable,
 	waitingCurrentStable,
-	#ifndef TWO_LDO
 	waitingNegEdge,
 	waitingComparatorStable,
+	#ifndef TWO_LDO
 	waitingComparatorStable2,
 	#endif
 	waitingVoltageInt,
@@ -248,7 +248,11 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 					rtimerExpired = 0;
 					meterSenseConfig(CURRENT, SENSE_ENABLE);
 					meterMUXConfig(SENSE_ENABLE);
+					#ifdef CALIBRATE
+					setINAGain(2);
+					#else
 					setINAGain(inaGain);
+					#endif
 					rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.05, 1, &rtimerEvent, NULL);
 					myState = waitingCurrentStable;
 				}
@@ -258,20 +262,12 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 			case waitingCurrentStable:
 				if (rtimerExpired){
 					rtimerExpired = 0;
-					#ifdef TWO_LDO
-					GPIO_DETECT_RISING(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
-					ungate_gpt(GPTIMER_1);
-					REG(SYSTICK_STCTRL) &= (~SYSTICK_STCTRL_INTEN);
-					myState = waitingVoltageInt;
-					#else
-					myState = waitingNegEdge;
 					GPIO_DETECT_FALLING(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
-					#endif
 					meterVoltageComparator(SENSE_ENABLE);
+					myState = waitingNegEdge;
 				}
 			break;
 
-			#ifndef TWO_LDO
 			case waitingNegEdge:
 				if (voltageCompInt){
 					voltageCompInt = 0;
@@ -285,18 +281,30 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 					rtimerExpired = 0;
 					GPIO_DETECT_RISING(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
 					meterVoltageComparator(SENSE_ENABLE);
+					#ifdef TWO_LDO
+					ungate_gpt(GPTIMER_1);
+					REG(SYSTICK_STCTRL) &= (~SYSTICK_STCTRL_INTEN);
+					// Set current waveform & reference input IO
+					//GPIO_PERIPHERAL_CONTROL(GPIO_A_BASE, 0x18);
+					//ioc_set_over(I_ADC_GPIO_NUM, I_ADC_GPIO_PIN, IOC_OVERRIDE_ANA);
+					//ioc_set_over(V_REF_ADC_GPIO_NUM, V_REF_ADC_GPIO_PIN, IOC_OVERRIDE_ANA);
+					myState = waitingVoltageInt;
+					#else
 					myState = waitingComparatorStable2;
+					#endif
 				}
 			break;
 
+			#ifndef TWO_LDO
 			case waitingComparatorStable2:
 				if (voltageCompInt){
 					voltageCompInt = 0;
 					ungate_gpt(GPTIMER_1);
 					REG(SYSTICK_STCTRL) &= (~SYSTICK_STCTRL_INTEN);
-	//GPIO_PERIPHERAL_CONTROL(GPIO_A_BASE, 0x18);
-	//ioc_set_over(I_ADC_GPIO_NUM, I_ADC_GPIO_PIN, IOC_OVERRIDE_ANA);
-	//ioc_set_over(V_REF_ADC_GPIO_NUM, V_REF_ADC_GPIO_PIN, IOC_OVERRIDE_ANA);
+					// Set current waveform & reference input IO
+					//GPIO_PERIPHERAL_CONTROL(GPIO_A_BASE, 0x18);
+					//ioc_set_over(I_ADC_GPIO_NUM, I_ADC_GPIO_PIN, IOC_OVERRIDE_ANA);
+					//ioc_set_over(V_REF_ADC_GPIO_NUM, V_REF_ADC_GPIO_PIN, IOC_OVERRIDE_ANA);
 					meterVoltageComparator(SENSE_ENABLE);
 					myState = waitingVoltageInt;
 				}
@@ -307,7 +315,9 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 			case waitingVoltageInt:
 				if (voltageCompInt){
 					sampleCurrentWaveform();
-	//GPIO_SET_INPUT(GPIO_A_BASE, 0x18);
+					// Set current waveform & reference input IO
+					//GPIO_SOFTWARE_CONTROL(GPIO_A_BASE, 0x18);
+					//GPIO_SET_INPUT(GPIO_A_BASE, 0x18);
 					stateReset();
 					voltageCompInt = 0;
 
@@ -454,6 +464,7 @@ void stateReset(){
 
 void meterInit(){
 
+	// Set all un-used pins to output and clear output
 	GPIO_SET_OUTPUT(GPIO_A_BASE, 0xc3);
 	GPIO_CLR_PIN(GPIO_A_BASE, 0xc3);
 	GPIO_SET_OUTPUT(GPIO_B_BASE, 0xf7);
@@ -462,12 +473,16 @@ void meterInit(){
 	GPIO_CLR_PIN(GPIO_C_BASE, 0x18);
 	GPIO_SET_OUTPUT(GPIO_D_BASE, 0x3f);
 	GPIO_CLR_PIN(GPIO_D_BASE, 0x3f);
+	// This is the voltage waveform input
 	GPIO_SET_INPUT(GPIO_A_BASE, 0x1<<5);
 
+	// disable all pull-up resistors
 	disable_all_ioc_override();
 
 	// ADC for current sense
 	adc_init();
+
+	// set current waveform & reference input to input
 	//GPIO_SOFTWARE_CONTROL(GPIO_A_BASE, 0x18);
 	//GPIO_SET_INPUT(GPIO_A_BASE, 0x18);
 
