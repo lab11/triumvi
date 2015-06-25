@@ -3,10 +3,10 @@
 #include "sys/etimer.h"
 #include "sys/rtimer.h"
 #include "dev/leds.h"
-#include "dev/uart.h"
-#include "dev/button-sensor.h"
+//#include "dev/uart.h"
+//#include "dev/button-sensor.h"
 #include "dev/watchdog.h"
-#include "dev/serial-line.h"
+//#include "dev/serial-line.h"
 #include "dev/sys-ctrl.h"
 #include "dev/gpio.h"
 #include "dev/gptimer.h"
@@ -65,31 +65,29 @@ volatile uint8_t rtimerExpired;
 volatile uint8_t backOffTime;
 volatile uint8_t backOffHistory;
 static const uint8_t inaGainArr[4] = {1, 2, 5, 10};
-#define MAX_INA_GAIN_IDX 3
 
 #define BUF_SIZE 120
 uint16_t adcVal[BUF_SIZE];
 uint32_t timerVal[BUF_SIZE];
 volatile uint32_t referenceIntTime;
 
+// node2
 int sineTable[BUF_SIZE] = {
--144, -139, -134, -128, -122, -116, -109, -102, -95, 
--87, -79, -71, -63, -55, -46, -38, -29, 
--20, -11, -2, 7, 16, 25, 33, 42, 
-51, 59, 67, 75, 83, 91, 98, 106, 
-112, 119, 125, 131, 136, 142, 146, 151, 
-155, 158, 161, 164, 166, 167, 169, 169, 
-170, 170, 169, 168, 166, 164, 162, 159, 
-155, 151, 147, 143, 137, 132, 126, 120, 
-114, 107, 100, 92, 85, 77, 69, 61, 
-52, 44, 35, 26, 17, 8, 0, -9, 
--18, -27, -36, -45, -53, -62, -70, -78, 
--86, -93, -101, -108, -114, -121, -127, -133, 
--138, -143, -148, -152, -156, -159, -162, -164, 
--166, -168, -169, -170, -170, -169, -169, -167, 
--166, -163, -161, -158, -154, -150, -146}; 
-
-
+-165, -162, -159, -156, -152, -148, -144, -139, -134, 
+-128, -122, -115, -109, -102, -94, -87, -79, 
+-71, -63, -54, -46, -37, -29, -20, -11, 
+-2, 7, 16, 25, 34, 42, 51, 59, 
+68, 76, 84, 91, 99, 106, 113, 119, 
+125, 131, 137, 142, 146, 151, 155, 158, 
+161, 164, 166, 168, 169, 169, 170, 170, 
+169, 168, 166, 164, 162, 159, 155, 151, 
+147, 142, 137, 132, 126, 120, 113, 107, 
+100, 92, 85, 77, 69, 60, 52, 43, 
+35, 26, 17, 8, -1, -10, -19, -27, 
+-36, -45, -53, -62, -70, -78, -86, -93, 
+-101, -108, -115, -121, -127, -133, -138, -143, 
+-148, -152, -156, -159, -162, -164, -166, -168, 
+-169, -170, -170, -169, -169, -167, -166};
 
 #define PGOOD_GPIO_NUM	GPIO_B_NUM
 #define PGOOD_GPIO_BASE	GPIO_B_BASE
@@ -127,7 +125,6 @@ int sineTable[BUF_SIZE] = {
 #define METER_DATA_OFFSET 2
 #define METER_DATA_LENGTH 4
 
-//#define ADC_EXT_REF
 #define CURVE_FIT
 //#define CALIBRATE
 #define TWO_LDO
@@ -162,6 +159,10 @@ unit is A, multiply by 1000 gets mA
 #define SENSE_ENABLE 0x1
 #define SENSE_DISABLE 0x0
 
+#define MAX_INA_GAIN_IDX 3
+#define MAX_INA_GAIN 10
+#define MIN_INA_GAIN 1
+
 // Function prototypes
 inline void meterSenseConfig(uint8_t type, uint8_t en);
 inline void meterVoltageComparator(uint8_t en);
@@ -169,13 +170,13 @@ static void pGOODIntCallBack(uint8_t port, uint8_t pin);
 static void referenceIntCallBack(uint8_t port, uint8_t pin);
 void sampleCurrentWaveform();
 static void rtimerEvent(struct rtimer *t, void *ptr);
-void stateReset();
+void disableAll();
 void meterInit();
 void setINAGain(uint8_t gain);
 inline uint8_t getINAIDX();
 inline uint8_t getINAGain();
 inline void meterMUXConfig(uint8_t en);
-int currentProcess(uint32_t* timeStamp, uint16_t *data, int *avgPower);
+int currentProcess(uint32_t* timeStamp, uint16_t *data, uint16_t vRefADCVal, int *power);
 void increaseINAGain();
 void decreaseINAGain();
 inline int getThreshold(uint8_t inaGain);
@@ -195,6 +196,7 @@ typedef enum state{
 	#endif
 	waitingVoltageInt,
 	waitingRadioInt,
+	turnOnLED,
 	nullState
 } state_t;
 
@@ -204,20 +206,25 @@ volatile static state_t myState;
 /*---------------------------------------------------------------------------*/
 PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 {
-	//static uint8_t meterData[METER_DATA_OFFSET+METER_DATA_LENGTH];
-	static uint8_t meterData[BUF_SIZE];
-	static int avgPower;
-	uint8_t i;
-	static uint8_t inaGain;
-	static int powerValid;
-
 	PROCESS_BEGIN();
+
+	uint8_t i;
+	#ifdef CALIBRATE
+	static uint8_t calibrate_cnt = 0;
+	#else
+	static int avgPower;
+	static int powerValid;
+	#endif
+	static uint8_t meterData[BUF_SIZE];
+	static uint8_t inaGain;
+	uint16_t vRefADCVal;
+	
 	meterInit();
 
 	inaGain = getINAGain();
 	setINAGain(1);
 
-	stateReset();
+	disableAll();
 	while(1){
 		PROCESS_YIELD();
 		switch (myState){
@@ -235,9 +242,11 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 						backOffHistory = (backOffHistory<<1) | 0x01;
 					}
 					else{
+						#ifndef CALIBRATE
 						if (backOffTime<16)
 							backOffTime = (backOffTime<<2);
 						backOffHistory = (backOffHistory<<1) & (~0x01);
+						#endif
 						rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*backOffTime, 1, &rtimerEvent, NULL);
 					}
 				}
@@ -285,10 +294,6 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 					#ifdef TWO_LDO
 					ungate_gpt(GPTIMER_1);
 					REG(SYSTICK_STCTRL) &= (~SYSTICK_STCTRL_INTEN);
-					// Set current waveform & reference input IO
-					//GPIO_PERIPHERAL_CONTROL(GPIO_A_BASE, 0x18);
-					//ioc_set_over(I_ADC_GPIO_NUM, I_ADC_GPIO_PIN, IOC_OVERRIDE_ANA);
-					//ioc_set_over(V_REF_ADC_GPIO_NUM, V_REF_ADC_GPIO_PIN, IOC_OVERRIDE_ANA);
 					myState = waitingVoltageInt;
 					#else
 					myState = waitingComparatorStable2;
@@ -302,10 +307,6 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 					voltageCompInt = 0;
 					ungate_gpt(GPTIMER_1);
 					REG(SYSTICK_STCTRL) &= (~SYSTICK_STCTRL_INTEN);
-					// Set current waveform & reference input IO
-					//GPIO_PERIPHERAL_CONTROL(GPIO_A_BASE, 0x18);
-					//ioc_set_over(I_ADC_GPIO_NUM, I_ADC_GPIO_PIN, IOC_OVERRIDE_ANA);
-					//ioc_set_over(V_REF_ADC_GPIO_NUM, V_REF_ADC_GPIO_PIN, IOC_OVERRIDE_ANA);
 					meterVoltageComparator(SENSE_ENABLE);
 					myState = waitingVoltageInt;
 				}
@@ -316,34 +317,39 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 			case waitingVoltageInt:
 				if (voltageCompInt){
 					sampleCurrentWaveform();
-					// Set current waveform & reference input IO
-					//GPIO_SOFTWARE_CONTROL(GPIO_A_BASE, 0x18);
-					//GPIO_SET_INPUT(GPIO_A_BASE, 0x18);
-					stateReset();
-					voltageCompInt = 0;
-
-					#ifdef CALIBRATE
-					meterData[0] = 0xbb;
-					uint16_t vRefADCVal;
-					vRefADCVal = adc_get(V_REF_ADC_CHANNEL, SOC_ADC_ADCCON_REF_AVDD5, SOC_ADC_ADCCON_DIV_512);
+					vRefADCVal = adc_get(V_REF_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_512);
 					vRefADCVal = ((vRefADCVal>>4)>2048)? 0 : (vRefADCVal>>4);
-					meterData[1] = vRefADCVal&0xff;
-					meterData[2] = (vRefADCVal&0xff00)>>8;
-					meterData[3] = (referenceIntTime-timerVal[0])&0xff;
-					meterData[4] = ((referenceIntTime-timerVal[0])&0xff00)>>8;
-					meterData[5] = (timerVal[0]-timerVal[1])&0xff;
-					meterData[6] = ((timerVal[0]-timerVal[1])&0xff00)>>8;
-					uint8_t byteCnt = 6;
-					for (i=0; i<BUF_SIZE; i+=3){
-						meterData[byteCnt+1] = (adcVal[i]%0xff);
-						meterData[byteCnt+2] = ((adcVal[i]&0xff00)>>8);
-						byteCnt+=2;
+					disableAll();
+					voltageCompInt = 0;
+					#ifdef CALIBRATE
+					//meterData[0] = 0xbb;
+					//meterData[1] = vRefADCVal&0xff;
+					//meterData[2] = (vRefADCVal&0xff00)>>8;
+					//meterData[3] = (referenceIntTime-timerVal[0])&0xff;
+					//meterData[4] = ((referenceIntTime-timerVal[0])&0xff00)>>8;
+					//meterData[5] = (timerVal[0]-timerVal[1])&0xff;
+					//meterData[6] = ((timerVal[0]-timerVal[1])&0xff00)>>8;
+					//uint8_t byteCnt = 6;
+					//for (i=0; i<BUF_SIZE; i+=3){
+					//	meterData[byteCnt+1] = (adcVal[i]%0xff);
+					//	meterData[byteCnt+2] = ((adcVal[i]&0xff00)>>8);
+					//	byteCnt+=2;
+					//}
+					//packetbuf_copyfrom(meterData, 87);
+					//cc2538_on_and_transmit();
+					//CC2538_RF_CSP_ISRFOFF();
+					//printf("packet transmitted\r\n");
+					if (calibrate_cnt<255)
+						calibrate_cnt++;
+					else
+						leds_toggle(LEDS_RED);
+					printf("ADC reference: %u\r\n", vRefADCVal);
+					printf("Time difference: %lu\r\n", (timerVal[0]-timerVal[1]));
+					for (i=0; i<BUF_SIZE; i+=1){
+						printf("ADC reading: %u\r\n", adcVal[i]);
 					}
-					packetbuf_copyfrom(meterData, 87);
-					cc2538_on_and_transmit();
-					CC2538_RF_CSP_ISRFOFF();
 					#else
-					powerValid = currentProcess(timerVal, adcVal, &avgPower);
+					powerValid = currentProcess(timerVal, adcVal, vRefADCVal, &avgPower);
 					inaGain = getINAGain();
 					setINAGain(1);
 					if (powerValid>0){
@@ -357,7 +363,20 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 						CC2538_RF_CSP_ISRFOFF();
 					}
 					#endif
+					//rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.05, 1, &rtimerEvent, NULL);
+					//leds_on(LEDS_RED);
+					//myState = turnOnLED;
+					rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*backOffTime, 1, &rtimerEvent, NULL);
+					myState = init;
+				}
+			break;
 
+			case turnOnLED:
+				if (rtimerExpired){
+					rtimerExpired = 0;
+					leds_off(LEDS_RED);
+					rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*backOffTime, 1, &rtimerEvent, NULL);
+					myState = init;
 				}
 			break;
 
@@ -415,10 +434,13 @@ inline void meterVoltageComparator(uint8_t en){
 // Power is dead, disable the system, go to sleep
 static void pGOODIntCallBack(uint8_t port, uint8_t pin){
 	GPIO_CLEAR_INTERRUPT(PGOOD_GPIO_BASE, 0x1<<PGOOD_GPIO_PIN);
-	if (backOffTime<16)
-		backOffTime = (backOffTime<<2);
+	#ifndef CALIBRATE
+	backOffTime = 16;
 	backOffHistory = (backOffHistory<<1) & (~0x01);
-	stateReset();
+	#endif
+	disableAll();
+	rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*backOffTime, 1, &rtimerEvent, NULL);
+	myState = init;
 	process_poll(&wirelessMeterProcessing);
 }
 
@@ -436,11 +458,7 @@ void sampleCurrentWaveform(){
 	uint16_t temp;
 	while (sampleCnt < BUF_SIZE){
 		timerVal[sampleCnt] = get_event_time(GPTIMER_1, GPTIMER_SUBTIMER_A);
-		#ifdef ADC_EXT_REF
 		temp = adc_get(I_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_512);
-		#else
-		temp = adc_get(I_ADC_CHANNEL, SOC_ADC_ADCCON_REF_AVDD5, SOC_ADC_ADCCON_DIV_512);
-		#endif
 		adcVal[sampleCnt] = ((temp>>4)>2048)? 0 : (temp>>4);
 		sampleCnt++;
 	}
@@ -452,40 +470,36 @@ static void rtimerEvent(struct rtimer *t, void *ptr){
 }
 
 
-void stateReset(){
+void disableAll(){
 	REG(SYSTICK_STCTRL) |= SYSTICK_STCTRL_INTEN;
 	meterSenseConfig(CURRENT, SENSE_DISABLE);
 	meterSenseConfig(VOLTAGE, SENSE_DISABLE);
 	meterVoltageComparator(SENSE_DISABLE);
 	meterMUXConfig(SENSE_DISABLE);
 	gate_gpt(GPTIMER_1);
-	rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*backOffTime, 1, &rtimerEvent, NULL);
-	myState = init;
 }
 
 void meterInit(){
 
 	// Set all un-used pins to output and clear output
-	GPIO_SET_OUTPUT(GPIO_A_BASE, 0xc3);
-	GPIO_CLR_PIN(GPIO_A_BASE, 0xc3);
+	#ifndef CALIBRATE
+	GPIO_SET_OUTPUT(GPIO_A_BASE, 0x63);
+	GPIO_CLR_PIN(GPIO_A_BASE, 0x63);
 	GPIO_SET_OUTPUT(GPIO_B_BASE, 0xf7);
 	GPIO_CLR_PIN(GPIO_B_BASE, 0xf7);
 	GPIO_SET_OUTPUT(GPIO_C_BASE, 0x18);
 	GPIO_CLR_PIN(GPIO_C_BASE, 0x18);
 	GPIO_SET_OUTPUT(GPIO_D_BASE, 0x3f);
-	GPIO_CLR_PIN(GPIO_D_BASE, 0x3f);
-	// This is the voltage waveform input
-	GPIO_SET_INPUT(GPIO_A_BASE, 0x1<<5);
+	GPIO_CLR_PIN(GPIO_D_BASE, 0x37);
+	GPIO_SET_PIN(GPIO_D_BASE, 0x08);
+
 
 	// disable all pull-up resistors
 	disable_all_ioc_override();
+	#endif
 
 	// ADC for current sense
 	adc_init();
-
-	// set current waveform & reference input to input
-	//GPIO_SOFTWARE_CONTROL(GPIO_A_BASE, 0x18);
-	//GPIO_SET_INPUT(GPIO_A_BASE, 0x18);
 
 	ioc_set_over(I_ADC_GPIO_NUM, I_ADC_GPIO_PIN, IOC_OVERRIDE_ANA);
 	ioc_set_over(V_REF_ADC_GPIO_NUM, V_REF_ADC_GPIO_PIN, IOC_OVERRIDE_ANA);
@@ -534,8 +548,16 @@ void meterInit(){
 	gpt_enable_event(GPTIMER_1, GPTIMER_SUBTIMER_A);
 	gate_gpt(GPTIMER_1);
 
-	backOffTime = 4;
+	#ifdef CALIBRATE
+	backOffTime = 1;
+	#else
+	backOffTime = 16;
+	#endif
+	//backOffTime = 1;
 	backOffHistory = 0;
+
+	rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*backOffTime, 1, &rtimerEvent, NULL);
+	myState = init;
 }
 
 void increaseINAGain(){
@@ -592,41 +614,20 @@ inline int getThreshold(uint8_t inaGain){
 		return 650;
 }
 
-int currentProcess(uint32_t* timeStamp, uint16_t *data, int *power){
+int currentProcess(uint32_t* timeStamp, uint16_t *data, uint16_t vRefADCVal, int *power){
 	uint16_t i;
 	int currentCal;
-	uint16_t vRefADCVal;
 	int energyCal = 0;
 	float avgPower;
 	int maxADCValue = 0;
 	uint8_t inaGain = getINAGain();
 	int upperThreshold = getThreshold(inaGain);
 
-	// Read voltage reference
-	#ifdef ADC_EXT_REF
-	vRefADCVal = adc_get(V_REF_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_512);
-	#else
-	vRefADCVal = adc_get(V_REF_ADC_CHANNEL, SOC_ADC_ADCCON_REF_AVDD5, SOC_ADC_ADCCON_DIV_512);
-	#endif
-	vRefADCVal = ((vRefADCVal>>4)>2048)? 0 : (vRefADCVal>>4);
-	#ifdef DEBUG_PRINTF
-	printf("Reference reading: %u\r\n", vRefADCVal);
-	#endif
-
-	// The sine table is calibrated as following:
-	// First time stamp: 330
-	// Time diff: 2228
-	// If the following numbers don't match, the sine table needs to be recalculated
-	#ifdef DEBUG_PRINTF
-	printf("First time stamp: %lu\r\n", referenceIntTime-timeStamp[0]);
-	printf("Time difference between current samples: %lu\r\n", timeStamp[0]-timeStamp[1]);
-	#endif
-
 	for (i=0;i<BUF_SIZE;i++){
 		currentCal = data[i] - vRefADCVal;
 		if (currentCal > maxADCValue)
 			maxADCValue = currentCal;
-		if ((currentCal>upperThreshold)&&(inaGain>1)){
+		if ((currentCal>upperThreshold)&&(inaGain>MIN_INA_GAIN)){
 			decreaseINAGain();
 			return -1;
 		}
@@ -643,7 +644,7 @@ int currentProcess(uint32_t* timeStamp, uint16_t *data, int *power){
 		#endif
 		energyCal += currentCal*sineTable[i];
 	}
-	if (maxADCValue < 180){
+	if ((maxADCValue < 180)&&(inaGain<MAX_INA_GAIN)){
 		increaseINAGain();
 		return -1;
 	}
