@@ -3,10 +3,7 @@
 #include "sys/etimer.h"
 #include "sys/rtimer.h"
 #include "dev/leds.h"
-//#include "dev/uart.h"
-//#include "dev/button-sensor.h"
 #include "dev/watchdog.h"
-//#include "dev/serial-line.h"
 #include "dev/sys-ctrl.h"
 #include "dev/gpio.h"
 #include "dev/gptimer.h"
@@ -24,33 +21,6 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-///*---------------------------------------------------------------------------*/
-//#define LOOP_INTERVAL       CLOCK_SECOND
-//#define LEDS_OFF_HYSTERISIS (RTIMER_SECOND >> 1)
-//#define LEDS_PERIODIC       LEDS_YELLOW
-//#define LEDS_BUTTON         LEDS_RED
-//#define LEDS_SERIAL_IN      LEDS_ORANGE
-//#define LEDS_REBOOT         LEDS_ALL
-//#define LEDS_RF_RX          (LEDS_YELLOW | LEDS_ORANGE)
-//#define BROADCAST_CHANNEL   129
-///*---------------------------------------------------------------------------*/
-//#define MACDEBUG 0
-//
-//#define DEBUG 1
-//#if DEBUG
-//#include <stdio.h>
-//#define PRINTF(...) printf(__VA_ARGS__)
-//#define PRINT6ADDR(addr) PRINTF(" %02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x ", ((uint8_t *)addr)[0], ((uint8_t *)addr)[1], ((uint8_t *)addr)[2], ((uint8_t *)addr)[3], ((uint8_t *)addr)[4], ((uint8_t *)addr)[5], ((uint8_t *)addr)[6], ((uint8_t *)addr)[7], ((uint8_t *)addr)[8], ((uint8_t *)addr)[9], ((uint8_t *)addr)[10], ((uint8_t *)addr)[11], ((uint8_t *)addr)[12], ((uint8_t *)addr)[13], ((uint8_t *)addr)[14], ((uint8_t *)addr)[15])
-//#define PRINTLLADDR(lladdr) PRINTF(" %02x:%02x:%02x:%02x:%02x:%02x ",lladdr->addr[0], lladdr->addr[1], lladdr->addr[2], lladdr->addr[3],lladdr->addr[4], lladdr->addr[5])
-//#else
-//#define PRINTF(...)
-//#define PRINT6ADDR(addr)
-//#endif
-//
-//
-//uint8_t spibyte = 0;
-//uint16_t address = 0xF0;
-//uint8_t spibuf[100];
 
 static struct rtimer myRTimer;
 
@@ -73,21 +43,21 @@ volatile uint32_t referenceIntTime;
 
 // node2
 int sineTable[BUF_SIZE] = {
--165, -162, -159, -156, -152, -148, -144, -139, -134, 
--128, -122, -115, -109, -102, -94, -87, -79, 
--71, -63, -54, -46, -37, -29, -20, -11, 
--2, 7, 16, 25, 34, 42, 51, 59, 
-68, 76, 84, 91, 99, 106, 113, 119, 
-125, 131, 137, 142, 146, 151, 155, 158, 
-161, 164, 166, 168, 169, 169, 170, 170, 
-169, 168, 166, 164, 162, 159, 155, 151, 
-147, 142, 137, 132, 126, 120, 113, 107, 
-100, 92, 85, 77, 69, 60, 52, 43, 
-35, 26, 17, 8, -1, -10, -19, -27, 
--36, -45, -53, -62, -70, -78, -86, -93, 
--101, -108, -115, -121, -127, -133, -138, -143, 
--148, -152, -156, -159, -162, -164, -166, -168, 
--169, -170, -170, -169, -169, -167, -166};
+-109, -116, -122, -128, -134, -139, -144, -149, -153, 
+-156, -160, -162, -165, -167, -168, -169, -170, 
+-170, -169, -168, -167, -165, -163, -160, -157, 
+-153, -149, -145, -140, -135, -129, -123, -117, 
+-110, -103, -96, -89, -81, -73, -65, -56, 
+-48, -39, -31, -22, -13, -4, 5, 14, 
+23, 32, 40, 49, 57, 66, 74, 82, 
+90, 97, 104, 111, 118, 124, 130, 135, 
+141, 145, 150, 154, 157, 160, 163, 165, 
+167, 168, 169, 170, 170, 169, 168, 166, 
+165, 162, 159, 156, 152, 148, 143, 139, 
+133, 127, 121, 115, 108, 101, 94, 86, 
+79, 71, 62, 54, 45, 37, 28, 19, 
+10, 1, -8, -16, -25, -34, -43, -51, 
+-60, -68, -76, -84, -92, -99, -106};
 
 #define PGOOD_GPIO_NUM	GPIO_B_NUM
 #define PGOOD_GPIO_BASE	GPIO_B_BASE
@@ -147,12 +117,12 @@ unit is A, multiply by 1000 gets mA
 
 // The following data is accuired from 98% tile
 // y = POLY_NEG_OR1*x + POLY_NEG_OR0
-#define POLY_NEG_OR1 1.02
-#define POLY_NEG_OR0 5.78
+#define POLY_NEG_OR1 0.96
+#define POLY_NEG_OR0 3.05
 
-// y = POLY_POS_OR1*x - POLY_POS_OR0
-#define POLY_POS_OR1 0.95
-#define POLY_POS_OR0 3.98 // negative
+// y = POLY_POS_OR1*x + POLY_POS_OR0
+#define POLY_POS_OR1 0.99
+#define POLY_POS_OR0 3.77 
 
 #define VOLTAGE 0x0
 #define CURRENT 0x1
@@ -207,6 +177,7 @@ volatile static state_t myState;
 PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 {
 	PROCESS_BEGIN();
+	CC2538_RF_CSP_ISRFOFF();
 
 	uint8_t i;
 	#ifdef CALIBRATE
@@ -259,7 +230,7 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 					meterSenseConfig(CURRENT, SENSE_ENABLE);
 					meterMUXConfig(SENSE_ENABLE);
 					#ifdef CALIBRATE
-					setINAGain(2);
+					setINAGain(1);
 					#else
 					setINAGain(inaGain);
 					#endif
@@ -632,14 +603,12 @@ int currentProcess(uint32_t* timeStamp, uint16_t *data, uint16_t vRefADCVal, int
 			return -1;
 		}
 		// Use linear regression
-		// for negative: y = 1.04*x + 1.28
-		// for positive: y = 0.98*x - 1.67
 		#ifdef CURVE_FIT
 		float temp;
 		if (currentCal<0)
 			temp = currentCal*POLY_NEG_OR1 + POLY_NEG_OR0;
 		else
-			temp = currentCal*POLY_POS_OR1 - POLY_POS_OR0;
+			temp = currentCal*POLY_POS_OR1 + POLY_POS_OR0;
 		currentCal = (int)temp;
 		#endif
 		energyCal += currentCal*sineTable[i];

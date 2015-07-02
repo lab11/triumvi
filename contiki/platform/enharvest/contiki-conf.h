@@ -138,7 +138,7 @@ typedef uint32_t rtimer_clock_t;
  * @{
  */
 #ifndef UART_CONF_ENABLE
-#define UART_CONF_ENABLE            0 /**< Enable/Disable UART I/O */
+#define UART_CONF_ENABLE            1 /**< Enable/Disable UART I/O */
 #endif
 
 #ifndef UART_CONF_BAUD_RATE

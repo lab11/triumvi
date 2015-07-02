@@ -136,15 +136,17 @@ main(void)
 
   INTERRUPTS_ENABLE();
 
- // PUTS(CONTIKI_VERSION_STRING);
- // PUTS(BOARD_STRING);
+#if UART_CONF_ENABLE
+  //PUTS(CONTIKI_VERSION_STRING);
+  //PUTS(BOARD_STRING);
 
- // PRINTF(" Net: ");
- // PRINTF("%s\n", NETSTACK_NETWORK.name);
- // PRINTF(" MAC: ");
- // PRINTF("%s\n", NETSTACK_MAC.name);
- // PRINTF(" RDC: ");
- // PRINTF("%s\n", NETSTACK_RDC.name);
+  //PRINTF(" Net: ");
+  //PRINTF("%s\n", NETSTACK_NETWORK.name);
+  //PRINTF(" MAC: ");
+  //PRINTF("%s\n", NETSTACK_MAC.name);
+  //PRINTF(" RDC: ");
+  //PRINTF("%s\n", NETSTACK_RDC.name);
+#endif
 
   /* Initialise the H/W RNG engine. */
   random_init(0);
@@ -169,7 +171,7 @@ main(void)
   ENERGEST_ON(ENERGEST_TYPE_CPU);
 
   autostart_start(autostart_processes);
-	CC2538_RF_CSP_ISRFOFF();
+	//CC2538_RF_CSP_ISRFOFF(); // move this to wirelessMetering process
 
 #if WATCHDOG_CONF_ENABLE
   watchdog_start();

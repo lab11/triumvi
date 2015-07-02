@@ -95,6 +95,8 @@ void gpt_1_a_isr(void);
 void gpt_1_b_isr(void);
 void gpt_2_a_isr(void);
 
+void crypto_isr(void);
+
 /* Likewise for the UART[01] ISRs */
 #if UART_CONF_ENABLE
 void uart0_isr(void);
@@ -284,7 +286,7 @@ void(*const vectors[])(void) =
   usb_isr,                    /* 156 USB */
   cc2538_rf_rx_tx_isr,        /* 157 RFCORE RX/TX */
   cc2538_rf_err_isr,          /* 158 RFCORE Error */
-  default_handler,            /* 159 AES */
+  crypto_isr,                 /* 159 AES */
   default_handler,            /* 160 PKA */
   rtimer_isr,                 /* 161 SM Timer */
   default_handler,            /* 162 MACTimer */
@@ -304,7 +306,6 @@ nmi_handler(void)
   reset_handler();
   while(1);
 }
-/*---------------------------------------------------------------------------*/
 void
 default_handler(void)
 {
