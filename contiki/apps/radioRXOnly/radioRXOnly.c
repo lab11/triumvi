@@ -32,18 +32,11 @@ void rf_rx_handler(){
 PROCESS_THREAD(radioRXOnlyProcess, ev, data)
 {
 	PROCESS_BEGIN();
-	crypto_init();
-	REG(AES_CTRL_ALG_SEL) = 0x00000000;
 	// AES
 	static uint8_t myMic[8] = {0x0};
 	static uint8_t myNonce[13] = {0};
-	static uint8_t len_len = 2; // LVal
-	static uint8_t mic_len = 4; // MVal
-	static uint8_t adata_len = 0x08;
-	static uint8_t pdata_len = 0x04;
 	static uint8_t aes_key[] = AES_KEY;
 	aes_load_keys(aes_key, AES_KEY_STORE_SIZE_KEY_SIZE_128, 1, 0);
-
 
 	static uint8_t srcExtAddr[8];
 	simple_network_set_callback(&rf_rx_handler);
@@ -83,11 +76,11 @@ PROCESS_THREAD(radioRXOnlyProcess, ev, data)
 			printf("Encrypted message...\r\n");
 			memcpy(myNonce, srcExtAddr, 8);
 			memcpy(&myNonce[9], &packetPayload[1], 4); // Nonce[8] should be 0
-			ccm_auth_decrypt_start(len_len, 0, myNonce, aData, adata_len, 
-					cData, (pdata_len+mic_len), mic_len, NULL);
+			ccm_auth_decrypt_start(LEN_LEN, 0, myNonce, aData, ADATA_LEN, 
+					cData, (PDATA_LEN+MIC_LEN), MIC_LEN, NULL);
 			while (ccm_auth_decrypt_check_status()!=AES_CTRL_INT_STAT_RESULT_AV){}
 			uint8_t auth_res;
-			auth_res = ccm_auth_decrypt_get_result(cData, pdata_len+mic_len, myMic, mic_len);
+			auth_res = ccm_auth_decrypt_get_result(cData, PDATA_LEN+MIC_LEN, myMic, MIC_LEN);
 			if (auth_res==CRYPTO_SUCCESS){
 				printf("Authentication success\r\n");
 				int meterData = (cData[3]<<24 | cData[2]<<16 | cData[1]<<8 | cData[0]);
@@ -100,7 +93,7 @@ PROCESS_THREAD(radioRXOnlyProcess, ev, data)
 					printf("0x%x ", myNonce[i]);
 				printf("\r\n");
 				printf("Authentication data: ");
-				for (i=0; i<adata_len; i++)
+				for (i=0; i<ADATA_LEN; i++)
 					printf("0x%x ", srcExtAddr[i]);
 				printf("\r\n");
 			}
