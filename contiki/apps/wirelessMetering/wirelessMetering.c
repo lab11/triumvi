@@ -7,6 +7,8 @@
 #include "dev/sys-ctrl.h"
 #include "dev/gpio.h"
 #include "dev/gptimer.h"
+#include "dev/crypto.h"
+#include "dev/ccm.h"
 #include "net/packetbuf.h"
 #include "net/netstack.h"
 #include "adc.h"
@@ -41,23 +43,8 @@ uint16_t adcVal[BUF_SIZE];
 uint32_t timerVal[BUF_SIZE];
 volatile uint32_t referenceIntTime;
 
-// node2
-int sineTable[BUF_SIZE] = {
--109, -116, -122, -128, -134, -139, -144, -149, -153, 
--156, -160, -162, -165, -167, -168, -169, -170, 
--170, -169, -168, -167, -165, -163, -160, -157, 
--153, -149, -145, -140, -135, -129, -123, -117, 
--110, -103, -96, -89, -81, -73, -65, -56, 
--48, -39, -31, -22, -13, -4, 5, 14, 
-23, 32, 40, 49, 57, 66, 74, 82, 
-90, 97, 104, 111, 118, 124, 130, 135, 
-141, 145, 150, 154, 157, 160, 163, 165, 
-167, 168, 169, 170, 170, 169, 168, 166, 
-165, 162, 159, 156, 152, 148, 143, 139, 
-133, 127, 121, 115, 108, 101, 94, 86, 
-79, 71, 62, 54, 45, 37, 28, 19, 
-10, 1, -8, -16, -25, -34, -43, -51, 
--60, -68, -76, -84, -92, -99, -106};
+#include "calibrateData.h"
+
 
 #define PGOOD_GPIO_NUM	GPIO_B_NUM
 #define PGOOD_GPIO_BASE	GPIO_B_BASE
@@ -88,15 +75,8 @@ int sineTable[BUF_SIZE] = {
 #define MUX_A0_GPIO_PIN 6
 #define MUX_EN_GPIO_PIN 7
 
-// Packet structure:
-// TYPE_ENERGY, ENERGY_UNIT, DATA
-#define METER_TYPE_ENERGY 0xaa
-#define METER_ENERGY_UNIT_mW 0x0
-#define METER_DATA_OFFSET 2
-#define METER_DATA_LENGTH 4
 
 #define CURVE_FIT
-//#define CALIBRATE
 #define TWO_LDO
 
 /*
@@ -117,12 +97,12 @@ unit is A, multiply by 1000 gets mA
 
 // The following data is accuired from 98% tile
 // y = POLY_NEG_OR1*x + POLY_NEG_OR0
-#define POLY_NEG_OR1 0.96
-#define POLY_NEG_OR0 3.05
+#define POLY_NEG_OR1 1.03
+#define POLY_NEG_OR0 2.29
 
 // y = POLY_POS_OR1*x + POLY_POS_OR0
-#define POLY_POS_OR1 0.99
-#define POLY_POS_OR0 3.77 
+#define POLY_POS_OR1 0.94
+#define POLY_POS_OR0 2.54
 
 #define VOLTAGE 0x0
 #define CURRENT 0x1
@@ -146,11 +126,12 @@ void setINAGain(uint8_t gain);
 inline uint8_t getINAIDX();
 inline uint8_t getINAGain();
 inline void meterMUXConfig(uint8_t en);
-int currentProcess(uint32_t* timeStamp, uint16_t *data, uint16_t vRefADCVal, int *power);
+int currentProcess(uint16_t *data, uint16_t vRefADCVal, int *power);
 void increaseINAGain();
 void decreaseINAGain();
 inline int getThreshold(uint8_t inaGain);
 static void disable_all_ioc_override();
+void packData(uint8_t* dest, int reading);
 // End of prototypes
 
 
@@ -166,7 +147,6 @@ typedef enum state{
 	#endif
 	waitingVoltageInt,
 	waitingRadioInt,
-	turnOnLED,
 	nullState
 } state_t;
 
@@ -179,16 +159,33 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 	PROCESS_BEGIN();
 	CC2538_RF_CSP_ISRFOFF();
 
-	uint8_t i;
 	#ifdef CALIBRATE
 	static uint8_t calibrate_cnt = 0;
 	#else
+	static uint8_t meterData[13];
+	#ifdef AES_ENABLE
+	// packet preprocessing
+	static uint8_t readingBuf[4];
+	static uint8_t extAddr[8];
+    NETSTACK_RADIO.get_object(RADIO_PARAM_64BIT_ADDR, extAddr, 8);
+	
+	// AES Preprocessing
+	static uint8_t aesKey[] = AES_KEY;
+	static uint8_t myMic[8] = {0x0};
+	static uint8_t myNonce[13] = {0};
+	memcpy(myNonce, extAddr, 8);
+	static uint32_t nonceCounter = 0;
+	aes_load_keys(aesKey, AES_KEY_STORE_SIZE_KEY_SIZE_128, 1, 0);
+
+	static uint8_t* aData = myNonce;
+	static uint8_t* pData = readingBuf;
+	#endif
+	#endif
 	static int avgPower;
 	static int powerValid;
-	#endif
-	static uint8_t meterData[BUF_SIZE];
 	static uint8_t inaGain;
 	uint16_t vRefADCVal;
+
 	
 	meterInit();
 
@@ -229,11 +226,7 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 					rtimerExpired = 0;
 					meterSenseConfig(CURRENT, SENSE_ENABLE);
 					meterMUXConfig(SENSE_ENABLE);
-					#ifdef CALIBRATE
-					setINAGain(1);
-					#else
 					setINAGain(inaGain);
-					#endif
 					rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.05, 1, &rtimerEvent, NULL);
 					myState = waitingCurrentStable;
 				}
@@ -292,60 +285,50 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 					vRefADCVal = ((vRefADCVal>>4)>2048)? 0 : (vRefADCVal>>4);
 					disableAll();
 					voltageCompInt = 0;
-					#ifdef CALIBRATE
-					//meterData[0] = 0xbb;
-					//meterData[1] = vRefADCVal&0xff;
-					//meterData[2] = (vRefADCVal&0xff00)>>8;
-					//meterData[3] = (referenceIntTime-timerVal[0])&0xff;
-					//meterData[4] = ((referenceIntTime-timerVal[0])&0xff00)>>8;
-					//meterData[5] = (timerVal[0]-timerVal[1])&0xff;
-					//meterData[6] = ((timerVal[0]-timerVal[1])&0xff00)>>8;
-					//uint8_t byteCnt = 6;
-					//for (i=0; i<BUF_SIZE; i+=3){
-					//	meterData[byteCnt+1] = (adcVal[i]%0xff);
-					//	meterData[byteCnt+2] = ((adcVal[i]&0xff00)>>8);
-					//	byteCnt+=2;
-					//}
-					//packetbuf_copyfrom(meterData, 87);
-					//cc2538_on_and_transmit();
-					//CC2538_RF_CSP_ISRFOFF();
-					//printf("packet transmitted\r\n");
-					if (calibrate_cnt<255)
-						calibrate_cnt++;
-					else
-						leds_toggle(LEDS_RED);
-					printf("ADC reference: %u\r\n", vRefADCVal);
-					printf("Time difference: %lu\r\n", (timerVal[0]-timerVal[1]));
-					for (i=0; i<BUF_SIZE; i+=1){
-						printf("ADC reading: %u\r\n", adcVal[i]);
-					}
-					#else
-					powerValid = currentProcess(timerVal, adcVal, vRefADCVal, &avgPower);
+					powerValid = currentProcess(adcVal, vRefADCVal, &avgPower);
 					inaGain = getINAGain();
 					setINAGain(1);
 					if (powerValid>0){
+						#ifdef CALIBRATE
+						uint8_t i;
+						if (calibrate_cnt<255)
+							calibrate_cnt++;
+						else
+							leds_toggle(LEDS_RED);
+						printf("ADC reference: %u\r\n", vRefADCVal);
+						printf("Time difference: %lu\r\n", (timerVal[0]-timerVal[1]));
+						printf("INA Gain: %u\r\n", inaGain);
+						for (i=0; i<BUF_SIZE; i+=1){
+							printf("ADC reading: %u\r\n", adcVal[i]);
+						}
+						#else
+						#ifdef AES_ENABLE
+						meterData[0] = AES_PKT_IDENTIFIER;
+						packData(&myNonce[9], nonceCounter);
+						packData(readingBuf, avgPower);
+						packData(&meterData[1], nonceCounter);
+						ccm_auth_encrypt_start(LEN_LEN, 0, myNonce, aData, ADATA_LEN, 
+										pData, PDATA_LEN, MIC_LEN, NULL);
+						nonceCounter += 1;
+						while(ccm_auth_encrypt_check_status()!=AES_CTRL_INT_STAT_RESULT_AV){}
+						ccm_auth_encrypt_get_result(myMic, MIC_LEN);
+						memcpy(&meterData[5], readingBuf, PDATA_LEN);
+						memcpy(&meterData[9], myMic, MIC_LEN);
+						packetbuf_copyfrom(meterData, 13);
+						#else
+						uint8_t i;
+						//packData(&meterData[METER_DATA_OFFSET], avgPower);
 						for (i=0; i<METER_DATA_LENGTH; i++){
 							meterData[METER_DATA_OFFSET+i] = (avgPower&(0xff<<(i<<3)))>>(i<<3);
 						}
 						meterData[0] = METER_TYPE_ENERGY;
 						meterData[1] = METER_ENERGY_UNIT_mW;
 						packetbuf_copyfrom(meterData, (METER_DATA_OFFSET+METER_DATA_LENGTH));
+						#endif
 						cc2538_on_and_transmit();
 						CC2538_RF_CSP_ISRFOFF();
+						#endif
 					}
-					#endif
-					//rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.05, 1, &rtimerEvent, NULL);
-					//leds_on(LEDS_RED);
-					//myState = turnOnLED;
-					rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*backOffTime, 1, &rtimerEvent, NULL);
-					myState = init;
-				}
-			break;
-
-			case turnOnLED:
-				if (rtimerExpired){
-					rtimerExpired = 0;
-					leds_off(LEDS_RED);
 					rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*backOffTime, 1, &rtimerEvent, NULL);
 					myState = init;
 				}
@@ -524,11 +507,16 @@ void meterInit(){
 	#else
 	backOffTime = 16;
 	#endif
-	//backOffTime = 1;
 	backOffHistory = 0;
 
+	#ifdef START_IMMEDIATELY
+	meterSenseConfig(VOLTAGE, SENSE_ENABLE);
+	rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.3, 1, &rtimerEvent, NULL);
+	myState = waitingVoltageStable;
+	#else
 	rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*backOffTime, 1, &rtimerEvent, NULL);
 	myState = init;
+	#endif
 }
 
 void increaseINAGain(){
@@ -585,7 +573,7 @@ inline int getThreshold(uint8_t inaGain){
 		return 650;
 }
 
-int currentProcess(uint32_t* timeStamp, uint16_t *data, uint16_t vRefADCVal, int *power){
+int currentProcess(uint16_t *data, uint16_t vRefADCVal, int *power){
 	uint16_t i;
 	int currentCal;
 	int energyCal = 0;
@@ -623,5 +611,13 @@ int currentProcess(uint32_t* timeStamp, uint16_t *data, uint16_t vRefADCVal, int
 		return 1;
 	}
 }
+
+void packData(uint8_t* dest, int reading){
+	uint8_t i;
+	for (i=0; i<4; i++){
+		dest[i] = (reading&(0xff<<(i<<3)))>>(i<<3);
+	}
+}
+
 
 /*---------------------------------------------------------------------------*/
