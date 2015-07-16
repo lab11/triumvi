@@ -138,7 +138,7 @@ typedef uint32_t rtimer_clock_t;
  * @{
  */
 #ifndef UART_CONF_ENABLE
-#define UART_CONF_ENABLE            1 /**< Enable/Disable UART I/O */
+#define UART_CONF_ENABLE            0 /**< Enable/Disable UART I/O */
 #endif
 
 #ifndef UART_CONF_BAUD_RATE
@@ -525,8 +525,10 @@ typedef uint32_t rtimer_clock_t;
 /*---------------------------------------------------------------------------*/
 
 /* AES Key */
+#ifdef AES_ENABLE
 #ifndef AES_KEY
 #define AES_KEY {0x46, 0xe2, 0xe5, 0x28, 0x9a, 0x65, 0x3c, 0xe9, 0x0, 0x2f, 0xc1, 0x6e, 0x65, 0xee, 0xc, 0x3e}
+#endif
 #endif
 
 #endif /* CONTIKI_CONF_H_ */

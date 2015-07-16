@@ -33,6 +33,8 @@
 #include "reg.h"
 #include "ieee-addr.h"
 #include "lpm.h"
+#include "dev/crypto.h"
+#include "dev/ccm.h"
 //#include "spi.h"
 //#include "fm25l04b.h"
 //#include "rv3049.h"
@@ -110,6 +112,10 @@ main(void)
   //spi_init();
   //fm25l04b_init();
   //rv3049_init();
+#ifdef AES_ENABLE
+	crypto_init();
+	REG(AES_CTRL_ALG_SEL) = 0x00000000; // reset AES module
+#endif
 
   /*
    * Character I/O Initialization.

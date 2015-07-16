@@ -5,7 +5,7 @@ TARGETDIRS += ../../platform
 
 all: $(CONTIKI_PROJECT)
 
-UIP_CONF_IPV6=1
+UIP_CONF_IPV6=0
 
 CONTIKI = ../../../../contiki
 include $(CONTIKI)/Makefile.include
