@@ -30,10 +30,6 @@ PROCESS(wirelessMeterProcessing, "Wireless Metering Process");
 AUTOSTART_PROCESSES(&wirelessMeterProcessing);
 
 
-volatile uint8_t voltageCompInt;
-volatile uint8_t referenceCrossInt;
-volatile uint8_t timeoutInt;
-volatile uint8_t rtimerExpired;
 volatile uint8_t backOffTime;
 volatile uint8_t backOffHistory;
 static const uint8_t inaGainArr[4] = {1, 2, 5, 10};
@@ -41,7 +37,6 @@ static const uint8_t inaGainArr[4] = {1, 2, 5, 10};
 #define BUF_SIZE 120
 uint16_t adcVal[BUF_SIZE];
 uint32_t timerVal[BUF_SIZE];
-volatile uint32_t referenceIntTime;
 
 #include "calibrateData.h"
 
@@ -97,12 +92,12 @@ unit is A, multiply by 1000 gets mA
 
 // The following data is accuired from 98% tile
 // y = POLY_NEG_OR1*x + POLY_NEG_OR0
-#define POLY_NEG_OR1 1.03
-#define POLY_NEG_OR0 2.29
+#define POLY_NEG_OR1 1.01
+#define POLY_NEG_OR0 2.42
 
 // y = POLY_POS_OR1*x + POLY_POS_OR0
-#define POLY_POS_OR1 0.94
-#define POLY_POS_OR0 2.54
+#define POLY_POS_OR1 0.93
+#define POLY_POS_OR0 2.32
 
 #define VOLTAGE 0x0
 #define CURRENT 0x1
@@ -191,147 +186,127 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 
 	inaGain = getINAGain();
 	setINAGain(1);
-
 	disableAll();
+	#ifdef START_IMMEDIATELY
+	meterSenseConfig(VOLTAGE, SENSE_ENABLE);
+	rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.3, 1, &rtimerEvent, NULL);
+	myState = waitingVoltageStable;
+	#endif
 	while(1){
 		PROCESS_YIELD();
 		switch (myState){
 			// initialization state, release voltage measurement gating
 			case init:
-				if (rtimerExpired){
-					rtimerExpired = 0;
-					if (GPIO_READ_PIN(PGOOD_GPIO_BASE, 0x1<<PGOOD_GPIO_PIN)){
-						meterSenseConfig(VOLTAGE, SENSE_ENABLE);
-						rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.3, 1, &rtimerEvent, NULL);
-						myState = waitingVoltageStable;
-						// consecutive 4 samples, decreases sampling interval
-						if (((backOffHistory&0x0f)==0x0f)&&(backOffTime>2))
-							backOffTime = (backOffTime>>1);
-						backOffHistory = (backOffHistory<<1) | 0x01;
-					}
-					else{
-						#ifndef CALIBRATE
-						if (backOffTime<16)
-							backOffTime = (backOffTime<<2);
-						backOffHistory = (backOffHistory<<1) & (~0x01);
-						#endif
-						rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*backOffTime, 1, &rtimerEvent, NULL);
-					}
+				if (GPIO_READ_PIN(PGOOD_GPIO_BASE, 0x1<<PGOOD_GPIO_PIN)){
+					meterSenseConfig(VOLTAGE, SENSE_ENABLE);
+					rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.3, 1, &rtimerEvent, NULL);
+					myState = waitingVoltageStable;
+					// consecutive 4 samples, decreases sampling interval
+					if (((backOffHistory&0x0f)==0x0f)&&(backOffTime>2))
+						backOffTime = (backOffTime>>1);
+					backOffHistory = (backOffHistory<<1) | 0x01;
+				}
+				else{
+					#ifndef CALIBRATE
+					if (backOffTime<16)
+						backOffTime = (backOffTime<<2);
+					backOffHistory = (backOffHistory<<1) & (~0x01);
+					#endif
+					rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*backOffTime, 1, &rtimerEvent, NULL);
 				}
 			break;
 
 			// voltage is sattled, enable current measurement
 			case waitingVoltageStable:
-				if (rtimerExpired){
-					rtimerExpired = 0;
-					meterSenseConfig(CURRENT, SENSE_ENABLE);
-					meterMUXConfig(SENSE_ENABLE);
-					setINAGain(inaGain);
-					rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.05, 1, &rtimerEvent, NULL);
-					myState = waitingCurrentStable;
-				}
+				meterSenseConfig(CURRENT, SENSE_ENABLE);
+				meterMUXConfig(SENSE_ENABLE);
+				setINAGain(inaGain);
+				rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.05, 1, &rtimerEvent, NULL);
+				myState = waitingCurrentStable;
 			break;
 
 			// enable comparator interrupt
 			case waitingCurrentStable:
-				if (rtimerExpired){
-					rtimerExpired = 0;
-					GPIO_DETECT_FALLING(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
-					meterVoltageComparator(SENSE_ENABLE);
-					myState = waitingNegEdge;
-				}
+				GPIO_DETECT_FALLING(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
+				meterVoltageComparator(SENSE_ENABLE);
+				myState = waitingNegEdge;
 			break;
 
 			case waitingNegEdge:
-				if (voltageCompInt){
-					voltageCompInt = 0;
-					rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.007, 1, &rtimerEvent, NULL);
-					myState = waitingComparatorStable;
-				}
+				rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.007, 1, &rtimerEvent, NULL);
+				myState = waitingComparatorStable;
 			break;
 
 			case waitingComparatorStable:
-				if (rtimerExpired){
-					rtimerExpired = 0;
-					GPIO_DETECT_RISING(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
-					meterVoltageComparator(SENSE_ENABLE);
-					#ifdef TWO_LDO
-					ungate_gpt(GPTIMER_1);
-					REG(SYSTICK_STCTRL) &= (~SYSTICK_STCTRL_INTEN);
-					myState = waitingVoltageInt;
-					#else
-					myState = waitingComparatorStable2;
-					#endif
-				}
+				GPIO_DETECT_RISING(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
+				meterVoltageComparator(SENSE_ENABLE);
+				#ifdef TWO_LDO
+				ungate_gpt(GPTIMER_1);
+				REG(SYSTICK_STCTRL) &= (~SYSTICK_STCTRL_INTEN);
+				myState = waitingVoltageInt;
+				#else
+				myState = waitingComparatorStable2;
+				#endif
 			break;
 
 			#ifndef TWO_LDO
 			case waitingComparatorStable2:
-				if (voltageCompInt){
-					voltageCompInt = 0;
-					ungate_gpt(GPTIMER_1);
-					REG(SYSTICK_STCTRL) &= (~SYSTICK_STCTRL_INTEN);
-					meterVoltageComparator(SENSE_ENABLE);
-					myState = waitingVoltageInt;
-				}
+				ungate_gpt(GPTIMER_1);
+				REG(SYSTICK_STCTRL) &= (~SYSTICK_STCTRL_INTEN);
+				meterVoltageComparator(SENSE_ENABLE);
+				myState = waitingVoltageInt;
 			break;
 			#endif
 
 			// Start measure current
 			case waitingVoltageInt:
-				if (voltageCompInt){
-					sampleCurrentWaveform();
-					vRefADCVal = adc_get(V_REF_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_512);
-					vRefADCVal = ((vRefADCVal>>4)>2048)? 0 : (vRefADCVal>>4);
-					disableAll();
-					voltageCompInt = 0;
-					powerValid = currentProcess(adcVal, vRefADCVal, &avgPower);
-					inaGain = getINAGain();
-					setINAGain(1);
-					if (powerValid>0){
-						#ifdef CALIBRATE
-						uint8_t i;
-						if (calibrate_cnt<255)
-							calibrate_cnt++;
-						else
-							leds_toggle(LEDS_RED);
-						printf("ADC reference: %u\r\n", vRefADCVal);
-						printf("Time difference: %lu\r\n", (timerVal[0]-timerVal[1]));
-						printf("INA Gain: %u\r\n", inaGain);
-						for (i=0; i<BUF_SIZE; i+=1){
-							printf("ADC reading: %u\r\n", adcVal[i]);
-						}
-						#else
-						#ifdef AES_ENABLE
-						meterData[0] = AES_PKT_IDENTIFIER;
-						packData(&myNonce[9], nonceCounter);
-						packData(readingBuf, avgPower);
-						packData(&meterData[1], nonceCounter);
-						ccm_auth_encrypt_start(LEN_LEN, 0, myNonce, aData, ADATA_LEN, 
-										pData, PDATA_LEN, MIC_LEN, NULL);
-						nonceCounter += 1;
-						while(ccm_auth_encrypt_check_status()!=AES_CTRL_INT_STAT_RESULT_AV){}
-						ccm_auth_encrypt_get_result(myMic, MIC_LEN);
-						memcpy(&meterData[5], readingBuf, PDATA_LEN);
-						memcpy(&meterData[9], myMic, MIC_LEN);
-						packetbuf_copyfrom(meterData, 13);
-						#else
-						uint8_t i;
-						//packData(&meterData[METER_DATA_OFFSET], avgPower);
-						for (i=0; i<METER_DATA_LENGTH; i++){
-							meterData[METER_DATA_OFFSET+i] = (avgPower&(0xff<<(i<<3)))>>(i<<3);
-						}
-						meterData[0] = METER_TYPE_ENERGY;
-						meterData[1] = METER_ENERGY_UNIT_mW;
-						packetbuf_copyfrom(meterData, (METER_DATA_OFFSET+METER_DATA_LENGTH));
-						#endif
-						cc2538_on_and_transmit();
-						CC2538_RF_CSP_ISRFOFF();
-						#endif
+				sampleCurrentWaveform();
+				vRefADCVal = adc_get(V_REF_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_512);
+				vRefADCVal = ((vRefADCVal>>4)>2048)? 0 : (vRefADCVal>>4);
+				disableAll();
+				powerValid = currentProcess(adcVal, vRefADCVal, &avgPower);
+				inaGain = getINAGain();
+				setINAGain(1);
+				if (powerValid>0){
+					#ifdef CALIBRATE
+					uint8_t i;
+					if (calibrate_cnt<255)
+						calibrate_cnt++;
+					else
+						leds_toggle(LEDS_RED);
+					printf("ADC reference: %u\r\n", vRefADCVal);
+					printf("Time difference: %lu\r\n", (timerVal[0]-timerVal[1]));
+					printf("INA Gain: %u\r\n", inaGain);
+					for (i=0; i<BUF_SIZE; i+=1){
+						printf("ADC reading: %u\r\n", adcVal[i]);
 					}
-					rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*backOffTime, 1, &rtimerEvent, NULL);
-					myState = init;
+					#else
+					#ifdef AES_ENABLE
+					meterData[0] = AES_PKT_IDENTIFIER;
+					packData(&myNonce[9], nonceCounter);
+					packData(readingBuf, avgPower);
+					packData(&meterData[1], nonceCounter);
+					ccm_auth_encrypt_start(LEN_LEN, 0, myNonce, aData, ADATA_LEN, 
+									pData, PDATA_LEN, MIC_LEN, NULL);
+					nonceCounter += 1;
+					while(ccm_auth_encrypt_check_status()!=AES_CTRL_INT_STAT_RESULT_AV){}
+					ccm_auth_encrypt_get_result(myMic, MIC_LEN);
+					memcpy(&meterData[5], readingBuf, PDATA_LEN);
+					memcpy(&meterData[9], myMic, MIC_LEN);
+					packetbuf_copyfrom(meterData, 13);
+					#else
+					uint8_t i;
+					packData(&meterData[METER_DATA_OFFSET], avgPower);
+					meterData[0] = METER_TYPE_ENERGY;
+					meterData[1] = METER_ENERGY_UNIT_mW;
+					packetbuf_copyfrom(meterData, (METER_DATA_OFFSET+METER_DATA_LENGTH));
+					#endif
+					cc2538_on_and_transmit();
+					CC2538_RF_CSP_ISRFOFF();
+					#endif
 				}
+				rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*backOffTime, 1, &rtimerEvent, NULL);
+				myState = init;
 			break;
 
 			default:
@@ -400,9 +375,7 @@ static void pGOODIntCallBack(uint8_t port, uint8_t pin){
 
 // Don't add/remove any lines in this subroutine
 static void referenceIntCallBack(uint8_t port, uint8_t pin){
-	referenceIntTime = get_event_time(GPTIMER_1, GPTIMER_SUBTIMER_A);
 	meterVoltageComparator(SENSE_DISABLE);
-	voltageCompInt = 1;
 	process_poll(&wirelessMeterProcessing);
 }
 
@@ -419,7 +392,6 @@ void sampleCurrentWaveform(){
 }
 
 static void rtimerEvent(struct rtimer *t, void *ptr){
-	rtimerExpired = 1;
 	process_poll(&wirelessMeterProcessing);
 }
 
@@ -509,11 +481,7 @@ void meterInit(){
 	#endif
 	backOffHistory = 0;
 
-	#ifdef START_IMMEDIATELY
-	meterSenseConfig(VOLTAGE, SENSE_ENABLE);
-	rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.3, 1, &rtimerEvent, NULL);
-	myState = waitingVoltageStable;
-	#else
+	#ifndef START_IMMEDIATELY
 	rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*backOffTime, 1, &rtimerEvent, NULL);
 	myState = init;
 	#endif
@@ -607,7 +575,10 @@ int currentProcess(uint16_t *data, uint16_t vRefADCVal, int *power){
 	}
 	else{
 		avgPower = energyCal*P_TRANSFORM/inaGain; // Unit is mW
-		*power = (int)avgPower;
+		if (avgPower < 180000)
+			*power = (int)(avgPower + 2000); // manually adjust this
+		else
+			*power = (int)avgPower;
 		return 1;
 	}
 }
