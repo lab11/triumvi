@@ -188,6 +188,7 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 	setINAGain(1);
 	disableAll();
 	#ifdef START_IMMEDIATELY
+	while (GPIO_READ_PIN(PGOOD_GPIO_BASE, 0x1<<PGOOD_GPIO_PIN)==0){}
 	meterSenseConfig(VOLTAGE, SENSE_ENABLE);
 	rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.3, 1, &rtimerEvent, NULL);
 	myState = waitingVoltageStable;
