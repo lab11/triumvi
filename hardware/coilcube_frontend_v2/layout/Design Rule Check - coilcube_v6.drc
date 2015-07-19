@@ -1,0 +1,90 @@
+Protel Design System Design Rule Check
+PCB File : \\psf\Dropbox\Altium_YeSheng\coilcube_frontend_v2\layout\coilcube_v6.PcbDoc
+Date     : 6/12/2015
+Time     : 6:39:48 PM
+
+Processing Rule : Clearance Constraint (Gap=6mil) (All),(All)
+   Violation between Track (1115.315mil,555.315mil)(1130mil,570mil)  Top Layer and 
+                     Pad U3-8(1135mil,531.26mil)  Top Layer
+   Violation between Track (1130mil,570mil)(1245.472mil,570mil)  Top Layer and 
+                     Pad U3-8(1135mil,531.26mil)  Top Layer
+   Violation between Track (1130mil,570mil)(1245.472mil,570mil)  Top Layer and 
+                     Pad U3-10(1174.37mil,531.26mil)  Top Layer
+   Violation between Track (1130mil,570mil)(1245.472mil,570mil)  Top Layer and 
+                     Pad U3-9(1154.685mil,531.26mil)  Top Layer
+   Violation between Track (1113mil,635.887mil)(1113mil,664.981mil)  Top Layer and 
+                     Pad U3-5(1095.63mil,688.74mil)  Top Layer
+   Violation between Track (1113mil,664.981mil)(1113.716mil,665.697mil)  Top Layer and 
+                     Pad U3-5(1095.63mil,688.74mil)  Top Layer
+   Violation between Track (1154.685mil,665.315mil)(1170mil,650mil)  Top Layer and 
+                     Pad U3-1(1174.37mil,688.74mil)  Top Layer
+   Violation between Track (1170mil,650mil)(1215.472mil,650mil)  Top Layer and 
+                     Pad U3-1(1174.37mil,688.74mil)  Top Layer
+Rule Violations :8
+
+Processing Rule : Width Constraint (Min=6mil) (Max=100mil) (Preferred=10mil) (All)
+Rule Violations :0
+
+Processing Rule : Power Plane Connect Rule(Relief Connect )(Expansion=10mil) (Conductor Width=8mil) (Air Gap=10mil) (Entries=4) (All)
+Rule Violations :0
+
+Processing Rule : Short-Circuit Constraint (Allowed=No) (All),(All)
+Rule Violations :0
+
+Processing Rule : Un-Routed Net Constraint ( (All) )
+Rule Violations :0
+
+Processing Rule : Minimum Annular Ring (Minimum=7mil) (Disabled)(All)
+Rule Violations :0
+
+Processing Rule : Hole Size Constraint (Min=8mil) (Max=251mil) (All)
+Rule Violations :0
+
+Processing Rule : Hole Size Constraint (Min=1mil) (Max=100mil) (All)
+Rule Violations :0
+
+Processing Rule : Hole Size Constraint (Min=1mil) (Max=100mil) (All)
+Rule Violations :0
+
+Processing Rule : Height Constraint (Min=0mil) (Max=1000mil) (Prefered=500mil) (All)
+Rule Violations :0
+
+Processing Rule : Hole To Hole Clearance (Gap=10mil) (All),(All)
+Rule Violations :0
+
+Processing Rule : Minimum Solder Mask Sliver (Gap=10mil) (Disabled)(All),(All)
+Rule Violations :0
+
+Processing Rule : Silk To Solder Mask (Clearance=10mil) (Disabled)(IsPad),(All)
+Rule Violations :0
+
+Processing Rule : Silk to Silk (Clearance=10mil) (Disabled)(All),(All)
+Rule Violations :0
+
+Processing Rule : Silk primitive without silk layer
+Rule Violations :0
+
+Processing Rule : Net Antennae (Tolerance=0mil) (All)
+Rule Violations :0
+
+Processing Rule : Modified Polygon (Allow modified: No), (Allow shelved: No)
+Rule Violations :0
+
+Processing Rule : Room current_switch (Bounding Region = (7045mil, 1060mil, 7450mil, 1270mil) (Disabled)(InComponentClass('current_switch'))
+Rule Violations :0
+
+Processing Rule : Room harvesting2 (Bounding Region = (1192.441mil, 1356.142mil, 3262.5mil, 2263.858mil) (Disabled)(InComponentClass('harvesting2'))
+Rule Violations :0
+
+Processing Rule : Room IVSense (Bounding Region = (2007.299mil, 1337.52mil, 2704.606mil, 2070mil) (Disabled)(InComponentClass('IVSense'))
+Rule Violations :0
+
+Processing Rule : Room MCU (Bounding Region = (2337.5mil, 1330.102mil, 3191.063mil, 2259.904mil) (Disabled)(InComponentClass('MCU'))
+Rule Violations :0
+
+Processing Rule : Clearance Constraint (Gap=10mil) (InPadClass('NPHOLES')),(All)
+Rule Violations :0
+
+
+Violations Detected : 8
+Time Elapsed        : 00:00:01

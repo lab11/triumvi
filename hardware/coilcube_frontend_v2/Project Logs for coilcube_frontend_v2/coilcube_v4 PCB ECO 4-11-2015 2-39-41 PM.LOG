@@ -1,9 +1,0 @@
-Added Component: Designator=C18(0603)
-Added Component: Designator=R22(0603)
-Added Pin To Net: NetName=GND Pin=C18-2
-Added Pin To Net: NetName=NetR18_1 Pin=R22-1
-Added Pin To Net: NetName=NetC18_1 Pin=C18-1
-Added Pin To Net: NetName=NetC18_1 Pin=R22-2
-Added Net: Name=NetC18_1
-Added Member To Class: ClassName=IVSense Member=Component C18 Ceramic capacitor
-Added Member To Class: ClassName=IVSense Member=Component R22 Chip resistor

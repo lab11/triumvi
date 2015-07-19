@@ -1,6 +1,0 @@
-Change Component Description : Designator=U4 Old Description=0.9 £gA, High Precision Op Amps New Description=0.9 £gA, High Precision Op Amps
-Change Component Description : Designator=U3 Old Description=Micro-Power (50£gA), Zero-Drift, Rail-to-Rail Out  Instrumentation Amplifier New Description=Micro-Power (50£gA), Zero-Drift, Rail-to-Rail Out  Instrumentation Amplifier
-Added Component: Designator=P3(1x2 header)
-Added Pin To Net: NetName=GND Pin=P3-1
-Added Pin To Net: NetName=GND Pin=P3-2
-Added Member To Class: ClassName=harvesting Member=Component P3 1 x 2 header

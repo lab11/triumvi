@@ -1,4 +1,0 @@
-Added Component: Designator=P13(1x2 header)
-Added Pin To Net: NetName=NetJ4_1 Pin=P13-1
-Added Pin To Net: NetName=NetJ4_1 Pin=P13-2
-Added Member To Class: ClassName=voltage_measurment Member=Component P13 1 x 2 header
