@@ -72,7 +72,6 @@ uint32_t timerVal[BUF_SIZE];
 
 
 #define CURVE_FIT
-#define TWO_LDO
 
 /*
 // 3.0078 degree / sample, DC = 170
@@ -134,12 +133,9 @@ void packData(uint8_t* dest, int reading);
 typedef enum state{
 	init,
 	waitingVoltageStable,
-	waitingCurrentStable,
-	waitingNegEdge,
+	//waitingCurrentStable,
+	//waitingNegEdge,
 	waitingComparatorStable,
-	#ifndef TWO_LDO
-	waitingComparatorStable2,
-	#endif
 	waitingVoltageInt,
 	waitingRadioInt,
 	nullState
@@ -223,41 +219,30 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 				meterMUXConfig(SENSE_ENABLE);
 				setINAGain(inaGain);
 				rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.05, 1, &rtimerEvent, NULL);
-				myState = waitingCurrentStable;
+				//myState = waitingCurrentStable;
+				myState = waitingComparatorStable;
 			break;
 
 			// enable comparator interrupt
-			case waitingCurrentStable:
-				GPIO_DETECT_FALLING(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
-				meterVoltageComparator(SENSE_ENABLE);
-				myState = waitingNegEdge;
-			break;
+			//case waitingCurrentStable:
+			//	GPIO_DETECT_FALLING(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
+			//	meterVoltageComparator(SENSE_ENABLE);
+			//	myState = waitingNegEdge;
+			//break;
 
-			case waitingNegEdge:
-				rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.007, 1, &rtimerEvent, NULL);
-				myState = waitingComparatorStable;
-			break;
+			//case waitingNegEdge:
+			//	rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.007, 1, &rtimerEvent, NULL);
+			//	myState = waitingComparatorStable;
+			//break;
 
 			case waitingComparatorStable:
 				GPIO_DETECT_RISING(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
 				meterVoltageComparator(SENSE_ENABLE);
-				#ifdef TWO_LDO
 				ungate_gpt(GPTIMER_1);
 				REG(SYSTICK_STCTRL) &= (~SYSTICK_STCTRL_INTEN);
 				myState = waitingVoltageInt;
-				#else
-				myState = waitingComparatorStable2;
-				#endif
 			break;
 
-			#ifndef TWO_LDO
-			case waitingComparatorStable2:
-				ungate_gpt(GPTIMER_1);
-				REG(SYSTICK_STCTRL) &= (~SYSTICK_STCTRL_INTEN);
-				meterVoltageComparator(SENSE_ENABLE);
-				myState = waitingVoltageInt;
-			break;
-			#endif
 
 			// Start measure current
 			case waitingVoltageInt:
@@ -449,7 +434,7 @@ void meterInit(){
 	ioc_set_over(PGOOD_GPIO_NUM, PGOOD_GPIO_PIN, IOC_OVERRIDE_DIS);
 	GPIO_DETECT_EDGE(PGOOD_GPIO_BASE, 0x1<<PGOOD_GPIO_PIN);
 	GPIO_TRIGGER_SINGLE_EDGE(PGOOD_GPIO_BASE, 0x1<<PGOOD_GPIO_PIN);
-	GPIO_DETECT_FALLING(PGOOD_GPIO_BASE, 0x1<<PGOOD_GPIO_PIN);
+	//GPIO_DETECT_FALLING(PGOOD_GPIO_BASE, 0x1<<PGOOD_GPIO_PIN);
 	// interrupt
 	gpio_register_callback(pGOODIntCallBack, PGOOD_GPIO_NUM, PGOOD_GPIO_PIN);
 	GPIO_ENABLE_INTERRUPT(PGOOD_GPIO_BASE, 0x1<<PGOOD_GPIO_PIN);
