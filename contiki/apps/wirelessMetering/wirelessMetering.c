@@ -75,8 +75,8 @@ uint32_t timerVal[BUF_SIZE];
 
 /*
 // 3.0078 degree / sample, DC = 170
-#define ADC_MAX_VAL 2048
-#define ADC_REF	3.3
+#define ADC_MAX_VAL 2047
+#define ADC_REF	3
 #define INA_GAIN 2
 #define CT_GAIN 0.00033333
 #define SHUNT_RESISTOR 90.9
@@ -86,8 +86,8 @@ I = (data - (vRef/adcRef)*adcMax)/adcMax*adcRef/inaGain/shuntResistor/ctGain
 unit is A, multiply by 1000 gets mA
 */
 
-#define I_TRANSFORM 48.34468 // 1000/ADC_MAX_VAL*ADC_REF/SHUNT_RESISTOR/CT_GAIN, unit is mA
-#define P_TRANSFORM 0.402872 // I_TRANSFORM/TABLE_SIZE, unit is mW
+#define I_TRANSFORM 48.36830 // 1000/ADC_MAX_VAL*ADC_REF/SHUNT_RESISTOR/CT_GAIN, unit is mA
+#define P_TRANSFORM 0.403069 // I_TRANSFORM/TABLE_SIZE, unit is mW
 
 // The following data is accuired from 98% tile
 // y = POLY_NEG_OR1*x + POLY_NEG_OR0
@@ -248,7 +248,7 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 			case waitingVoltageInt:
 				sampleCurrentWaveform();
 				vRefADCVal = adc_get(V_REF_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_512);
-				vRefADCVal = ((vRefADCVal>>4)>2048)? 0 : (vRefADCVal>>4);
+				vRefADCVal = ((vRefADCVal>>4)>2047)? 0 : (vRefADCVal>>4);
 				disableAll();
 				powerValid = currentProcess(adcVal, vRefADCVal, &avgPower);
 				inaGain = getINAGain();
@@ -372,7 +372,7 @@ void sampleCurrentWaveform(){
 	while (sampleCnt < BUF_SIZE){
 		timerVal[sampleCnt] = get_event_time(GPTIMER_1, GPTIMER_SUBTIMER_A);
 		temp = adc_get(I_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_512);
-		adcVal[sampleCnt] = ((temp>>4)>2048)? 0 : (temp>>4);
+		adcVal[sampleCnt] = ((temp>>4)>2047)? 0 : (temp>>4);
 		sampleCnt++;
 	}
 }
