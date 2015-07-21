@@ -30,6 +30,8 @@ PROCESS(wirelessMeterProcessing, "Wireless Metering Process");
 AUTOSTART_PROCESSES(&wirelessMeterProcessing);
 
 
+volatile uint8_t rTimerExpired;
+volatile uint8_t referenceInt;
 volatile uint8_t backOffTime;
 volatile uint8_t backOffHistory;
 static const uint8_t inaGainArr[4] = {1, 2, 5, 10};
@@ -133,8 +135,6 @@ void packData(uint8_t* dest, int reading);
 typedef enum state{
 	init,
 	waitingVoltageStable,
-	//waitingCurrentStable,
-	//waitingNegEdge,
 	waitingComparatorStable,
 	waitingVoltageInt,
 	waitingRadioInt,
@@ -194,105 +194,104 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 		switch (myState){
 			// initialization state, release voltage measurement gating
 			case init:
-				if (GPIO_READ_PIN(PGOOD_GPIO_BASE, 0x1<<PGOOD_GPIO_PIN)){
-					meterSenseConfig(VOLTAGE, SENSE_ENABLE);
-					rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.3, 1, &rtimerEvent, NULL);
-					myState = waitingVoltageStable;
-					// consecutive 4 samples, decreases sampling interval
-					if (((backOffHistory&0x0f)==0x0f)&&(backOffTime>2))
-						backOffTime = (backOffTime>>1);
-					backOffHistory = (backOffHistory<<1) | 0x01;
-				}
-				else{
-					#ifndef CALIBRATE
-					if (backOffTime<16)
-						backOffTime = (backOffTime<<2);
-					backOffHistory = (backOffHistory<<1) & (~0x01);
-					#endif
-					rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*backOffTime, 1, &rtimerEvent, NULL);
+				if (rTimerExpired==1){
+					rTimerExpired = 0;
+					if (GPIO_READ_PIN(PGOOD_GPIO_BASE, 0x1<<PGOOD_GPIO_PIN)){
+						meterSenseConfig(VOLTAGE, SENSE_ENABLE);
+						rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.3, 1, &rtimerEvent, NULL);
+						myState = waitingVoltageStable;
+						// consecutive 4 samples, decreases sampling interval
+						if (((backOffHistory&0x0f)==0x0f)&&(backOffTime>2))
+							backOffTime = (backOffTime>>1);
+						backOffHistory = (backOffHistory<<1) | 0x01;
+					}
+					else{
+						#ifndef CALIBRATE
+						if (backOffTime<16)
+							backOffTime = (backOffTime<<2);
+						backOffHistory = (backOffHistory<<1) & (~0x01);
+						#endif
+						rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*backOffTime, 1, &rtimerEvent, NULL);
+					}
 				}
 			break;
 
 			// voltage is sattled, enable current measurement
 			case waitingVoltageStable:
-				meterSenseConfig(CURRENT, SENSE_ENABLE);
-				meterMUXConfig(SENSE_ENABLE);
-				setINAGain(inaGain);
-				rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.05, 1, &rtimerEvent, NULL);
-				//myState = waitingCurrentStable;
-				myState = waitingComparatorStable;
+				if (rTimerExpired==1){
+					rTimerExpired = 0;
+					meterSenseConfig(CURRENT, SENSE_ENABLE);
+					meterMUXConfig(SENSE_ENABLE);
+					setINAGain(inaGain);
+					rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.05, 1, &rtimerEvent, NULL);
+					myState = waitingComparatorStable;
+				}
 			break;
 
-			// enable comparator interrupt
-			//case waitingCurrentStable:
-			//	GPIO_DETECT_FALLING(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
-			//	meterVoltageComparator(SENSE_ENABLE);
-			//	myState = waitingNegEdge;
-			//break;
-
-			//case waitingNegEdge:
-			//	rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.007, 1, &rtimerEvent, NULL);
-			//	myState = waitingComparatorStable;
-			//break;
-
 			case waitingComparatorStable:
-				GPIO_DETECT_RISING(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
-				meterVoltageComparator(SENSE_ENABLE);
-				ungate_gpt(GPTIMER_1);
-				REG(SYSTICK_STCTRL) &= (~SYSTICK_STCTRL_INTEN);
-				myState = waitingVoltageInt;
+				if (rTimerExpired==1){
+					rTimerExpired = 0;
+					GPIO_DETECT_RISING(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
+					meterVoltageComparator(SENSE_ENABLE);
+					ungate_gpt(GPTIMER_1);
+					REG(SYSTICK_STCTRL) &= (~SYSTICK_STCTRL_INTEN);
+					myState = waitingVoltageInt;
+				}
 			break;
 
 
 			// Start measure current
 			case waitingVoltageInt:
-				sampleCurrentWaveform();
-				vRefADCVal = adc_get(V_REF_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_512);
-				vRefADCVal = ((vRefADCVal>>4)>2047)? 0 : (vRefADCVal>>4);
-				disableAll();
-				powerValid = currentProcess(adcVal, vRefADCVal, &avgPower);
-				inaGain = getINAGain();
-				setINAGain(1);
-				if (powerValid>0){
-					#ifdef CALIBRATE
-					uint8_t i;
-					if (calibrate_cnt<255)
-						calibrate_cnt++;
-					else
-						leds_toggle(LEDS_RED);
-					printf("ADC reference: %u\r\n", vRefADCVal);
-					printf("Time difference: %lu\r\n", (timerVal[0]-timerVal[1]));
-					printf("INA Gain: %u\r\n", inaGain);
-					for (i=0; i<BUF_SIZE; i+=1){
-						printf("ADC reading: %u\r\n", adcVal[i]);
+				if (referenceInt==1){
+					sampleCurrentWaveform();
+					vRefADCVal = adc_get(V_REF_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_512);
+					vRefADCVal = ((vRefADCVal>>4)>2047)? 0 : (vRefADCVal>>4);
+					disableAll();
+					referenceInt = 0;
+					powerValid = currentProcess(adcVal, vRefADCVal, &avgPower);
+					inaGain = getINAGain();
+					setINAGain(1);
+					if (powerValid>0){
+						#ifdef CALIBRATE
+						uint8_t i;
+						if (calibrate_cnt<255)
+							calibrate_cnt++;
+						else
+							leds_toggle(LEDS_RED);
+						printf("ADC reference: %u\r\n", vRefADCVal);
+						printf("Time difference: %lu\r\n", (timerVal[0]-timerVal[1]));
+						printf("INA Gain: %u\r\n", inaGain);
+						for (i=0; i<BUF_SIZE; i+=1){
+							printf("ADC reading: %u\r\n", adcVal[i]);
+						}
+						#else
+						#ifdef AES_ENABLE
+						meterData[0] = AES_PKT_IDENTIFIER;
+						packData(&myNonce[9], nonceCounter);
+						packData(readingBuf, avgPower);
+						packData(&meterData[1], nonceCounter);
+						ccm_auth_encrypt_start(LEN_LEN, 0, myNonce, aData, ADATA_LEN, 
+										pData, PDATA_LEN, MIC_LEN, NULL);
+						nonceCounter += 1;
+						while(ccm_auth_encrypt_check_status()!=AES_CTRL_INT_STAT_RESULT_AV){}
+						ccm_auth_encrypt_get_result(myMic, MIC_LEN);
+						memcpy(&meterData[5], readingBuf, PDATA_LEN);
+						memcpy(&meterData[9], myMic, MIC_LEN);
+						packetbuf_copyfrom(meterData, 13);
+						#else
+						uint8_t i;
+						packData(&meterData[METER_DATA_OFFSET], avgPower);
+						meterData[0] = METER_TYPE_ENERGY;
+						meterData[1] = METER_ENERGY_UNIT_mW;
+						packetbuf_copyfrom(meterData, (METER_DATA_OFFSET+METER_DATA_LENGTH));
+						#endif
+						cc2538_on_and_transmit();
+						CC2538_RF_CSP_ISRFOFF();
+						#endif
 					}
-					#else
-					#ifdef AES_ENABLE
-					meterData[0] = AES_PKT_IDENTIFIER;
-					packData(&myNonce[9], nonceCounter);
-					packData(readingBuf, avgPower);
-					packData(&meterData[1], nonceCounter);
-					ccm_auth_encrypt_start(LEN_LEN, 0, myNonce, aData, ADATA_LEN, 
-									pData, PDATA_LEN, MIC_LEN, NULL);
-					nonceCounter += 1;
-					while(ccm_auth_encrypt_check_status()!=AES_CTRL_INT_STAT_RESULT_AV){}
-					ccm_auth_encrypt_get_result(myMic, MIC_LEN);
-					memcpy(&meterData[5], readingBuf, PDATA_LEN);
-					memcpy(&meterData[9], myMic, MIC_LEN);
-					packetbuf_copyfrom(meterData, 13);
-					#else
-					uint8_t i;
-					packData(&meterData[METER_DATA_OFFSET], avgPower);
-					meterData[0] = METER_TYPE_ENERGY;
-					meterData[1] = METER_ENERGY_UNIT_mW;
-					packetbuf_copyfrom(meterData, (METER_DATA_OFFSET+METER_DATA_LENGTH));
-					#endif
-					cc2538_on_and_transmit();
-					CC2538_RF_CSP_ISRFOFF();
-					#endif
+					rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*backOffTime, 1, &rtimerEvent, NULL);
+					myState = init;
 				}
-				rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*backOffTime, 1, &rtimerEvent, NULL);
-				myState = init;
 			break;
 
 			default:
@@ -362,6 +361,7 @@ static void pGOODIntCallBack(uint8_t port, uint8_t pin){
 // Don't add/remove any lines in this subroutine
 static void referenceIntCallBack(uint8_t port, uint8_t pin){
 	meterVoltageComparator(SENSE_DISABLE);
+	referenceInt = 1;
 	process_poll(&wirelessMeterProcessing);
 }
 
@@ -378,6 +378,7 @@ void sampleCurrentWaveform(){
 }
 
 static void rtimerEvent(struct rtimer *t, void *ptr){
+	rTimerExpired = 1;
 	process_poll(&wirelessMeterProcessing);
 }
 
@@ -459,6 +460,9 @@ void meterInit(){
 	gpt_set_interval_value(GPTIMER_1, GPTIMER_SUBTIMER_A, 0xffffffff);
 	gpt_enable_event(GPTIMER_1, GPTIMER_SUBTIMER_A);
 	gate_gpt(GPTIMER_1);
+
+	rTimerExpired = 0;
+	referenceInt = 0;
 
 	#ifdef CALIBRATE
 	backOffTime = 1;
