@@ -135,6 +135,36 @@
 #define DW1000_RST_N_PORT_NUM  GPIO_B_NUM
 #define DW1000_RST_N_PIN       3
 
+/* Triumvi */
+#define PGOOD_GPIO_NUM	GPIO_B_NUM
+#define PGOOD_GPIO_BASE	GPIO_B_BASE
+#define PGOOD_GPIO_PIN	3
+#define PGOOD_INT_NVIC_PORT NVIC_INT_GPIO_PORT_B
+
+#define I_ADC_GPIO_NUM	GPIO_A_NUM
+#define I_ADC_GPIO_PIN	3
+#define I_ADC_CHANNEL	SOC_ADC_ADCCON_CH_AIN3
+
+#define V_REF_ADC_GPIO_NUM	GPIO_A_NUM
+#define V_REF_ADC_GPIO_PIN	4
+#define V_REF_ADC_CHANNEL	SOC_ADC_ADCCON_CH_AIN4
+
+#define V_MEAS_EN_GPIO_BASE	GPIO_C_BASE
+#define V_MEAS_EN_GPIO_PIN	0
+
+#define I_MEAS_EN_GPIO_BASE	GPIO_C_BASE
+#define I_MEAS_EN_GPIO_PIN	1
+
+#define V_REF_CROSS_INT_GPIO_BASE GPIO_C_BASE
+#define V_REF_CROSS_INT_GPIO_NUM GPIO_C_NUM
+#define V_REF_CROSS_INT_GPIO_PIN 2
+#define V_REF_CROSS_INT_NVIC_PORT NVIC_INT_GPIO_PORT_C
+
+#define MUX_IO_GPIO_BASE GPIO_C_BASE
+#define MUX_A1_GPIO_PIN 5
+#define MUX_A0_GPIO_PIN 6
+#define MUX_EN_GPIO_PIN 7
+
 
 
 /*---------------------------------------------------------------------------*/
@@ -184,10 +214,10 @@
  * These values configure which CC2538 pins to use for the SPI lines.
  * @{
  */
-#define SPI_CLK_PORT             GPIO_C_NUM
-#define SPI_CLK_PIN              6
-#define SPI_MOSI_PORT            GPIO_C_NUM
-#define SPI_MOSI_PIN             7
+#define SPI_CLK_PORT             GPIO_B_NUM
+#define SPI_CLK_PIN              2
+#define SPI_MOSI_PORT            GPIO_B_NUM
+#define SPI_MOSI_PIN             1
 #define SPI_MISO_PORT            GPIO_B_NUM
 #define SPI_MISO_PIN             0
 /** @} */
@@ -196,7 +226,7 @@
  * \name Device string used on startup
  * @{
  */
-#define BOARD_STRING "Atum"
+#define BOARD_STRING "Triumvi"
 /** @} */
 
 #endif /* BOARD_H_ */
