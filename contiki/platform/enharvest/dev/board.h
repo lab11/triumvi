@@ -188,10 +188,10 @@
  * These values configure which CC2538 pins to use for the RTC chip.
  * @{
  */
-#define RV3049_INT_N_PORT_NUM    GPIO_B_NUM
-#define RV3049_INT_N_PIN         2
-#define RV3049_CS_PORT_NUM       GPIO_B_NUM
-#define RV3049_CS_PIN            1
+#define RV3049_INT_N_PORT_NUM    GPIO_D_NUM
+#define RV3049_INT_N_PIN         5
+#define RV3049_CS_PORT_NUM       GPIO_D_NUM
+#define RV3049_CS_PIN            4
 /** @} */
 /*---------------------------------------------------------------------------*/
 /**
@@ -215,9 +215,9 @@
  * @{
  */
 #define SPI_CLK_PORT             GPIO_B_NUM
-#define SPI_CLK_PIN              2
+#define SPI_CLK_PIN              4
 #define SPI_MOSI_PORT            GPIO_B_NUM
-#define SPI_MOSI_PIN             1
+#define SPI_MOSI_PIN             5
 #define SPI_MISO_PORT            GPIO_B_NUM
 #define SPI_MISO_PIN             0
 /** @} */
