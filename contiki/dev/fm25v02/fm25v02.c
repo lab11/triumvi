@@ -51,15 +51,14 @@ int
 fm25v02_read(uint16_t address, uint16_t len, uint8_t *buf)
 {
   uint16_t i;
-  uint16_t current_address = address;
 
   spi_set_mode(SSI_CR0_FRF_MOTOROLA, SSI_CR0_SPO, SSI_CR0_SPH, 8);
 
   SPI_CS_CLR(FM25V02_CS_N_PORT_NUM, FM25V02_CS_N_PIN);
 
   /* Send the READ command and the address to the FRAM */
-  SPI_WRITE(FM25V02_ADD_ADDRESS_BIT(current_address, FM25V02_READ_COMMAND));
-  SPI_WRITE(current_address & 0xFF);
+  SPI_WRITE(FM25V02_READ_COMMAND);
+  SPI_WRITE(address & 0x1fff);
 
   SPI_FLUSH();
 
@@ -98,8 +97,8 @@ fm25v02_write(uint16_t address, uint16_t len, uint8_t *buf)
   SPI_CS_CLR(FM25V02_CS_N_PORT_NUM, FM25V02_CS_N_PIN);
 
   /* Send the WRITE command and the address to the FRAM */
-  SPI_WRITE(FM25V02_ADD_ADDRESS_BIT(address, FM25V02_WRITE_COMMAND));
-  SPI_WRITE(address & 0xFF);
+  SPI_WRITE(FM25V02_WRITE_COMMAND);
+  SPI_WRITE(address & 0x7fff);
 
   /* Send the data to write */
   for(i=0; i<len; i++) {
