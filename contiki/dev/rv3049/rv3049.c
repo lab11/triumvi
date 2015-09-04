@@ -46,12 +46,14 @@ rv3049_init()
   SPI_CS_CLR(RV3049_CS_PORT_NUM, RV3049_CS_PIN);
 
   // Write the initial values
+  #ifdef RTC_SET
   {
     rv3049_time_t start_time = {RTC_SECONDS, RTC_MINUTES, RTC_HOURS,
                                 RTC_DAYS,    RTC_WEEKDAY, RTC_MONTH,
                                 RTC_YEAR};
     rv3049_set_time(&start_time);
   }
+  #endif
 }
 
 int
@@ -70,7 +72,8 @@ rv3049_read_time(rv3049_time_t* time)
   SPI_FLUSH();
 
   // Read a null byte here. Not exactly sure why.
-  SPI_READ(buf[0]);
+  // Triumvi v8 doesn't need this
+  //SPI_READ(buf[0]);
 
   // Then actually read the clock
   for (i=0; i<RV3049_READ_LEN_TIME; i++) {

@@ -17,9 +17,7 @@
 #include "nvic.h"
 #include "systick.h"
 #include "cc2538-rf.h"
-#include "spi-arch.h"
-#include "spi.h"
-#include "dev/ssi.h"
+#include "fm25v02.h"
 
 
 #include <stdio.h>
@@ -102,7 +100,6 @@ void decreaseINAGain();
 inline int getThreshold(uint8_t inaGain);
 static void disable_all_ioc_override();
 void packData(uint8_t* dest, int reading);
-void fram_sleep();
 // End of prototypes
 
 
@@ -379,7 +376,7 @@ void meterInit(){
 	disable_all_ioc_override();
 	#endif
 	// Sleep FRAM
-	fram_sleep();
+	fm25v02_sleep();
 
 	// ADC for current sense
 	adc_init();
@@ -432,7 +429,7 @@ void meterInit(){
 
 	#ifndef START_IMMEDIATELY
 	myState = init;
-	rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*2, 1, &rtimerEvent, NULL);
+	rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*1, 1, &rtimerEvent, NULL);
 	#endif
 }
 
@@ -537,13 +534,6 @@ void packData(uint8_t* dest, int reading){
 	for (i=0; i<4; i++){
 		dest[i] = (reading&(0xff<<(i<<3)))>>(i<<3);
 	}
-}
-
-void fram_sleep(){
-	spi_set_mode(SSI_CR0_FRF_MOTOROLA, 0, 0, 8);
-	SPI_CS_CLR(FM25L04B_CS_N_PORT_NUM, FM25L04B_CS_N_PIN);
-	SPI_WRITE(0xb9);
-	SPI_CS_SET(FM25L04B_CS_N_PORT_NUM, FM25L04B_CS_N_PIN);
 }
 
 
