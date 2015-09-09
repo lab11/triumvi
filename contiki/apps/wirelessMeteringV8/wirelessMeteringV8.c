@@ -100,6 +100,7 @@ void decreaseINAGain();
 inline int getThreshold(uint8_t inaGain);
 static void disable_all_ioc_override();
 void packData(uint8_t* dest, int reading);
+void disableSPI();
 // End of prototypes
 
 
@@ -107,6 +108,8 @@ void packData(uint8_t* dest, int reading);
 typedef enum state{
 	init,
 	waitingVoltageStable,
+	waitingComparatorStable2,
+	waitingComparatorStable1,
 	waitingComparatorStable,
 	waitingVoltageInt,
 	waitingRadioInt,
@@ -124,6 +127,9 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 {
 	PROCESS_BEGIN();
 	CC2538_RF_CSP_ISRFOFF();
+	// Sleep FRAM
+	fm25v02_sleep();
+	disableSPI();
 
 	#ifdef CALIBRATE
 	static uint8_t calibrate_cnt = 0;
@@ -159,7 +165,7 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 	disableAll();
 	#ifdef START_IMMEDIATELY
 	meterSenseConfig(VOLTAGE, SENSE_ENABLE);
-	rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.3, 1, &rtimerEvent, NULL);
+	rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.5, 1, &rtimerEvent, NULL);
 	myState = waitingVoltageStable;
 	#endif
 
@@ -171,7 +177,7 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 				if (rTimerExpired==1){
 					rTimerExpired = 0;
 					meterSenseConfig(VOLTAGE, SENSE_ENABLE);
-					rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.3, 1, &rtimerEvent, NULL);
+					rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.5, 1, &rtimerEvent, NULL);
 					myState = waitingVoltageStable;
 					// consecutive 4 samples, decreases sampling interval
 					if (((backOffHistory&0x0f)==0x0f)&&(backOffTime>2))
@@ -187,8 +193,24 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 					meterSenseConfig(CURRENT, SENSE_ENABLE);
 					meterMUXConfig(SENSE_ENABLE);
 					setINAGain(inaGain);
-					//setINAGain(2); // test
-					rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.05, 1, &rtimerEvent, NULL);
+					rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.04, 1, &rtimerEvent, NULL);
+					myState = waitingComparatorStable2;
+				}
+			break;
+
+			case waitingComparatorStable2:
+				if (rTimerExpired==1){
+					rTimerExpired = 0;
+					GPIO_DETECT_FALLING(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
+					meterVoltageComparator(SENSE_ENABLE);
+					myState = waitingComparatorStable1;
+				}
+			break;
+
+			case waitingComparatorStable1:
+				if (referenceInt==1){
+					referenceInt = 0;
+					rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.007, 1, &rtimerEvent, NULL);
 					myState = waitingComparatorStable;
 				}
 			break;
@@ -203,7 +225,6 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 					myState = waitingVoltageInt;
 				}
 			break;
-
 
 			// Start measure current
 			case waitingVoltageInt:
@@ -359,6 +380,18 @@ void disableAll(){
 	gate_gpt(GPTIMER_1);
 }
 
+void disableSPI(){
+	GPIO_SOFTWARE_CONTROL(GPIO_PORT_TO_BASE(SPI_CLK_PORT), 0x1<<SPI_CLK_PIN);
+	GPIO_SOFTWARE_CONTROL(GPIO_PORT_TO_BASE(SPI_MOSI_PORT), 0x1<<SPI_MOSI_PIN);
+	GPIO_SOFTWARE_CONTROL(GPIO_PORT_TO_BASE(SPI_MISO_PORT), 0x1<<SPI_MISO_PIN);
+	GPIO_SET_OUTPUT(GPIO_PORT_TO_BASE(SPI_CLK_PORT), 0x1<<SPI_CLK_PIN);
+	GPIO_SET_OUTPUT(GPIO_PORT_TO_BASE(SPI_MOSI_PORT), 0x1<<SPI_MOSI_PIN);
+	GPIO_SET_OUTPUT(GPIO_PORT_TO_BASE(SPI_MISO_PORT), 0x1<<SPI_MISO_PIN);
+	GPIO_CLR_PIN(GPIO_PORT_TO_BASE(SPI_CLK_PORT), 0x1<<SPI_CLK_PIN);
+	GPIO_CLR_PIN(GPIO_PORT_TO_BASE(SPI_MOSI_PORT), 0x1<<SPI_MOSI_PIN);
+	GPIO_CLR_PIN(GPIO_PORT_TO_BASE(SPI_MISO_PORT), 0x1<<SPI_MISO_PIN);
+}
+
 void meterInit(){
 
 	// Set all un-used pins to output and clear output
@@ -375,8 +408,6 @@ void meterInit(){
 	// disable all pull-up resistors
 	disable_all_ioc_override();
 	#endif
-	// Sleep FRAM
-	fm25v02_sleep();
 
 	// ADC for current sense
 	adc_init();
@@ -521,6 +552,10 @@ int currentProcess(uint16_t *data, uint16_t vRefADCVal, int *power){
 	}
 	else{
 		avgPower = energyCal*P_TRANSFORM/inaGain; // Unit is mW
+		// Fix phase oppsite down
+		if (avgPower < 0)
+			avgPower = -1*avgPower;
+
 		if (avgPower < 180000)
 			*power = (int)(avgPower + 2000); // manually adjust this
 		else
