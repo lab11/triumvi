@@ -13,6 +13,8 @@
 void fm25v02_init();
 int fm25v02_read(uint16_t address, uint16_t len, uint8_t *buf);
 int fm25v02_write(uint16_t address, uint16_t len, uint8_t *buf);
+uint8_t fm25v02_readStatus();
+int fm25v02_writeStatus(uint8_t statusReg);
 void fm25v02_sleep();
 
 #endif

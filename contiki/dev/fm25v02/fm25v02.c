@@ -58,7 +58,9 @@ fm25v02_read(uint16_t address, uint16_t len, uint8_t *buf)
 
   /* Send the READ command and the address to the FRAM */
   SPI_WRITE(FM25V02_READ_COMMAND);
-  SPI_WRITE(address & 0x1fff);
+  address &= 0x7fff;
+  SPI_WRITE((address&0xff00)>>8);
+  SPI_WRITE((address&0xff));
 
   SPI_FLUSH();
 
@@ -98,7 +100,9 @@ fm25v02_write(uint16_t address, uint16_t len, uint8_t *buf)
 
   /* Send the WRITE command and the address to the FRAM */
   SPI_WRITE(FM25V02_WRITE_COMMAND);
-  SPI_WRITE(address & 0x7fff);
+  address &= 0x7fff;
+  SPI_WRITE((address&0xff00)>>8);
+  SPI_WRITE((address&0xff));
 
   /* Send the data to write */
   for(i=0; i<len; i++) {
@@ -115,4 +119,29 @@ void fm25v02_sleep(){
 	SPI_CS_CLR(FM25V02_CS_N_PORT_NUM, FM25V02_CS_N_PIN);
 	SPI_WRITE(FM25V02_SLEEP_COMMAND);
 	SPI_CS_SET(FM25V02_CS_N_PORT_NUM, FM25V02_CS_N_PIN);
+}
+
+uint8_t fm25v02_readStatus(){
+	uint8_t statusReg;
+	spi_set_mode(SSI_CR0_FRF_MOTOROLA, 0, 0, 8);
+	SPI_CS_CLR(FM25V02_CS_N_PORT_NUM, FM25V02_CS_N_PIN);
+	SPI_WRITE(FM25V02_READ_STATUS_COMMAND);
+	SPI_FLUSH();
+	SPI_READ(statusReg);
+	SPI_CS_SET(FM25V02_CS_N_PORT_NUM, FM25V02_CS_N_PIN);
+	return statusReg;
+}
+
+int fm25v02_writeStatus(uint8_t statusReg){
+	// Set WEL bit in status register
+	spi_set_mode(SSI_CR0_FRF_MOTOROLA, 0, 0, 8);
+	SPI_CS_CLR(FM25V02_CS_N_PORT_NUM, FM25V02_CS_N_PIN);
+	SPI_WRITE(FM25V02_WRITE_ENABLE_COMMAND);
+	SPI_CS_SET(FM25V02_CS_N_PORT_NUM, FM25V02_CS_N_PIN);
+
+	SPI_CS_CLR(FM25V02_CS_N_PORT_NUM, FM25V02_CS_N_PIN);
+	SPI_WRITE(FM25V02_WRITE_STATUS_COMMAND);
+    SPI_WRITE(statusReg);
+	SPI_CS_SET(FM25V02_CS_N_PORT_NUM, FM25V02_CS_N_PIN);
+	return 0;
 }
