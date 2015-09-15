@@ -145,3 +145,37 @@ int fm25v02_writeStatus(uint8_t statusReg){
 	SPI_CS_SET(FM25V02_CS_N_PORT_NUM, FM25V02_CS_N_PIN);
 	return 0;
 }
+
+void fm25v02_eraseAll(){
+	uint16_t i;
+	spi_set_mode(SSI_CR0_FRF_MOTOROLA, 0, 0, 8);
+	SPI_CS_CLR(FM25V02_CS_N_PORT_NUM, FM25V02_CS_N_PIN);
+	SPI_WRITE(FM25V02_WRITE_ENABLE_COMMAND);
+	SPI_CS_SET(FM25V02_CS_N_PORT_NUM, FM25V02_CS_N_PIN);
+
+	SPI_CS_CLR(FM25V02_CS_N_PORT_NUM, FM25V02_CS_N_PIN);
+	SPI_WRITE(FM25V02_WRITE_COMMAND);
+	// Address
+	SPI_WRITE(0x00);
+	SPI_WRITE(0x00);
+
+  /* Send the data to write */
+	for(i=0; i<0x7fff; i++) {
+		SPI_WRITE(0x00);
+	}
+
+	SPI_CS_SET(FM25V02_CS_N_PORT_NUM, FM25V02_CS_N_PIN);
+}
+
+void fm25v02_dummyWakeup(){
+	uint8_t dummyReg;
+	uint16_t dummyCnt;
+	spi_set_mode(SSI_CR0_FRF_MOTOROLA, 0, 0, 8);
+	SPI_CS_CLR(FM25V02_CS_N_PORT_NUM, FM25V02_CS_N_PIN);
+	// Delay for 400-ish us
+	for (dummyCnt=0; dummyCnt<800; dummyCnt++)
+		asm("nop");
+	SPI_FLUSH();
+	SPI_READ(dummyReg);
+	SPI_CS_SET(FM25V02_CS_N_PORT_NUM, FM25V02_CS_N_PIN);
+}

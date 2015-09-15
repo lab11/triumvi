@@ -111,6 +111,7 @@ main(void)
   //button_sensor_init();
   spi_init();
   fm25v02_init();
+  fm25v02_sleep();
   rv3049_init();
 #ifdef AES_ENABLE
 	crypto_init();

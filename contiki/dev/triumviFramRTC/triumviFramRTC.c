@@ -22,8 +22,11 @@ void triumviFramClear(){
 	uint8_t writeBuf[2];
 	writeBuf[0] = (FM25V02_MIN_ADDR&0xff00)>>8;
 	writeBuf[1] = FM25V02_MIN_ADDR&0xff;
+	// Dummy read, wake up FRAM
+	fm25v02_dummyWakeup();
 	fm25v02_write(FM25V02_WRITE_LOC_ADDR, 2, writeBuf);
 	fm25v02_write(FM25V02_READ_LOC_ADDR, 2, writeBuf);
+	fm25v02_sleep();
 }
 
 void updatePtr(uint8_t ptrType, uint16_t readWritePtr){
@@ -47,6 +50,8 @@ void updatePtr(uint8_t ptrType, uint16_t readWritePtr){
 // Write record into FRAM, return -1 if FRAM is full
 // Otherwise, return 0 (success)
 int triumviFramWrite(uint16_t powerReading, rv3049_time_t* rtctime){
+	// Dummy read, wake up FRAM
+	fm25v02_dummyWakeup();
 	uint16_t readPtr = getReadWritePtr(READ_PTR_TYPE);
 	uint16_t writePtr = getReadWritePtr(WRITE_PTR_TYPE);
 	static uint8_t writeBuf[TRIUMVI_RECORD_SIZE] = {0xff};
@@ -70,10 +75,13 @@ int triumviFramWrite(uint16_t powerReading, rv3049_time_t* rtctime){
 	writeBuf[7] = powerReading&0xff;
 	fm25v02_write(writePtr, TRIUMVI_RECORD_SIZE, writeBuf);
 	updatePtr(WRITE_PTR_TYPE, writePtr);
+	fm25v02_sleep();
 	return 0;
 }
 
 int triumviFramRead(triumviData_t* record){
+	// Dummy read, wake up FRAM
+	fm25v02_dummyWakeup();
 	uint16_t readPtr = getReadWritePtr(READ_PTR_TYPE);
 	uint16_t writePtr = getReadWritePtr(WRITE_PTR_TYPE);
 	static uint8_t readBuf[TRIUMVI_RECORD_SIZE];
@@ -90,6 +98,7 @@ int triumviFramRead(triumviData_t* record){
 	record->seconds = readBuf[5];
 	record->powerReading = ((readBuf[6]<<8) | readBuf[7]);
 	updatePtr(READ_PTR_TYPE, readPtr);
+	fm25v02_sleep();
 	return 0;
 }
 
