@@ -35,9 +35,9 @@
 #include "lpm.h"
 #include "dev/crypto.h"
 #include "dev/ccm.h"
-//#include "spi.h"
-//#include "fm25l04b.h"
-//#include "rv3049.h"
+#include "spi.h"
+#include "fm25v02.h"
+#include "rv3049.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -109,9 +109,9 @@ main(void)
 
   watchdog_init();
   //button_sensor_init();
-  //spi_init();
-  //fm25l04b_init();
-  //rv3049_init();
+  spi_init();
+  fm25v02_init();
+  rv3049_init();
 #ifdef AES_ENABLE
 	crypto_init();
 	REG(AES_CTRL_ALG_SEL) = 0x00000000; // reset AES module
@@ -177,7 +177,6 @@ main(void)
   ENERGEST_ON(ENERGEST_TYPE_CPU);
 
   autostart_start(autostart_processes);
-	//CC2538_RF_CSP_ISRFOFF(); // move this to wirelessMetering process
 
 #if WATCHDOG_CONF_ENABLE
   watchdog_start();

@@ -83,7 +83,7 @@
 #define LEDS_CONF_ALL            56
 
 /* Notify various examples that we have LEDs */
-#define PLATFORM_HAS_LEDS        1
+#define PLATFORM_HAS_LEDS        0
 
 #define LED_BLUE_BASE            GPIO_D_BASE
 #define LED_RED_BASE             GPIO_D_BASE
@@ -165,21 +165,36 @@
 #define MUX_A0_GPIO_PIN 6
 #define MUX_EN_GPIO_PIN 7
 
+#define EXT_VOLT_IN_GPIO_NUM GPIO_A_NUM
+#define EXT_VOLT_IN_GPIO_PIN 5
+#define EXT_VOLT_IN_ADC_CHANNEL SOC_ADC_ADCCON_CH_AIN5
+
+#define V_STORAGE_GPIO_NUM GPIO_A_NUM
+#define V_STORAGE_GPIO_PIN 6
+#define V_STORAGE_ADC_CHANNEL SOC_ADC_ADCCON_CH_AIN6
+
+#define EXT_VOLT_IN_SEL_GPIO_NUM GPIO_B_NUM
+#define EXT_VOLT_IN_SEL_GPIO_BASE GPIO_B_BASE
+#define EXT_VOLT_IN_SEL_GPIO_PIN 6
+
+#define MEM_RST_GPIO_NUM GPIO_C_NUM
+#define MEM_RST_GPIO_BASE GPIO_C_BASE
+#define MEM_RST_GPIO_PIN 4
 
 
 /*---------------------------------------------------------------------------*/
 /**
- * \name FM25L04B configuration
+ * \name FM25LV02 configuration
  *
  * These values configure which CC2538 pins to use for the FRAM chip.
  * @{
  */
-#define FM25L04B_HOLD_N_PORT_NUM GPIO_D_NUM
-#define FM25L04B_HOLD_N_PIN      0
-#define FM25L04B_WP_N_PORT_NUM   GPIO_D_NUM
-#define FM25L04B_WP_N_PIN        2
-#define FM25L04B_CS_N_PORT_NUM   GPIO_D_NUM
-#define FM25L04B_CS_N_PIN        1
+#define FM25V02_HOLD_N_PORT_NUM GPIO_D_NUM
+#define FM25V02_HOLD_N_PIN      0
+#define FM25V02_WP_N_PORT_NUM   GPIO_D_NUM
+#define FM25V02_WP_N_PIN        2
+#define FM25V02_CS_N_PORT_NUM   GPIO_D_NUM
+#define FM25V02_CS_N_PIN        1
 /** @} */
 /*---------------------------------------------------------------------------*/
 /**
