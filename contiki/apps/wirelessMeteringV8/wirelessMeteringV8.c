@@ -2,7 +2,6 @@
 #include "cpu.h"
 #include "sys/etimer.h"
 #include "sys/rtimer.h"
-#include "dev/leds.h"
 #include "dev/watchdog.h"
 #include "dev/sys-ctrl.h"
 #include "dev/gpio.h"
@@ -18,6 +17,7 @@
 #include "systick.h"
 #include "cc2538-rf.h"
 #include "fm25v02.h"
+#include "triumviFramRTC.h"
 
 
 #include <stdio.h>
@@ -36,6 +36,7 @@ volatile uint8_t referenceInt;
 volatile uint8_t backOffTime;
 volatile uint8_t backOffHistory;
 static const uint8_t inaGainArr[4] = {1, 2, 5, 10};
+rv3049_time_t rtctime;
 
 #define BUF_SIZE 120
 uint16_t adcVal[BUF_SIZE];
@@ -108,8 +109,10 @@ void disableSPI();
 typedef enum state{
 	init,
 	waitingVoltageStable,
+	#ifdef COMPARATOR_NEGEDGE
 	waitingComparatorStable2,
 	waitingComparatorStable1,
+	#endif
 	waitingComparatorStable,
 	waitingVoltageInt,
 	waitingRadioInt,
@@ -127,9 +130,13 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 {
 	PROCESS_BEGIN();
 	CC2538_RF_CSP_ISRFOFF();
-	// Sleep FRAM
 	fm25v02_sleep();
 	disableSPI();
+
+	#ifdef CLEAR_FRAM
+	//fm25v02_eraseAll();
+	triumviFramClear();
+	#endif
 
 	#ifdef CALIBRATE
 	static uint8_t calibrate_cnt = 0;
@@ -165,7 +172,7 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 	disableAll();
 	#ifdef START_IMMEDIATELY
 	meterSenseConfig(VOLTAGE, SENSE_ENABLE);
-	rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.5, 1, &rtimerEvent, NULL);
+	rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.4, 1, &rtimerEvent, NULL);
 	myState = waitingVoltageStable;
 	#endif
 
@@ -177,7 +184,7 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 				if (rTimerExpired==1){
 					rTimerExpired = 0;
 					meterSenseConfig(VOLTAGE, SENSE_ENABLE);
-					rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.5, 1, &rtimerEvent, NULL);
+					rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.4, 1, &rtimerEvent, NULL);
 					myState = waitingVoltageStable;
 					// consecutive 4 samples, decreases sampling interval
 					if (((backOffHistory&0x0f)==0x0f)&&(backOffTime>2))
@@ -194,10 +201,15 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 					meterMUXConfig(SENSE_ENABLE);
 					setINAGain(inaGain);
 					rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.04, 1, &rtimerEvent, NULL);
+					#ifdef COMPARATOR_NEGEDGE
 					myState = waitingComparatorStable2;
+					#else
+					myState = waitingComparatorStable;
+					#endif
 				}
 			break;
 
+			#ifdef COMPARATOR_NEGEDGE
 			case waitingComparatorStable2:
 				if (rTimerExpired==1){
 					rTimerExpired = 0;
@@ -214,6 +226,7 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 					myState = waitingComparatorStable;
 				}
 			break;
+			#endif
 
 			case waitingComparatorStable:
 				if (rTimerExpired==1){
@@ -243,13 +256,20 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 						if (calibrate_cnt<255)
 							calibrate_cnt++;
 						else
-							leds_toggle(LEDS_RED);
+							triumviLEDToggle();
 						printf("ADC reference: %u\r\n", vRefADCVal);
 						printf("Time difference: %lu\r\n", (timerVal[0]-timerVal[1]));
 						printf("INA Gain: %u\r\n", inaGain);
 						for (i=0; i<BUF_SIZE; i+=1){
 							printf("ADC reading: %u\r\n", adcVal[i]);
 						}
+						#else
+						// Write data into FRAM
+						#ifdef FRAM_WRITE
+						uint16_t powerRead = avgPower/1000;
+						rv3049_read_time(&rtctime);
+						triumviFramWrite(powerRead, &rtctime);
+						// Send data over RF
 						#else
 						meterData[0] = AES_PKT_IDENTIFIER;
 						packData(&myNonce[9], nonceCounter);
@@ -266,8 +286,9 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 						cc2538_on_and_transmit();
 						CC2538_RF_CSP_ISRFOFF();
 						#endif
+						#endif
 						#ifdef BLINK_LED
-						leds_on(LEDS_RED);
+						triumviLEDON();
 						rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.001, 1, &rtimerEvent, NULL);
 						myState = ledBlink;
 						#else
@@ -287,7 +308,7 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 			case ledBlink:
 				if (rTimerExpired==1){
 					rTimerExpired = 0;
-					leds_off(LEDS_RED);
+					triumviLEDOFF();
 					rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*backOffTime, 1, &rtimerEvent, NULL);
 					myState = init;
 				}
@@ -396,10 +417,10 @@ void meterInit(){
 
 	// Set all un-used pins to output and clear output
 	#ifndef CALIBRATE
-	GPIO_SET_OUTPUT(GPIO_A_BASE, 0x60);
-	GPIO_CLR_PIN(GPIO_A_BASE, 0x60);
-	GPIO_SET_OUTPUT(GPIO_B_BASE, 0xc0);
-	GPIO_CLR_PIN(GPIO_B_BASE, 0xc0);
+	GPIO_SET_OUTPUT(GPIO_A_BASE, 0x67);
+	GPIO_CLR_PIN(GPIO_A_BASE, 0x67);
+	GPIO_SET_OUTPUT(GPIO_B_BASE, 0xc6);
+	GPIO_CLR_PIN(GPIO_B_BASE, 0xc6);
 	GPIO_SET_OUTPUT(GPIO_C_BASE, 0x08);
 	GPIO_CLR_PIN(GPIO_C_BASE, 0x08);
 	GPIO_SET_OUTPUT(GPIO_D_BASE, 0x1f);

@@ -7,9 +7,12 @@
 
 // No need for UART
 #define STARTUP_CONF_VERBOSE 0
-//#define START_IMMEDIATELY
+#define START_IMMEDIATELY
+//#define COMPARATOR_NEGEDGE
 
 //#define CALIBRATE
+//#define RTC_SET
+//#define FRAM_WRITE
 
 #ifdef CALIBRATE
 #define UART_CONF_ENABLE 1
