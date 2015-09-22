@@ -230,11 +230,21 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 					REG(SYSTICK_STCTRL) &= (~SYSTICK_STCTRL_INTEN);
 					while (referenceInt==0){}
 					if (externalVoltSel()){
-						sampleCurrentVoltageWaveform();
-						currentRef = adc_get(V_REF_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_256);
-						currentRef = ((currentRef>>5)>1023)? 0 : (currentRef>>5);
-						voltRef = voltDataAverge(voltADCVal);
-						powerValid = currentVoltProcess(currentADCVal, voltADCVal, currentRef, voltRef, &avgPower, 0x01);
+						uint8_t i = 0;
+						int tempPower;
+						avgPower = 0;
+						while (i<16){
+							sampleCurrentVoltageWaveform();
+							currentRef = adc_get(V_REF_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_256);
+							currentRef = ((currentRef>>5)>1023)? 0 : (currentRef>>5);
+							voltRef = voltDataAverge(voltADCVal);
+							powerValid = currentVoltProcess(currentADCVal, voltADCVal, currentRef, voltRef, &tempPower, 0x01);
+							if (powerValid>0){
+								i++;
+								avgPower += tempPower;
+							}
+						}
+						avgPower = (avgPower>>4);
 					}
 					else{
 						sampleCurrentWaveform();
