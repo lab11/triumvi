@@ -5,7 +5,8 @@
 #include "contiki.h"
 #include "fm25v02.h"
 #include "rv3049.h"
-#include "triumviFramRTC.h"
+#include "triumvi.h"
+
 
 uint16_t getReadWritePtr(uint8_t ptrType){
 	uint8_t readBuf[2];
@@ -122,4 +123,108 @@ inline void triumviLEDToggle(){
 	else
 		GPIO_SET_PIN(LED_RED_BASE, LED_RED_MASK);
 }
+
+inline void meterMUXConfig(uint8_t en){
+	if (en==SENSE_ENABLE)
+		GPIO_SET_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_EN_GPIO_PIN);
+	else
+		GPIO_CLR_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_EN_GPIO_PIN);
+}
+
+inline void meterSenseConfig(uint8_t type, uint8_t en){
+	if (type==VOLTAGE){
+		if (en==SENSE_ENABLE)
+			GPIO_SET_PIN(V_MEAS_EN_GPIO_BASE, 0x1<<V_MEAS_EN_GPIO_PIN);
+		else
+			GPIO_CLR_PIN(V_MEAS_EN_GPIO_BASE, 0x1<<V_MEAS_EN_GPIO_PIN);
+	}
+	else{
+		if (en==SENSE_ENABLE)
+			GPIO_SET_PIN(I_MEAS_EN_GPIO_BASE, 0x1<<I_MEAS_EN_GPIO_PIN);
+		else
+			GPIO_CLR_PIN(I_MEAS_EN_GPIO_BASE, 0x1<<I_MEAS_EN_GPIO_PIN);
+	}
+}
+
+inline void meterVoltageComparator(uint8_t en){
+	GPIO_CLEAR_INTERRUPT(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
+	if (en==SENSE_ENABLE){
+		GPIO_ENABLE_INTERRUPT(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
+		nvic_interrupt_enable(V_REF_CROSS_INT_NVIC_PORT);
+	}
+	else{
+		GPIO_DISABLE_INTERRUPT(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
+		nvic_interrupt_disable(V_REF_CROSS_INT_NVIC_PORT);
+	}
+}
+
+inline uint8_t getINAIDX(){
+	uint8_t mux_a0_sel = GPIO_READ_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A0_GPIO_PIN)>>MUX_A0_GPIO_PIN;
+	uint8_t mux_a1_sel = GPIO_READ_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A1_GPIO_PIN)>>MUX_A1_GPIO_PIN;
+	return (mux_a1_sel<<1 | mux_a0_sel);
+}
+
+void increaseINAGain(){
+	uint8_t inaIDX = getINAIDX();
+	if (inaIDX<MAX_INA_GAIN_IDX){
+		setINAGain(inaGainArr[(inaIDX+1)]);
+	}
+}
+
+void decreaseINAGain(){
+	uint8_t inaIDX = getINAIDX();
+	if (inaIDX>0){
+		setINAGain(inaGainArr[(inaIDX-1)]);
+	}
+}
+
+void setINAGain(uint8_t gain){
+	switch (gain){
+		case 1: // Select S1
+			GPIO_CLR_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A0_GPIO_PIN);
+			GPIO_CLR_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A1_GPIO_PIN);
+		break;
+		case 2: // Select S2
+			GPIO_SET_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A0_GPIO_PIN);
+			GPIO_CLR_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A1_GPIO_PIN);
+		break;
+		case 5: // Select S3
+			GPIO_CLR_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A0_GPIO_PIN);
+			GPIO_SET_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A1_GPIO_PIN);
+		break;
+		case 10: // Select S4
+			GPIO_SET_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A0_GPIO_PIN);
+			GPIO_SET_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A1_GPIO_PIN);
+		break;
+		default:
+		break;
+	}
+}
+
+inline uint8_t getINAGain(){
+	return inaGainArr[getINAIDX()];
+}
+
+void disableSPI(){
+	GPIO_SOFTWARE_CONTROL(GPIO_PORT_TO_BASE(SPI_CLK_PORT), 0x1<<SPI_CLK_PIN);
+	GPIO_SOFTWARE_CONTROL(GPIO_PORT_TO_BASE(SPI_MOSI_PORT), 0x1<<SPI_MOSI_PIN);
+	GPIO_SOFTWARE_CONTROL(GPIO_PORT_TO_BASE(SPI_MISO_PORT), 0x1<<SPI_MISO_PIN);
+	GPIO_SET_OUTPUT(GPIO_PORT_TO_BASE(SPI_CLK_PORT), 0x1<<SPI_CLK_PIN);
+	GPIO_SET_OUTPUT(GPIO_PORT_TO_BASE(SPI_MOSI_PORT), 0x1<<SPI_MOSI_PIN);
+	GPIO_SET_OUTPUT(GPIO_PORT_TO_BASE(SPI_MISO_PORT), 0x1<<SPI_MISO_PIN);
+	GPIO_CLR_PIN(GPIO_PORT_TO_BASE(SPI_CLK_PORT), 0x1<<SPI_CLK_PIN);
+	GPIO_CLR_PIN(GPIO_PORT_TO_BASE(SPI_MOSI_PORT), 0x1<<SPI_MOSI_PIN);
+	GPIO_CLR_PIN(GPIO_PORT_TO_BASE(SPI_MISO_PORT), 0x1<<SPI_MISO_PIN);
+}
+
+void reenableSPI(){
+	GPIO_PERIPHERAL_CONTROL(GPIO_PORT_TO_BASE(SPI_CLK_PORT), 0x1<<SPI_CLK_PIN);
+	GPIO_PERIPHERAL_CONTROL(GPIO_PORT_TO_BASE(SPI_MOSI_PORT), 0x1<<SPI_MOSI_PIN);
+	GPIO_PERIPHERAL_CONTROL(GPIO_PORT_TO_BASE(SPI_MISO_PORT), 0x1<<SPI_MISO_PIN);
+}
+
+inline uint8_t externalVoltSel(){
+	return GPIO_READ_PIN(EXT_VOLT_IN_SEL_GPIO_BASE, 0x1<<EXT_VOLT_IN_SEL_GPIO_PIN)>>EXT_VOLT_IN_SEL_GPIO_PIN;
+}
+
 

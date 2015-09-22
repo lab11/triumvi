@@ -11,8 +11,10 @@
 //#define COMPARATOR_NEGEDGE
 
 //#define CALIBRATE
+//#ifdef CLEAR_FRAM
 //#define RTC_SET
 //#define FRAM_WRITE
+//#define BLINK_LED
 
 #ifdef CALIBRATE
 #define UART_CONF_ENABLE 1
