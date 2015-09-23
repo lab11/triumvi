@@ -439,7 +439,7 @@ void meterInit(){
 	// External voltage waveform inputs
 	ioc_set_over(EXT_VOLT_IN_GPIO_NUM, EXT_VOLT_IN_GPIO_PIN, IOC_OVERRIDE_ANA);
 	GPIO_SET_INPUT(EXT_VOLT_IN_SEL_GPIO_BASE, 0x1<<EXT_VOLT_IN_SEL_GPIO_PIN);
-	REG(IOC_PB6_OVER) |= 0x2; // PD enable
+	ioc_set_over(EXT_VOLT_IN_SEL_GPIO_NUM, EXT_VOLT_IN_SEL_GPIO_PIN, IOC_OVERRIDE_PDE);
 
 	// tactile button
 	GPIO_SET_INPUT(MEM_RST_GPIO_BASE, 0x1<<MEM_RST_GPIO_PIN);
