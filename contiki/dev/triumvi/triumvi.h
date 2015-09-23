@@ -36,7 +36,7 @@ typedef struct {
 
 int triumviFramWrite(uint16_t powerReading, rv3049_time_t* rtctime);
 int triumviFramRead(triumviData_t* record);
-void triumviFramClear();
+void triumviFramPtrClear();
 
 inline void triumviLEDinit();
 inline void triumviLEDON();
@@ -57,5 +57,6 @@ void reenableSPI();
 
 
 inline uint8_t externalVoltSel();
+inline uint8_t isButtonPressed();
 
 #endif

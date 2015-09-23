@@ -11,7 +11,7 @@
 //#define COMPARATOR_NEGEDGE
 
 //#define CALIBRATE
-//#ifdef CLEAR_FRAM
+//#ifdef ERASE_FRAM
 //#define RTC_SET
 //#define FRAM_WRITE
 //#define BLINK_LED

@@ -18,7 +18,7 @@ uint16_t getReadWritePtr(uint8_t ptrType){
 	return myPtr;
 }
 
-void triumviFramClear(){
+void triumviFramPtrClear(){
 	// using Big Endianness
 	uint8_t writeBuf[2];
 	writeBuf[0] = (FM25V02_MIN_ADDR&0xff00)>>8;
@@ -227,4 +227,10 @@ inline uint8_t externalVoltSel(){
 	return GPIO_READ_PIN(EXT_VOLT_IN_SEL_GPIO_BASE, 0x1<<EXT_VOLT_IN_SEL_GPIO_PIN)>>EXT_VOLT_IN_SEL_GPIO_PIN;
 }
 
+inline uint8_t isButtonPressed(){
+	if (GPIO_READ_PIN(MEM_RST_GPIO_BASE, 0x1<<MEM_RST_GPIO_PIN)>>MEM_RST_GPIO_PIN)
+		return 0;
+	else
+		return 1;
+}
 

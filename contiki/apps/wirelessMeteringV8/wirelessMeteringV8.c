@@ -144,9 +144,8 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 	fm25v02_sleep();
 	disableSPI();
 
-	#ifdef CLEAR_FRAM
-	//fm25v02_eraseAll();
-	triumviFramClear();
+	#ifdef ERASE_FRAM 
+	fm25v02_eraseAll();
 	#endif
 
 	#ifdef CALIBRATE
@@ -178,6 +177,10 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 
 	
 	meterInit();
+	if (isButtonPressed()){
+		triumviFramPtrClear();
+		triumviLEDON();
+	}
 	inaGain = getINAGain();
 	setINAGain(inaGainArr[0]);
 	disableAll();
@@ -436,6 +439,9 @@ void meterInit(){
 	// External voltage waveform inputs
 	ioc_set_over(EXT_VOLT_IN_GPIO_NUM, EXT_VOLT_IN_GPIO_PIN, IOC_OVERRIDE_ANA);
 	GPIO_SET_INPUT(EXT_VOLT_IN_SEL_GPIO_BASE, 0x1<<EXT_VOLT_IN_SEL_GPIO_PIN);
+
+	// tactile button
+	GPIO_SET_INPUT(MEM_RST_GPIO_BASE, 0x1<<MEM_RST_GPIO_PIN);
 
 	// GPIO for Voltage/Current measurement
 	GPIO_SET_OUTPUT(V_MEAS_EN_GPIO_BASE, 0x1<<V_MEAS_EN_GPIO_PIN);
