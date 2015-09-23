@@ -78,7 +78,23 @@ unit is A, multiply by 1000 gets mA
 #define POLY_POS_OR1 0.93
 #define POLY_POS_OR0 2.32
 
+#define INAGAIN1_OFFSET 1
+#define INAGAIN1_SCALE 47.14
+#define INAGAIN2_OFFSET 61
+#define INAGAIN2_SCALE 23.737
+#define INAGAIN5_OFFSET -23
+#define INAGAIN5_SCALE 9.339
+#define INAGAIN10_OFFSET -35
+#define INAGAIN10_SCALE 4.704
 
+#define INAGAIN1_OFFSET2 1.5
+#define INAGAIN1_SCALE2 95.073
+#define INAGAIN2_OFFSET2 1.5
+#define INAGAIN2_SCALE2 47.536
+#define INAGAIN5_OFFSET2 6
+#define INAGAIN5_SCALE2 18.965
+#define INAGAIN10_OFFSET2 6
+#define INAGAIN10_SCALE2 9.428
 
 // Function prototypes
 static void referenceIntCallBack(uint8_t port, uint8_t pin);
@@ -87,15 +103,17 @@ void sampleCurrentVoltageWaveform();
 static void rtimerEvent(struct rtimer *t, void *ptr);
 void disableAll();
 void meterInit();
-//int currentProcess(uint16_t *data, uint16_t vRefADCVal, int *power);
 int currentVoltProcess(uint16_t *currentData, uint16_t* voltData, 
 						uint16_t currentRef, uint16_t voltRef, 
-						int *power, uint8_t externalVoltPresent);
+						int *power, uint8_t externalVolt);
 inline int getThreshold(uint8_t inaGain);
 void packData(uint8_t* dest, int reading);
 uint16_t voltDataAverge(uint16_t* voltData);
 int voltDataTransform(uint16_t voltReading, uint16_t voltReference);
+int currentDataTransform(int currentReading, uint8_t inaGain, uint8_t externalVolt);
+#ifndef CALIBRATE
 static void disable_all_ioc_override();
+#endif
 // End of prototypes
 
 
@@ -230,21 +248,25 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 					REG(SYSTICK_STCTRL) &= (~SYSTICK_STCTRL_INTEN);
 					while (referenceInt==0){}
 					if (externalVoltSel()){
-						uint8_t i = 0;
 						int tempPower;
+						#ifndef CALIBRATE
+						uint8_t i = 0;
 						avgPower = 0;
 						while (i<16){
+						#endif
 							sampleCurrentVoltageWaveform();
 							currentRef = adc_get(V_REF_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_256);
 							currentRef = ((currentRef>>5)>1023)? 0 : (currentRef>>5);
 							voltRef = voltDataAverge(voltADCVal);
 							powerValid = currentVoltProcess(currentADCVal, voltADCVal, currentRef, voltRef, &tempPower, 0x01);
+						#ifndef CALIBRATE
 							if (powerValid>0){
 								i++;
 								avgPower += tempPower;
 							}
 						}
 						avgPower = (avgPower>>4);
+						#endif
 					}
 					else{
 						sampleCurrentWaveform();
@@ -263,17 +285,21 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 							calibrate_cnt++;
 						else
 							triumviLEDToggle();
-						printf("ADC reference: %u\r\n", currentADCVal);
+						printf("ADC reference: %u\r\n", currentRef);
 						printf("Time difference: %lu\r\n", (timerVal[0]-timerVal[1]));
 						printf("INA Gain: %u\r\n", inaGain);
 						if (externalVoltSel()){
 							for (i=0; i<BUF_SIZE2; i+=1){
-								printf("ADC reading: %u Voltage Reading: %d\r\n", currentADCVal[i], voltDataTransform(voltADCVal[i], voltRef));
+								printf("Current reading: %d (mA) Voltage Reading: %d (V)\r\n", 
+								//currentDataTransform(currentADCVal[i]-currentRef, inaGain, 0x1), voltDataTransform(voltADCVal[i], voltRef));
+								currentADCVal[i]-currentRef, voltDataTransform(voltADCVal[i], voltRef));
 							}
 						}
 						else{
 							for (i=0; i<BUF_SIZE; i+=1){
-								printf("ADC reading: %u\r\n", currentADCVal[i]);
+								//printf("Current reading: %d\r\n", currentDataTransform(currentADCVal[i]-currentRef, inaGain, 0x0));
+								//printf("Current reading: %d\r\n", currentADCVal[i]-currentRef);
+								printf("Current reading: %d\r\n", currentADCVal[i]);
 							}
 						}
 						#else
@@ -469,7 +495,7 @@ inline int getThreshold(uint8_t inaGain){
 
 int currentVoltProcess(uint16_t *currentData, uint16_t* voltData, 
 						uint16_t currentRef, uint16_t voltRef, 
-						int *power, uint8_t externalVoltPresent){
+						int *power, uint8_t externalVolt){
 	uint16_t i;
 	int currentCal;
 	int energyCal = 0;
@@ -481,7 +507,7 @@ int currentVoltProcess(uint16_t *currentData, uint16_t* voltData,
 	uint8_t currentADCLowerBound;
 
 
-	if (externalVoltPresent){
+	if (externalVolt){
 		upperThreshold = getThreshold(inaGain)>>1;
 		bufSize = BUF_SIZE2;
 		currentADCLowerBound = 90;
@@ -500,6 +526,7 @@ int currentVoltProcess(uint16_t *currentData, uint16_t* voltData,
 			decreaseINAGain();
 			return -1;
 		}
+		/*
 		// Use linear regression
 		#ifdef CURVE_FIT
 		float temp;
@@ -509,10 +536,15 @@ int currentVoltProcess(uint16_t *currentData, uint16_t* voltData,
 			temp = currentCal*POLY_POS_OR1 + POLY_POS_OR0;
 		currentCal = (int)temp;
 		#endif
-		if (externalVoltPresent)
+		if (externalVolt)
 			energyCal += currentCal*voltDataTransform(voltData[i], voltRef);
 		else
 			energyCal += currentCal*sineTable[i];
+		*/
+		if (externalVolt)
+			energyCal += currentDataTransform(currentCal, inaGain, 0x1)*voltDataTransform(voltData[i], voltRef);
+		else
+			energyCal += currentDataTransform(currentCal, inaGain, 0x0)*sineTable[i];
 
 	}
 	if ((maxADCValue < currentADCLowerBound)&&(inaGain<MAX_INA_GAIN)){
@@ -520,10 +552,7 @@ int currentVoltProcess(uint16_t *currentData, uint16_t* voltData,
 		return -1;
 	}
 	else{
-		if (externalVoltPresent)
-			avgPower = energyCal*P_TRANSFORM2/inaGain; // Unit is mW
-		else
-			avgPower = energyCal*P_TRANSFORM/inaGain; // Unit is mW
+		avgPower = energyCal/bufSize; // unit is mW
 		// Fix phase oppsite down
 		if (avgPower < 0)
 			avgPower = -1*avgPower;
@@ -556,6 +585,52 @@ int voltDataTransform(uint16_t voltReading, uint16_t voltReference){
 	return (int)((voltReading - voltReference)*voltageScaling);
 }
 
+int currentDataTransform(int currentReading, uint8_t inaGain, uint8_t externalVolt){
+	// 10-bit ADC
+	if (externalVolt){
+		switch (inaGain){
+			case 1:
+				return (int)((currentReading - INAGAIN1_OFFSET2)*INAGAIN1_SCALE2);
+			break;
+			case 2:
+				return (int)((currentReading - INAGAIN2_OFFSET2)*INAGAIN2_SCALE2);
+			break;
+			case 5:
+				return (int)((currentReading - INAGAIN5_OFFSET2)*INAGAIN5_SCALE2);
+			break;
+			case 10:
+				return (int)((currentReading - INAGAIN10_OFFSET2)*INAGAIN10_SCALE2);
+			break;
+
+			default:
+				return 0;
+			break;
+		}
+	}
+	// 11-Bit ADC
+	else{
+		switch (inaGain){
+			case 1:
+				return (int)((currentReading - INAGAIN1_OFFSET)*INAGAIN1_SCALE);
+			break;
+			case 2:
+				return (int)((currentReading - INAGAIN2_OFFSET)*INAGAIN2_SCALE);
+			break;
+			case 5:
+				return (int)((currentReading - INAGAIN5_OFFSET)*INAGAIN5_SCALE);
+			break;
+			case 10:
+				return (int)((currentReading - INAGAIN10_OFFSET)*INAGAIN10_SCALE);
+			break;
+
+			default:
+				return 0;
+			break;
+		}
+	}
+}
+
+#ifndef CALIBRATE
 static void disable_all_ioc_override() {
 	uint8_t portnum = 0;
 	uint8_t pinnum = 0;
@@ -565,5 +640,6 @@ static void disable_all_ioc_override() {
 		}
 	}
 }
+#endif
 
 /*---------------------------------------------------------------------------*/
