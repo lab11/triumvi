@@ -41,7 +41,7 @@ rv3049_time_t rtctime;
 #define BUF_SIZE 120
 #define BUF_SIZE2 113 // for external voltage input
 uint16_t currentADCVal[BUF_SIZE];
-uint16_t voltADCVal[BUF_SIZE2];
+uint16_t voltADCVal[BUF_SIZE2+2]; // compensate the voltage sample offset
 uint32_t timerVal[BUF_SIZE];
 
 #include "calibrateData.h"
@@ -113,6 +113,9 @@ int voltDataTransform(uint16_t voltReading, uint16_t voltReference);
 int currentDataTransform(int currentReading, uint8_t inaGain, uint8_t externalVolt);
 #ifndef CALIBRATE
 static void disable_all_ioc_override();
+#endif
+#ifdef THREEPHASE_SLAVE
+static void threephaseStartMeasure(uint8_t port, uint8_t pin){
 #endif
 // End of prototypes
 
@@ -245,9 +248,17 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 			case waitingComparatorStable:
 				if (rTimerExpired==1){
 					rTimerExpired = 0;
+					// Test timing
+					GPIO_CLR_PIN(GPIO_B_BASE, 0x02);
+					#ifdef THREEPHASE_SLAVE
+					triumviLEDOFF();
+					GPIO_ENABLE_INTERRUPT(I2C_SCL_GPIO_BASE, 0x1<<I2C_SCL_GPIO_PIN);
+					nvic_interrupt_enable(I2C_SCL_NVIC_PORT);
+					#else
 					GPIO_DETECT_RISING(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
 					meterVoltageComparator(SENSE_ENABLE);
 					ungate_gpt(GPTIMER_1);
+					#endif
 					REG(SYSTICK_STCTRL) &= (~SYSTICK_STCTRL_INTEN);
 					while (referenceInt==0){}
 					if (externalVoltSel()){
@@ -261,7 +272,10 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 							currentRef = adc_get(V_REF_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_256);
 							currentRef = ((currentRef>>5)>1023)? 0 : (currentRef>>5);
 							voltRef = voltDataAverge(voltADCVal);
-							powerValid = currentVoltProcess(currentADCVal, voltADCVal, currentRef, voltRef, &tempPower, 0x01);
+							// shift two samples
+							voltADCVal[BUF_SIZE2] = voltADCVal[0];
+							voltADCVal[BUF_SIZE2+1] = voltADCVal[1];
+							powerValid = currentVoltProcess(currentADCVal, voltADCVal+2, currentRef, voltRef, &tempPower, 0x01);
 						#ifndef CALIBRATE
 							if (powerValid>0){
 								i++;
@@ -269,18 +283,26 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 							}
 						}
 						avgPower = (avgPower>>4);
+						#else
+						avgPower = tempPower;
 						#endif
 					}
 					else{
 						sampleCurrentWaveform();
+						// Test timing
+						GPIO_SET_PIN(GPIO_B_BASE, 0x02);
 						currentRef = adc_get(V_REF_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_512);
 						currentRef = ((currentRef>>4)>2047)? 0 : (currentRef>>4);
 						disableAll();
 						powerValid = currentVoltProcess(currentADCVal, NULL, currentRef, 0, &avgPower, 0x00);
+						// Test timing
+						GPIO_CLR_PIN(GPIO_B_BASE, 0x02);
 					}
 					referenceInt = 0;
+					#ifndef THREEPHASE_SLAVE
 					inaGain = getINAGain();
 					setINAGain(inaGainArr[0]);
+					#endif
 					if (powerValid>0){
 						#ifdef CALIBRATE
 						uint8_t i;
@@ -294,9 +316,10 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 						if (externalVoltSel()){
 							for (i=0; i<BUF_SIZE2; i+=1){
 								printf("Current reading: %d (mA) Voltage Reading: %d (V)\r\n", 
-								//currentDataTransform(currentADCVal[i]-currentRef, inaGain, 0x1), voltDataTransform(voltADCVal[i], voltRef));
-								currentADCVal[i]-currentRef, voltDataTransform(voltADCVal[i], voltRef));
+								currentDataTransform(currentADCVal[i]-currentRef, inaGain, 0x1), voltDataTransform(voltADCVal[i+2], voltRef));
+								//currentADCVal[i]-currentRef, voltDataTransform(voltADCVal[i], voltRef));
 							}
+							printf("Calculated Power: %d\r\n", avgPower);
 						}
 						else{
 							for (i=0; i<BUF_SIZE; i+=1){
@@ -313,6 +336,8 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 						rv3049_read_time(&rtctime);
 						triumviFramWrite(powerRead, &rtctime);
 						disableSPI();
+						// Test timing
+						GPIO_SET_PIN(GPIO_B_BASE, 0x02);
 						// Send data over RF
 						#else
 						meterData[0] = AES_PKT_IDENTIFIER;
@@ -329,8 +354,15 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 						packetbuf_copyfrom(meterData, 13);
 						cc2538_on_and_transmit();
 						CC2538_RF_CSP_ISRFOFF();
+						// Test timing
+						GPIO_SET_PIN(GPIO_B_BASE, 0x02);
 						#endif
 						#endif
+						#ifdef THREEPHASE_SLAVE
+						triumviLEDON();
+						rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.1, 1, &rtimerEvent, NULL);
+						myState = init;
+						#else
 						#ifdef BLINK_LED
 						triumviLEDON();
 						rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.001, 1, &rtimerEvent, NULL);
@@ -338,6 +370,7 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 						#else
 						rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*backOffTime, 1, &rtimerEvent, NULL);
 						myState = init;
+						#endif
 						#endif
 					}
 					// improper gain setting, try after 4 s
@@ -443,6 +476,20 @@ void meterInit(){
 
 	// tactile button
 	GPIO_SET_INPUT(MEM_RST_GPIO_BASE, 0x1<<MEM_RST_GPIO_PIN);
+
+	#ifdef THREEPHASE_SLAVE
+	// 3 phase slave trigger, use SCL as trigger input
+	GPIO_SET_INPUT(I2C_SCL_GPIO_BASE, 0x1<<I2C_SCL_GPIO_PIN);
+	ioc_set_over(I2C_SCL_GPIO_NUM, I2C_SCL_GPIO_PIN, IOC_OVERRIDE_DIS);
+	GPIO_DETECT_EDGE(I2C_SCL_GPIO_BASE, 0x1<<I2C_SCL_GPIO_PIN);
+	GPIO_TRIGGER_SINGLE_EDGE(I2C_SCL_GPIO_BASE, 0x1<<I2C_SCL_GPIO_PIN);
+	GPIO_DETECT_RISING(I2C_SCL_GPIO_BASE, 0x1<<I2C_SCL_GPIO_PIN);
+	// interrupt
+	gpio_register_callback(threephaseStartMeasure, I2C_SCL_GPIO_NUM, I2C_SCL_GPIO_PIN);
+	GPIO_DISABLE_INTERRUPT(I2C_SCL_GPIO_BASE, 0x1<<I2C_SCL_GPIO_PIN);
+	nvic_interrupt_disable(I2C_SCL_NVIC_PORT);
+	#endif
+
 
 	// GPIO for Voltage/Current measurement
 	GPIO_SET_OUTPUT(V_MEAS_EN_GPIO_BASE, 0x1<<V_MEAS_EN_GPIO_PIN);
@@ -646,6 +693,15 @@ static void disable_all_ioc_override() {
 			ioc_set_over(portnum, pinnum, IOC_OVERRIDE_DIS);
 		}
 	}
+}
+#endif
+
+#ifdef THREEPHASE_SLAVE
+static void threephaseStartMeasure(uint8_t port, uint8_t pin){
+	GPIO_DISABLE_INTERRUPT(I2C_SCL_GPIO_BASE, 0x1<<I2C_SCL_GPIO_PIN);
+	nvic_interrupt_disable(I2C_SCL_NVIC_PORT);
+	referenceInt = 1;
+	process_poll(&wirelessMeterProcessing);
 }
 #endif
 
