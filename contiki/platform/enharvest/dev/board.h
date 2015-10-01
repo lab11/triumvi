@@ -180,6 +180,15 @@
 #define MEM_RST_GPIO_BASE GPIO_C_BASE
 #define MEM_RST_GPIO_PIN 4
 
+#define I2C_SDA_GPIO_BASE GPIO_B_BASE
+#define I2C_SDA_GPIO_PIN 1
+#define I2C_SDA_GPIO_NUM GPIO_B_NUM
+
+#define I2C_SCL_GPIO_BASE GPIO_B_BASE
+#define I2C_SCL_GPIO_PIN 2
+#define I2C_SCL_GPIO_NUM GPIO_B_NUM
+#define I2C_SCL_NVIC_PORT NVIC_INT_GPIO_PORT_B
+
 
 /*---------------------------------------------------------------------------*/
 /**
