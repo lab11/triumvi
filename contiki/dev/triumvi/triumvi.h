@@ -22,6 +22,10 @@
 #define MAX_INA_GAIN 10
 #define MIN_INA_GAIN 1
 
+#define BATTERY_PACK_LED_RED 0x08
+#define BATTERY_PACK_LED_GREEN 0x04
+#define BATTERY_PACK_LED_BLUE 0x02
+
 static const uint8_t inaGainArr[4] = {1, 2, 5, 10};
 
 typedef struct {
@@ -58,5 +62,20 @@ void reenableSPI();
 
 inline uint8_t externalVoltSel();
 inline uint8_t isButtonPressed();
+
+// Battery Pack functions
+uint8_t batteryPackIsAttached();
+uint8_t batteryPackIsUSBAttached();
+void batteryPackInit();
+uint8_t batteryPackReadPanelID();
+uint8_t batteryPackReadCircuitID();
+
+void batteryPackLEDOn(uint8_t leds);
+void batteryPackLEDOff(uint8_t leds);
+void batteryPackLEDToggle(uint8_t leds);
+
+void batteryPackLEDDriverConfig();
+void batteryPackLEDIntensityDecrease(uint8_t leds);
+void batteryPackLEDIntensityIncrease(uint8_t leds);
 
 #endif

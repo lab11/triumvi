@@ -5,6 +5,7 @@
 #include "contiki.h"
 #include "fm25v02.h"
 #include "rv3049.h"
+#include "sx1509b.h"
 #include "triumvi.h"
 
 
@@ -233,4 +234,119 @@ inline uint8_t isButtonPressed(){
 	else
 		return 1;
 }
+
+uint8_t batteryPackIsAttached(){
+	// set input, disable internal pull-up
+	// If external battery pack is attached, I2C should be hold high
+	GPIO_SET_INPUT(I2C_SCL_GPIO_BASE, 0x1<<I2C_SCL_GPIO_PIN);
+	ioc_set_over(I2C_SCL_GPIO_NUM, I2C_SCL_GPIO_PIN, IOC_OVERRIDE_DIS);
+	uint8_t result = GPIO_READ_PIN(I2C_SCL_GPIO_BASE, 0x1<<I2C_SCL_GPIO_PIN)>>I2C_SCL_GPIO_PIN;
+	// If pin is high, set both pins input and returns. 
+	if (result>0){
+		GPIO_SET_INPUT(I2C_SDA_GPIO_BASE, 0x1<<I2C_SDA_GPIO_PIN);
+		ioc_set_over(I2C_SDA_GPIO_NUM, I2C_SDA_GPIO_PIN, IOC_OVERRIDE_DIS);
+		return 1;
+	}
+	// Otherwise, set it to output and drive it low
+	GPIO_SET_OUTPUT(I2C_SCL_GPIO_BASE, 0x1<<I2C_SCL_GPIO_PIN);
+	GPIO_CLR_PIN(I2C_SCL_GPIO_BASE, 0x1<<I2C_SCL_GPIO_PIN);
+	return 0;
+
+}
+
+void batteryPackInit(){
+	// I2C init
+	sx1509b_init();
+	// Port A pin 0 is connected to VUSB directly
+	sx1509b_high_voltage_input_enable(SX1509B_PORTA, 0x1, SX1509B_HIGH_INPUT_ENABLE);
+	// Setup RGB led IOs
+	sx1509b_gpio_pullup_cfg(SX1509B_PORTA, 0x0e, SX1509B_OUTPUT_RESISTOR_DISABLE);
+	sx1509b_gpio_set_output(SX1509B_PORTA, 0x0e);
+	sx1509b_gpio_output_type(SX1509B_PORTA, 0x0e, SX1509B_OUTPUT_TYPE_OPENDRAIN);
+	sx1509b_gpio_set_pin(SX1509B_PORTA, 0x0e);
+	// Disable all pull-up and pull-down resistors
+	sx1509b_gpio_pullup_cfg(SX1509B_PORTA, 0xff, SX1509B_OUTPUT_RESISTOR_DISABLE);
+	sx1509b_gpio_pullup_cfg(SX1509B_PORTB, 0xff, SX1509B_OUTPUT_RESISTOR_DISABLE);
+	sx1509b_gpio_pulldown_cfg(SX1509B_PORTA, 0xff, SX1509B_OUTPUT_RESISTOR_DISABLE);
+	sx1509b_gpio_pulldown_cfg(SX1509B_PORTB, 0xff, SX1509B_OUTPUT_RESISTOR_DISABLE);
+}
+
+uint8_t batteryPackReadPanelID(){
+	// enable pull-up resistor before read IO state
+	sx1509b_gpio_pullup_cfg(SX1509B_PORTA, 0x0f, SX1509B_OUTPUT_RESISTOR_ENABLE);
+	uint8_t panelID = 15 - (sx1509b_gpio_read_port(SX1509B_PORTA)>>4);
+	sx1509b_gpio_pullup_cfg(SX1509B_PORTA, 0x0f, SX1509B_OUTPUT_RESISTOR_DISABLE);
+	return panelID;
+}
+
+uint8_t batteryPackReadCircuitID(){
+	sx1509b_gpio_pullup_cfg(SX1509B_PORTB, 0xff, SX1509B_OUTPUT_RESISTOR_ENABLE);
+	uint8_t portBReg = sx1509b_gpio_read_port(SX1509B_PORTB);
+	uint8_t circuitID = (10 - ((portBReg&0xf0)>>4)) + (10 - (portBReg&0x0f))*10;
+	sx1509b_gpio_pullup_cfg(SX1509B_PORTB, 0xff, SX1509B_OUTPUT_RESISTOR_DISABLE);
+	return circuitID;
+}
+
+void batteryPackLEDOn(uint8_t leds){
+	uint8_t myLED = (leds&0x0e);
+	sx1509b_gpio_clr_pin(SX1509B_PORTA, myLED);
+}
+
+void batteryPackLEDOff(uint8_t leds){
+	uint8_t myLED = (leds&0x0e);
+	sx1509b_gpio_set_pin(SX1509B_PORTA, myLED);
+}
+
+void batteryPackLEDToggle(uint8_t leds){
+	uint8_t ledState = (sx1509b_gpio_read_port(SX1509B_PORTA) & 0x0e);
+	switch (leds){
+		case BATTERY_PACK_LED_RED: 
+			if (ledState & 0x08)
+				sx1509b_gpio_clr_pin(SX1509B_PORTA, 0x08);
+			else
+				sx1509b_gpio_set_pin(SX1509B_PORTA, 0x08);
+		break;
+		case BATTERY_PACK_LED_GREEN:
+			if (ledState & 0x04)
+				sx1509b_gpio_clr_pin(SX1509B_PORTA, 0x04);
+			else
+				sx1509b_gpio_set_pin(SX1509B_PORTA, 0x04);
+		break;
+		case BATTERY_PACK_LED_BLUE:
+			if (ledState & 0x02)
+				sx1509b_gpio_clr_pin(SX1509B_PORTA, 0x02);
+			else
+				sx1509b_gpio_set_pin(SX1509B_PORTA, 0x02);
+		break;
+		default:
+		break;
+	}
+}
+
+uint8_t batteryPackIsUSBAttached(){
+	uint8_t portAReg = sx1509b_gpio_read_port(SX1509B_PORTA);
+	if (portAReg & 0x1)
+		return 1;
+	else
+		return 0;
+}
+
+void batteryPackLEDDriverConfig(){
+	// select internal 2 MHz oscillator
+	sx1509b_oscillator_source_select(SX1509B_OSCI_SOURCE_INT);
+	// set fOSCOUT = 2 MHz / 2 ^ (12-1) = 977 Hz
+	sx1509b_oscillator_freq_divider(12);
+	// set CLKx to 977 / 2 ^ (1-1) = 977 Hz
+	sx1509b_led_driver_freq_divider(1);
+	// Enable LED driver for RGB LEDs
+	sx1509b_led_driver_enable(SX1509B_PORTA, 0x0e, SX1509B_LED_DRIVER_ENABLE);
+}
+
+void batteryPackLEDIntensityDecrease(uint8_t leds){
+
+}
+
+void batteryPackLEDIntensityIncrease(uint8_t leds){
+}
+
 
