@@ -3,6 +3,7 @@
 #include <stdio.h>
 
 #include "contiki.h"
+#include "clock.c"
 #include "fm25v02.h"
 #include "rv3049.h"
 #include "sx1509b.h"
@@ -239,6 +240,10 @@ uint8_t batteryPackIsAttached(){
 	// set input, disable internal pull-up
 	// If external battery pack is attached, I2C should be hold high
 	GPIO_SET_INPUT(I2C_SCL_GPIO_BASE, 0x1<<I2C_SCL_GPIO_PIN);
+	// enable pull down resistor for 10 us
+	ioc_set_over(I2C_SCL_GPIO_NUM, I2C_SCL_GPIO_PIN, IOC_OVERRIDE_PDE);
+	clock_delay_usec(10);
+	// disable pull down resistor
 	ioc_set_over(I2C_SCL_GPIO_NUM, I2C_SCL_GPIO_PIN, IOC_OVERRIDE_DIS);
 	uint8_t result = GPIO_READ_PIN(I2C_SCL_GPIO_BASE, 0x1<<I2C_SCL_GPIO_PIN)>>I2C_SCL_GPIO_PIN;
 	// If pin is high, set both pins input and returns. 
@@ -298,29 +303,9 @@ void batteryPackLEDOff(uint8_t leds){
 }
 
 void batteryPackLEDToggle(uint8_t leds){
+	uint8_t myLED = (leds&0x0e);
 	uint8_t ledState = (sx1509b_gpio_read_port(SX1509B_PORTA) & 0x0e);
-	switch (leds){
-		case BATTERY_PACK_LED_RED: 
-			if (ledState & 0x08)
-				sx1509b_gpio_clr_pin(SX1509B_PORTA, 0x08);
-			else
-				sx1509b_gpio_set_pin(SX1509B_PORTA, 0x08);
-		break;
-		case BATTERY_PACK_LED_GREEN:
-			if (ledState & 0x04)
-				sx1509b_gpio_clr_pin(SX1509B_PORTA, 0x04);
-			else
-				sx1509b_gpio_set_pin(SX1509B_PORTA, 0x04);
-		break;
-		case BATTERY_PACK_LED_BLUE:
-			if (ledState & 0x02)
-				sx1509b_gpio_clr_pin(SX1509B_PORTA, 0x02);
-			else
-				sx1509b_gpio_set_pin(SX1509B_PORTA, 0x02);
-		break;
-		default:
-		break;
-	}
+	sx1509b_gpio_write_port(SX1509B_PORTA, myLED, ~ledState);
 }
 
 uint8_t batteryPackIsUSBAttached(){
@@ -334,19 +319,53 @@ uint8_t batteryPackIsUSBAttached(){
 void batteryPackLEDDriverConfig(){
 	// select internal 2 MHz oscillator
 	sx1509b_oscillator_source_select(SX1509B_OSCI_SOURCE_INT);
-	// set fOSCOUT = 2 MHz / 2 ^ (12-1) = 977 Hz
-	sx1509b_oscillator_freq_divider(12);
-	// set CLKx to 977 / 2 ^ (1-1) = 977 Hz
+	// set fOSCOUT = 2 MHz / 2 ^ (9-1) = 7812.5 Hz
+	sx1509b_oscillator_freq_divider(9);
+	// set CLKx to 977 / 2 ^ (1-1) = 7812.5 Hz
 	sx1509b_led_driver_freq_divider(1);
 	// Enable LED driver for RGB LEDs
 	sx1509b_led_driver_enable(SX1509B_PORTA, 0x0e, SX1509B_LED_DRIVER_ENABLE);
 }
 
-void batteryPackLEDIntensityDecrease(uint8_t leds){
-
+uint8_t batteryPackLEDGetPin(uint8_t leds){
+	uint8_t pin = 0;
+	switch (leds){
+		case BATTERY_PACK_LED_RED:
+			pin = 3;
+		break;
+		case BATTERY_PACK_LED_GREEN:
+			pin = 2;
+		break;
+		case BATTERY_PACK_LED_BLUE:
+			pin = 1;
+		break;
+		default:
+		break;
+	}
+	return pin;
 }
 
-void batteryPackLEDIntensityIncrease(uint8_t leds){
+// return 1 if success, 0 otherwise
+uint8_t batteryPackLEDIntensityDecrease(uint8_t leds){
+	uint8_t pin = batteryPackLEDGetPin(leds);
+	uint8_t iOnVal = sx1509b_led_driver_get_ION(pin);
+	if (iOnVal > 0){
+		sx1509b_led_driver_set_ION(pin, iOnVal-5);
+		return 1;
+	}
+	return 0;
 }
+
+// return 1 if success, 0 otherwise
+uint8_t batteryPackLEDIntensityIncrease(uint8_t leds){
+	uint8_t pin = batteryPackLEDGetPin(leds);
+	uint8_t iOnVal = sx1509b_led_driver_get_ION(pin);
+	if (iOnVal < 255){
+		sx1509b_led_driver_set_ION(pin, iOnVal+5);
+		return 1;
+	}
+	return 0;
+}
+
 
 

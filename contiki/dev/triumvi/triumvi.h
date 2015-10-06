@@ -75,7 +75,7 @@ void batteryPackLEDOff(uint8_t leds);
 void batteryPackLEDToggle(uint8_t leds);
 
 void batteryPackLEDDriverConfig();
-void batteryPackLEDIntensityDecrease(uint8_t leds);
-void batteryPackLEDIntensityIncrease(uint8_t leds);
+uint8_t batteryPackLEDIntensityDecrease(uint8_t leds);
+uint8_t batteryPackLEDIntensityIncrease(uint8_t leds);
 
 #endif

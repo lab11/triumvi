@@ -138,6 +138,7 @@ inline void sx1509b_gpio_set_output(uint8_t port, uint8_t pin_mask);
 
 inline void sx1509b_gpio_set_pin(uint8_t port, uint8_t pin_mask);
 inline void sx1509b_gpio_clr_pin(uint8_t port, uint8_t pin_mask);
+void sx1509b_gpio_write_port(uint8_t port, uint8_t pin_mask, uint8_t val);
 void sx1509b_gpio_output_type(uint8_t port, uint8_t pin_mask, uint8_t type);
 
 void sx1509b_gpio_pullup_cfg(uint8_t port, uint8_t pin_mask, uint8_t cfg);
@@ -160,7 +161,8 @@ void sx1509b_led_driver_enable(uint8_t port, uint8_t pin_mask, uint8_t cfg);
 // 16 <= val <= 31 --> Ton = 512 * val * (255/CLKx)
 void sx1509b_led_driver_TON(uint8_t pin, uint8_t val);
 
-void sx1509b_led_driver_ION(uint8_t pin, uint8_t val);
+uint8_t sx1509b_led_driver_get_ION(uint8_t pin);
+void sx1509b_led_driver_set_ION(uint8_t pin, uint8_t val);
 
 // val <= 31, 
 // val = 0 --> static mode

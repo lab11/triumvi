@@ -89,6 +89,14 @@ inline void sx1509b_gpio_clr_pin(uint8_t port, uint8_t pin_mask){
 		sx1509b_gpio_set_clr_pin(port, pin_mask, SX1509B_GPIO_PIN_CLR);
 }
 
+void sx1509b_gpio_write_port(uint8_t port, uint8_t pin_mask, uint8_t val){
+	if (port <= 1){
+		uint8_t portReg = sx1509b_read_register_single(SX1509B_RegDataB+port);
+		uint8_t temp = ((portReg & (~pin_mask)) | (val & pin_mask));
+		sx1509b_write_register_single((SX1509B_RegDataB+port), temp);
+	}
+}
+
 void sx1509b_gpio_output_type(uint8_t port, uint8_t pin_mask, uint8_t type){
 	if ((port <= 1)&&(type <= 1)){
 		// 0 --> push pull output, 1 --> open drain output
@@ -154,11 +162,19 @@ void sx1509b_led_driver_TON(uint8_t pin, uint8_t val){
 	}
 }
 
-void sx1509b_led_driver_ION(uint8_t pin, uint8_t val){
+void sx1509b_led_driver_set_ION(uint8_t pin, uint8_t val){
 	if (pin <= 15){
 		uint8_t ionAddr = sx1509b_led_driver_baseAddr_calc(pin) + 0x1;
 		sx1509b_write_register_single(ionAddr, val);
 	}
+}
+
+uint8_t sx1509b_led_driver_get_ION(uint8_t pin){
+	if (pin <= 15){
+		uint8_t ionAddr = sx1509b_led_driver_baseAddr_calc(pin) + 0x1;
+		return sx1509b_read_register_single(ionAddr);
+	}
+	return 0;
 }
 
 void sx1509b_led_driver_TOFF(uint8_t pin, uint8_t val){
