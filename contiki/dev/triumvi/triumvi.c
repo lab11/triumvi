@@ -273,16 +273,16 @@ void batteryPackInit(){
 
 uint8_t batteryPackReadPanelID(){
 	// enable pull-up resistor before read IO state
-	sx1509b_gpio_pullup_cfg(SX1509B_PORTA, 0x0f, SX1509B_OUTPUT_RESISTOR_ENABLE);
+	sx1509b_gpio_pullup_cfg(SX1509B_PORTA, 0xf0, SX1509B_OUTPUT_RESISTOR_ENABLE);
 	uint8_t panelID = 15 - (sx1509b_gpio_read_port(SX1509B_PORTA)>>4);
-	sx1509b_gpio_pullup_cfg(SX1509B_PORTA, 0x0f, SX1509B_OUTPUT_RESISTOR_DISABLE);
+	sx1509b_gpio_pullup_cfg(SX1509B_PORTA, 0xf0, SX1509B_OUTPUT_RESISTOR_DISABLE);
 	return panelID;
 }
 
 uint8_t batteryPackReadCircuitID(){
 	sx1509b_gpio_pullup_cfg(SX1509B_PORTB, 0xff, SX1509B_OUTPUT_RESISTOR_ENABLE);
 	uint8_t portBReg = sx1509b_gpio_read_port(SX1509B_PORTB);
-	uint8_t circuitID = (10 - ((portBReg&0xf0)>>4)) + (10 - (portBReg&0x0f))*10;
+	uint8_t circuitID = (15 - (portBReg&0x0f)) + (15 - (portBReg>>4))*10;
 	sx1509b_gpio_pullup_cfg(SX1509B_PORTB, 0xff, SX1509B_OUTPUT_RESISTOR_DISABLE);
 	return circuitID;
 }
