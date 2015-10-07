@@ -13,11 +13,17 @@
 #include "ieee-addr.h"
 #include "dev/crypto.h"
 #include "dev/ccm.h"
+#include "spi-arch.h"
+#include "spi.h"
+#include "dev/ssi.h"
 
 
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
+
+#define SPI_CS_GPIO_NUM GPIO_C_NUM
+#define SPI_CS_GPIO_PIN 0
 
 
 PROCESS(radioRXOnlyProcess, "Radio RX Process");
@@ -72,17 +78,30 @@ PROCESS_THREAD(radioRXOnlyProcess, ev, data)
 			int meterData = (packet_ptr[5]<<24 | packet_ptr[4]<<16 | packet_ptr[3]<<8 | packet_ptr[2]);
 			printf("Meter data: %d mW\r\n", meterData);
 		}
-		else if (packet_ptr[0]==0xc0){
+		else if ((packet_ptr[0]==AES_PKT_IDENTIFIER) || (packet_ptr[0]==AES_PKT_IDENTIFIER+1)){
 			printf("Encrypted message...\r\n");
 			memcpy(myNonce, srcExtAddr, 8);
 			memcpy(&myNonce[9], &packetPayload[1], 4); // Nonce[8] should be 0
-			ccm_auth_decrypt_start(LEN_LEN, 0, myNonce, aData, ADATA_LEN, 
-					cData, (PDATA_LEN+MIC_LEN), MIC_LEN, NULL);
-			while (ccm_auth_decrypt_check_status()!=AES_CTRL_INT_STAT_RESULT_AV){}
 			uint8_t auth_res;
-			auth_res = ccm_auth_decrypt_get_result(cData, PDATA_LEN+MIC_LEN, myMic, MIC_LEN);
+			if (packet_ptr[0]==AES_PKT_IDENTIFIER+1){
+				ccm_auth_decrypt_start(LEN_LEN, 0, myNonce, aData, ADATA_LEN, 
+					cData, (PDATA_LEN+MIC_LEN+2), MIC_LEN, NULL);
+				while (ccm_auth_decrypt_check_status()!=AES_CTRL_INT_STAT_RESULT_AV){}
+				auth_res = ccm_auth_decrypt_get_result(cData, PDATA_LEN+MIC_LEN+2, myMic, MIC_LEN);
+			}
+			else{
+				ccm_auth_decrypt_start(LEN_LEN, 0, myNonce, aData, ADATA_LEN, 
+					cData, (PDATA_LEN+MIC_LEN), MIC_LEN, NULL);
+				while (ccm_auth_decrypt_check_status()!=AES_CTRL_INT_STAT_RESULT_AV){}
+				auth_res = ccm_auth_decrypt_get_result(cData, PDATA_LEN+MIC_LEN, myMic, MIC_LEN);
+			}
+
 			if (auth_res==CRYPTO_SUCCESS){
 				printf("Authentication success\r\n");
+				if (packet_ptr[0]==AES_PKT_IDENTIFIER+1){
+					printf("Panel ID: %x\r\n", cData[4]);
+					printf("Circuit #: %d\r\n", cData[5]);
+				}
 				int meterData = (cData[3]<<24 | cData[2]<<16 | cData[1]<<8 | cData[0]);
 				printf("Meter data: %d mW\r\n", meterData);
 			}
