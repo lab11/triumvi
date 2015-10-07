@@ -156,10 +156,10 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 	#ifdef CALIBRATE
 	static uint8_t calibrate_cnt = 0;
 	#else
-	static uint8_t meterData[13];
+	static uint8_t meterData[15];
 	#ifdef AES_ENABLE
 	// packet preprocessing
-	static uint8_t readingBuf[4];
+	static uint8_t readingBuf[6]; // 4 bytes reading, 1 byte panel ID, 1 byte circuit ID
 	static uint8_t extAddr[8];
     NETSTACK_RADIO.get_object(RADIO_PARAM_64BIT_ADDR, extAddr, 8);
 	
@@ -179,6 +179,7 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 	static int powerValid;
 	static uint8_t inaGain;
 	static uint16_t currentRef, voltRef;
+	static uint8_t batteryPackStatus;
 
 	
 	meterInit();
@@ -300,7 +301,7 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 					setINAGain(inaGainArr[0]);
 					#endif
 					// check if battery is attached 
-					uint8_t batteryPackStatus = batteryPackIsAttached();
+					batteryPackStatus = batteryPackIsAttached();
 					if (batteryPackStatus==1){
 						triumviLEDON();
 						batteryPackInit();
@@ -340,18 +341,36 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 						disableSPI();
 						// Send data over RF
 						#else // FRAM_WRITE
-						meterData[0] = AES_PKT_IDENTIFIER;
 						packData(&myNonce[9], nonceCounter);
 						packData(readingBuf, avgPower);
 						packData(&meterData[1], nonceCounter);
-						ccm_auth_encrypt_start(LEN_LEN, 0, myNonce, aData, ADATA_LEN, 
+						// If battery pack presents, send additional two
+						// bytes of panel ID and circuit ID after
+						// power reading
+						if (batteryPackStatus==1){
+							meterData[0] = AES_PKT_IDENTIFIER+1;
+							readingBuf[PDATA_LEN] = batteryPackReadPanelID();
+							readingBuf[PDATA_LEN+1] = batteryPackReadCircuitID();
+							ccm_auth_encrypt_start(LEN_LEN, 0, myNonce, aData, ADATA_LEN, 
+										pData, PDATA_LEN+2, MIC_LEN, NULL);
+							nonceCounter += 1;
+							while(ccm_auth_encrypt_check_status()!=AES_CTRL_INT_STAT_RESULT_AV){}
+							ccm_auth_encrypt_get_result(myMic, MIC_LEN);
+							memcpy(&meterData[5], readingBuf, PDATA_LEN+2);
+							memcpy(&meterData[11], myMic, MIC_LEN);
+							packetbuf_copyfrom(meterData, 15);
+						}
+						else{
+							meterData[0] = AES_PKT_IDENTIFIER;
+							ccm_auth_encrypt_start(LEN_LEN, 0, myNonce, aData, ADATA_LEN, 
 										pData, PDATA_LEN, MIC_LEN, NULL);
-						nonceCounter += 1;
-						while(ccm_auth_encrypt_check_status()!=AES_CTRL_INT_STAT_RESULT_AV){}
-						ccm_auth_encrypt_get_result(myMic, MIC_LEN);
-						memcpy(&meterData[5], readingBuf, PDATA_LEN);
-						memcpy(&meterData[9], myMic, MIC_LEN);
-						packetbuf_copyfrom(meterData, 13);
+							nonceCounter += 1;
+							while(ccm_auth_encrypt_check_status()!=AES_CTRL_INT_STAT_RESULT_AV){}
+							ccm_auth_encrypt_get_result(myMic, MIC_LEN);
+							memcpy(&meterData[5], readingBuf, PDATA_LEN);
+							memcpy(&meterData[9], myMic, MIC_LEN);
+							packetbuf_copyfrom(meterData, 13);
+						}
 						cc2538_on_and_transmit();
 						CC2538_RF_CSP_ISRFOFF();
 						#endif // FRAM_WRITE

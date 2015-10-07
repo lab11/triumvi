@@ -15,6 +15,7 @@
 //#define RTC_SET
 //#define FRAM_WRITE
 //#define BLINK_LED
+//#define THREEPHASE_SLAVE
 
 #ifdef CALIBRATE
 #define UART_CONF_ENABLE 1
