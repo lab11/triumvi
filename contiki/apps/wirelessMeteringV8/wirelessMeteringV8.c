@@ -19,6 +19,7 @@
 #include "cc2538-rf.h"
 #include "fm25v02.h"
 #include "triumvi.h"
+#include "sx1509b.h"
 
 
 #include <stdio.h>
@@ -133,6 +134,7 @@ typedef enum state{
 	#ifdef BLINK_LED
 	ledBlink,
 	#endif
+	batteryPackLEDBlink,
 	nullState
 } state_t;
 
@@ -248,8 +250,6 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 			case waitingComparatorStable:
 				if (rTimerExpired==1){
 					rTimerExpired = 0;
-					// Test timing
-					GPIO_CLR_PIN(GPIO_B_BASE, 0x02);
 					#ifdef THREEPHASE_SLAVE
 					triumviLEDOFF();
 					GPIO_ENABLE_INTERRUPT(I2C_SCL_GPIO_BASE, 0x1<<I2C_SCL_GPIO_PIN);
@@ -289,20 +289,22 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 					}
 					else{
 						sampleCurrentWaveform();
-						// Test timing
-						GPIO_SET_PIN(GPIO_B_BASE, 0x02);
 						currentRef = adc_get(V_REF_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_512);
 						currentRef = ((currentRef>>4)>2047)? 0 : (currentRef>>4);
 						disableAll();
 						powerValid = currentVoltProcess(currentADCVal, NULL, currentRef, 0, &avgPower, 0x00);
-						// Test timing
-						GPIO_CLR_PIN(GPIO_B_BASE, 0x02);
 					}
 					referenceInt = 0;
 					#ifndef THREEPHASE_SLAVE
 					inaGain = getINAGain();
 					setINAGain(inaGainArr[0]);
 					#endif
+					// check if battery is attached 
+					uint8_t batteryPackStatus = batteryPackIsAttached();
+					if (batteryPackStatus==1){
+						triumviLEDON();
+						batteryPackInit();
+					}
 					if (powerValid>0){
 						#ifdef CALIBRATE
 						uint8_t i;
@@ -328,7 +330,7 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 								printf("Current reading: %d\r\n", currentADCVal[i]);
 							}
 						}
-						#else
+						#else // CALIBRATION
 						// Write data into FRAM
 						#ifdef FRAM_WRITE
 						reenableSPI();
@@ -336,10 +338,8 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 						rv3049_read_time(&rtctime);
 						triumviFramWrite(powerRead, &rtctime);
 						disableSPI();
-						// Test timing
-						GPIO_SET_PIN(GPIO_B_BASE, 0x02);
 						// Send data over RF
-						#else
+						#else // FRAM_WRITE
 						meterData[0] = AES_PKT_IDENTIFIER;
 						packData(&myNonce[9], nonceCounter);
 						packData(readingBuf, avgPower);
@@ -354,24 +354,30 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 						packetbuf_copyfrom(meterData, 13);
 						cc2538_on_and_transmit();
 						CC2538_RF_CSP_ISRFOFF();
-						// Test timing
-						GPIO_SET_PIN(GPIO_B_BASE, 0x02);
-						#endif
-						#endif
-						#ifdef THREEPHASE_SLAVE
-						triumviLEDON();
-						rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.1, 1, &rtimerEvent, NULL);
-						myState = init;
-						#else
-						#ifdef BLINK_LED
-						triumviLEDON();
-						rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.001, 1, &rtimerEvent, NULL);
-						myState = ledBlink;
-						#else
-						rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*backOffTime, 1, &rtimerEvent, NULL);
-						myState = init;
-						#endif
-						#endif
+						#endif // FRAM_WRITE
+						#endif // CALIBRATE
+						if (batteryPackStatus==1){
+							batteryPackLEDDriverInit();
+							batteryPackLEDOn(BATTERY_PACK_LED_BLUE);
+							myState = batteryPackLEDBlink;
+							rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.1, 1, &rtimerEvent, NULL);
+						}
+						else{
+							#ifdef THREEPHASE_SLAVE
+							triumviLEDON();
+							rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.1, 1, &rtimerEvent, NULL);
+							myState = init;
+							#else
+							#ifdef BLINK_LED
+							triumviLEDON();
+							rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.001, 1, &rtimerEvent, NULL);
+							myState = ledBlink;
+							#else
+							rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*backOffTime, 1, &rtimerEvent, NULL);
+							myState = init;
+							#endif
+							#endif
+						}
 					}
 					// improper gain setting, try after 4 s
 					else{
@@ -391,6 +397,18 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 				}
 			break;
 			#endif
+
+			case batteryPackLEDBlink:
+				if (rTimerExpired==1){
+					rTimerExpired = 0;
+					sx1509b_init();
+					batteryPackLEDOff(BATTERY_PACK_LED_BLUE);
+					batteryPackLEDDriverDisable();
+					triumviLEDOFF();
+					rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*backOffTime, 1, &rtimerEvent, NULL);
+					myState = init;
+				}
+			break;
 
 			default:
 			break;

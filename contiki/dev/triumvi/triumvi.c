@@ -262,6 +262,7 @@ uint8_t batteryPackIsAttached(){
 void batteryPackInit(){
 	// I2C init
 	sx1509b_init();
+	sx1509b_software_reset();
 	// Port A pin 0 is connected to VUSB directly
 	sx1509b_high_voltage_input_enable(SX1509B_PORTA, 0x1, SX1509B_HIGH_INPUT_ENABLE);
 	// Setup RGB led IOs
@@ -316,7 +317,7 @@ uint8_t batteryPackIsUSBAttached(){
 		return 0;
 }
 
-void batteryPackLEDDriverConfig(){
+void batteryPackLEDDriverInit(){
 	// select internal 2 MHz oscillator
 	sx1509b_oscillator_source_select(SX1509B_OSCI_SOURCE_INT);
 	// set fOSCOUT = 2 MHz / 2 ^ (9-1) = 7812.5 Hz
@@ -325,6 +326,15 @@ void batteryPackLEDDriverConfig(){
 	sx1509b_led_driver_freq_divider(1);
 	// Enable LED driver for RGB LEDs
 	sx1509b_led_driver_enable(SX1509B_PORTA, 0x0e, SX1509B_LED_DRIVER_ENABLE);
+	// Set IOn, this register won't get reset by Reset pin nor software reset
+	batteryPackLEDIntensitySet(BATTERY_PACK_LED_RED, 255);
+	batteryPackLEDIntensitySet(BATTERY_PACK_LED_GREEN, 255);
+	batteryPackLEDIntensitySet(BATTERY_PACK_LED_BLUE, 255);
+}
+
+void batteryPackLEDDriverDisable(){
+	sx1509b_oscillator_source_select(SX1509B_OSCI_SOURCE_OFF);
+	sx1509b_led_driver_enable(SX1509B_PORTA, 0x0e, SX1509B_LED_DRIVER_DISABLE);
 }
 
 uint8_t batteryPackLEDGetPin(uint8_t leds){
@@ -350,7 +360,10 @@ uint8_t batteryPackLEDIntensityDecrease(uint8_t leds){
 	uint8_t pin = batteryPackLEDGetPin(leds);
 	uint8_t iOnVal = sx1509b_led_driver_get_ION(pin);
 	if (iOnVal > 0){
-		sx1509b_led_driver_set_ION(pin, iOnVal-5);
+		if (iOnVal >= 5)
+			sx1509b_led_driver_set_ION(pin, iOnVal-5);
+		else
+			sx1509b_led_driver_set_ION(pin, 0);
 		return 1;
 	}
 	return 0;
@@ -361,10 +374,18 @@ uint8_t batteryPackLEDIntensityIncrease(uint8_t leds){
 	uint8_t pin = batteryPackLEDGetPin(leds);
 	uint8_t iOnVal = sx1509b_led_driver_get_ION(pin);
 	if (iOnVal < 255){
-		sx1509b_led_driver_set_ION(pin, iOnVal+5);
+		if (iOnVal<250)
+			sx1509b_led_driver_set_ION(pin, iOnVal+5);
+		else
+			sx1509b_led_driver_set_ION(pin, 255);
 		return 1;
 	}
 	return 0;
+}
+
+void batteryPackLEDIntensitySet(uint8_t leds, uint8_t iOnVal){
+	uint8_t pin = batteryPackLEDGetPin(leds);
+	sx1509b_led_driver_set_ION(pin, iOnVal);
 }
 
 

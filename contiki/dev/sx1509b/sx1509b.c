@@ -222,5 +222,3 @@ void sx1509b_software_reset(){
 }
 
 
-
-

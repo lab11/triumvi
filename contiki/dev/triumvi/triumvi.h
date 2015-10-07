@@ -67,6 +67,7 @@ inline uint8_t isButtonPressed();
 uint8_t batteryPackIsAttached();
 uint8_t batteryPackIsUSBAttached();
 void batteryPackInit();
+void batteryPackLEDDriverDisable();
 uint8_t batteryPackReadPanelID();
 uint8_t batteryPackReadCircuitID();
 
@@ -74,8 +75,9 @@ void batteryPackLEDOn(uint8_t leds);
 void batteryPackLEDOff(uint8_t leds);
 void batteryPackLEDToggle(uint8_t leds);
 
-void batteryPackLEDDriverConfig();
+void batteryPackLEDDriverInit();
 uint8_t batteryPackLEDIntensityDecrease(uint8_t leds);
 uint8_t batteryPackLEDIntensityIncrease(uint8_t leds);
+void batteryPackLEDIntensitySet(uint8_t leds, uint8_t iOnVal);
 
 #endif
