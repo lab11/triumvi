@@ -567,7 +567,7 @@ void meterInit(){
 	#ifdef CALIBRATE
 	backOffTime = 1;
 	#else
-	backOffTime = 16;
+	backOffTime = 4;
 	#endif
 	backOffHistory = 0;
 
