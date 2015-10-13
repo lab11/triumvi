@@ -9,6 +9,7 @@
 #include "dev/gptimer.h"
 #include "dev/crypto.h"
 #include "dev/ccm.h"
+#include "dev/random.c"
 #include "net/packetbuf.h"
 #include "net/netstack.h"
 #include "adc.h"
@@ -144,6 +145,9 @@ volatile static state_t myState;
 PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 {
 	PROCESS_BEGIN();
+	#ifdef THREEPHASE_SLAVE
+	random_init(0);
+	#endif
 	CC2538_RF_CSP_ISRFOFF();
 	fm25v02_sleep();
 	disableSPI();
@@ -374,6 +378,9 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 							packetbuf_copyfrom(meterData, 13);
 						#ifndef THREEPHASE_SLAVE
 						}
+						#else
+						uint16_t randBackOff = random_rand();
+						clock_delay_usec(randBackOff);
 						#endif
 						cc2538_on_and_transmit();
 						CC2538_RF_CSP_ISRFOFF();
