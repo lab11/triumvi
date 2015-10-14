@@ -39,6 +39,9 @@ volatile uint8_t referenceInt;
 volatile uint8_t backOffTime;
 volatile uint8_t backOffHistory;
 rv3049_time_t rtctime;
+#ifdef CALIBRATE
+static uint8_t calibrate_cnt = 0;
+#endif
 
 #define BUF_SIZE 120
 #define BUF_SIZE2 113 // for external voltage input
@@ -98,6 +101,11 @@ unit is A, multiply by 1000 gets mA
 #define INAGAIN10_OFFSET2 6
 #define INAGAIN10_SCALE2 9.428
 
+#define EXTERNALVOLT_STATUSREG 0x80
+#define BATTERYPACK_STATUSREG 0x40
+#define THREEPHASE_STATUSREG 0x20
+
+
 // Function prototypes
 #ifndef THREEPHASE_SLAVE
 static void referenceIntCallBack(uint8_t port, uint8_t pin);
@@ -115,11 +123,18 @@ void packData(uint8_t* dest, int reading);
 uint16_t voltDataAverge(uint16_t* voltData);
 int voltDataTransform(uint16_t voltReading, uint16_t voltReference);
 int currentDataTransform(int currentReading, uint8_t inaGain, uint8_t externalVolt);
+int sampleAndCalculate(uint8_t triumviStatusReg, int* avgPower, uint16_t* currentRef, uint16_t* voltRef);
+void encryptAndTransmit(uint8_t triumviStatusReg, int avgPower, uint8_t* myNonce, uint32_t nonceCounter);
 #ifndef CALIBRATE
 static void disable_all_ioc_override();
+#else
+void printCalibrationValuse(triumviStatusReg, inaGain, currentRef, voltRef);
 #endif
 #ifdef THREEPHASE_SLAVE
 static void threephaseStartMeasure(uint8_t port, uint8_t pin);
+#endif
+#ifdef FRAM_WRITE
+inline void writeFRAM(uint16_t powerRead, rv3049_time_t* rtctime);
 #endif
 // End of prototypes
 
@@ -156,28 +171,17 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 	fm25v02_eraseAll();
 	#endif
 
-	#ifdef CALIBRATE
-	static uint8_t calibrate_cnt = 0;
-	#else
-	static uint8_t meterData[15];
-	#ifdef AES_ENABLE
 	// packet preprocessing
-	static uint8_t readingBuf[6]; // 4 bytes reading, 1 byte panel ID, 1 byte circuit ID
 	static uint8_t extAddr[8];
     NETSTACK_RADIO.get_object(RADIO_PARAM_64BIT_ADDR, extAddr, 8);
 	
 	// AES Preprocessing
 	static uint8_t aesKey[] = AES_KEY;
-	static uint8_t myMic[8] = {0x0};
 	static uint8_t myNonce[13] = {0};
 	memcpy(myNonce, extAddr, 8);
 	static uint32_t nonceCounter = 0;
 	aes_load_keys(aesKey, AES_KEY_STORE_SIZE_KEY_SIZE_128, 1, 0);
 
-	static uint8_t* aData = myNonce;
-	static uint8_t* pData = readingBuf;
-	#endif
-	#endif
 	static int avgPower;
 	static int powerValid;
 	static uint8_t inaGain;
@@ -256,142 +260,51 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 			case waitingComparatorStable:
 				if (rTimerExpired==1){
 					rTimerExpired = 0;
+					// Layout of Status Reg:
+					// Bit 8: External Volt Selected
+					// Bit 7: Battery Pack attached
+					// Bit 6: Three Phase Slave Selected
+					// Note: bit 6 & 7 cannot be set simultaneously
+					uint8_t triumviStatusReg = 0x00;
+					if (externalVoltSel())
+						triumviStatusReg |= EXTERNALVOLT_STATUSREG;
 					#ifdef THREEPHASE_SLAVE
+					triumviStatusReg |= THREEPHASE_STATUSREG;
 					GPIO_ENABLE_INTERRUPT(I2C_SCL_GPIO_BASE, 0x1<<I2C_SCL_GPIO_PIN);
 					nvic_interrupt_enable(I2C_SCL_NVIC_PORT);
 					#else
+					if (batteryPackIsAttached()){
+						triumviStatusReg |= BATTERYPACK_STATUSREG;
+						triumviLEDON();
+						batteryPackInit();
+					}
 					GPIO_DETECT_RISING(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
 					meterVoltageComparator(SENSE_ENABLE);
 					ungate_gpt(GPTIMER_1);
 					#endif
 					REG(SYSTICK_STCTRL) &= (~SYSTICK_STCTRL_INTEN);
 					while (referenceInt==0){}
-					if (externalVoltSel()){
-						int tempPower;
-						#ifndef CALIBRATE
-						uint8_t i = 0;
-						avgPower = 0;
-						while (i<16){
-						#endif
-							sampleCurrentVoltageWaveform();
-							currentRef = adc_get(V_REF_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_256);
-							currentRef = ((currentRef>>5)>1023)? 0 : (currentRef>>5);
-							voltRef = voltDataAverge(voltADCVal);
-							// shift two samples
-							voltADCVal[BUF_SIZE2] = voltADCVal[0];
-							voltADCVal[BUF_SIZE2+1] = voltADCVal[1];
-							powerValid = currentVoltProcess(currentADCVal, voltADCVal+2, currentRef, voltRef, &tempPower, 0x01);
-						#ifndef CALIBRATE
-							if (powerValid>0){
-								i++;
-								avgPower += tempPower;
-							}
-						}
-						avgPower = (avgPower>>4);
-						#else
-						avgPower = tempPower;
-						#endif
-					}
-					else{
-						sampleCurrentWaveform();
-						currentRef = adc_get(V_REF_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_512);
-						currentRef = ((currentRef>>4)>2047)? 0 : (currentRef>>4);
-						disableAll();
-						powerValid = currentVoltProcess(currentADCVal, NULL, currentRef, 0, &avgPower, 0x00);
-					}
+					powerValid = sampleAndCalculate(triumviStatusReg, &avgPower, &currentRef, &voltRef);
 					referenceInt = 0;
 					inaGain = getINAGain();
 					setINAGain(inaGainArr[0]);
-					#ifndef THREEPHASE_SLAVE
-					// check if battery is attached 
-					uint8_t batteryPackStatus = batteryPackIsAttached();
-					if (batteryPackStatus==1){
-						triumviLEDON();
-						batteryPackInit();
-					}
-					#endif
 					if (powerValid>0){
 						#ifdef CALIBRATE
-						uint8_t i;
-						if (calibrate_cnt<255)
-							calibrate_cnt++;
-						else
-							triumviLEDToggle();
-						printf("ADC reference: %u\r\n", currentRef);
-						printf("Time difference: %lu\r\n", (timerVal[0]-timerVal[1]));
-						printf("INA Gain: %u\r\n", inaGain);
-						if (externalVoltSel()){
-							for (i=0; i<BUF_SIZE2; i+=1){
-								printf("Current reading: %d (mA) Voltage Reading: %d (V)\r\n", 
-								currentDataTransform(currentADCVal[i]-currentRef, inaGain, 0x1), voltDataTransform(voltADCVal[i+2], voltRef));
-								//currentADCVal[i]-currentRef, voltDataTransform(voltADCVal[i], voltRef));
-							}
-							printf("Calculated Power: %d\r\n", avgPower);
-						}
-						else{
-							for (i=0; i<BUF_SIZE; i+=1){
-								//printf("Current reading: %d\r\n", currentDataTransform(currentADCVal[i]-currentRef, inaGain, 0x0));
-								//printf("Current reading: %d\r\n", currentADCVal[i]-currentRef);
-								printf("Current reading: %d\r\n", currentADCVal[i]);
-							}
-						}
-						#else // CALIBRATION
+						printCalibrationValuse(triumviStatusReg, inaGain, currentRef, voltRef);
+						#else
 						// Write data into FRAM
 						#ifdef FRAM_WRITE
-						reenableSPI();
-						uint16_t powerRead = avgPower/1000;
-						rv3049_read_time(&rtctime);
-						triumviFramWrite(powerRead, &rtctime);
-						disableSPI();
-						// Send data over RF
-						#else // FRAM_WRITE
-						packData(&myNonce[9], nonceCounter);
-						packData(readingBuf, avgPower);
-						packData(&meterData[1], nonceCounter);
-						#ifndef THREEPHASE_SLAVE
-						// If battery pack presents, send additional two
-						// bytes of panel ID and circuit ID after
-						// power reading
-						if (batteryPackStatus==1){
-							meterData[0] = AES_PKT_IDENTIFIER+1;
-							readingBuf[PDATA_LEN] = batteryPackReadPanelID();
-							readingBuf[PDATA_LEN+1] = batteryPackReadCircuitID();
-							ccm_auth_encrypt_start(LEN_LEN, 0, myNonce, aData, ADATA_LEN, 
-										pData, PDATA_LEN+2, MIC_LEN, NULL);
-							nonceCounter += 1;
-							while(ccm_auth_encrypt_check_status()!=AES_CTRL_INT_STAT_RESULT_AV){}
-							ccm_auth_encrypt_get_result(myMic, MIC_LEN);
-							memcpy(&meterData[5], readingBuf, PDATA_LEN+2);
-							memcpy(&meterData[11], myMic, MIC_LEN);
-							packetbuf_copyfrom(meterData, 15);
-						}
-						else{
-						#endif
-							meterData[0] = AES_PKT_IDENTIFIER;
-							ccm_auth_encrypt_start(LEN_LEN, 0, myNonce, aData, ADATA_LEN, 
-										pData, PDATA_LEN, MIC_LEN, NULL);
-							nonceCounter += 1;
-							while(ccm_auth_encrypt_check_status()!=AES_CTRL_INT_STAT_RESULT_AV){}
-							ccm_auth_encrypt_get_result(myMic, MIC_LEN);
-							memcpy(&meterData[5], readingBuf, PDATA_LEN);
-							memcpy(&meterData[9], myMic, MIC_LEN);
-							packetbuf_copyfrom(meterData, 13);
-						#ifndef THREEPHASE_SLAVE
-						}
-						#else
-						uint16_t randBackOff = random_rand();
-						clock_delay_usec(randBackOff);
-						#endif
-						cc2538_on_and_transmit();
-						CC2538_RF_CSP_ISRFOFF();
+						writeFRAM((uint16_t)(avgPower/1000), &rtctime);
 						#endif // FRAM_WRITE
+						encryptAndTransmit(triumviStatusReg, avgPower, myNonce, nonceCounter);
+						nonceCounter += 1;
 						#endif // CALIBRATE
-
-						#ifdef THREEPHASE_SLAVE
-						rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.1, 1, &rtimerEvent, NULL);
-						myState = init;
-						#else
-						if (batteryPackStatus==1){
+						if (triumviStatusReg & THREEPHASE_STATUSREG){
+							triumviLEDON();
+							rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.1, 1, &rtimerEvent, NULL);
+							myState = init;
+						}
+						else if (triumviStatusReg & BATTERYPACK_STATUSREG){
 							batteryPackLEDDriverInit();
 							batteryPackLEDOn(BATTERY_PACK_LED_BLUE);
 							myState = batteryPackLEDBlink;
@@ -401,7 +314,6 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 							rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*backOffTime, 1, &rtimerEvent, NULL);
 							myState = init;
 						}
-						#endif
 					}
 					// improper gain setting, try after 4 s
 					else{
@@ -719,6 +631,93 @@ int currentDataTransform(int currentReading, uint8_t inaGain, uint8_t externalVo
 	}
 }
 
+void encryptAndTransmit(uint8_t triumviStatusReg, int avgPower, uint8_t* myNonce, uint32_t nonceCounter){
+	static uint8_t packetData[15];
+	static uint8_t readingBuf[6]; // 4 bytes reading, 1 byte panel ID, 1 byte circuit ID
+	uint8_t* aData = myNonce;
+	uint8_t* pData = readingBuf;
+	uint8_t myMic[8] = {0x0};
+	uint8_t myPDATA_LEN = PDATA_LEN;
+	uint8_t packetLen = 13;
+	uint16_t randBackOff;
+
+	if (triumviStatusReg & BATTERYPACK_STATUSREG){
+		packetData[0] = AES_PKT_IDENTIFIER+1;
+		readingBuf[PDATA_LEN] = batteryPackReadPanelID();
+		readingBuf[PDATA_LEN+1] = batteryPackReadCircuitID();
+		myPDATA_LEN += 2;
+		packetLen += 2;
+	}
+	else{
+		packetData[0] = AES_PKT_IDENTIFIER;
+	}
+	packData(&packetData[1], nonceCounter);
+	packData(&myNonce[9], nonceCounter);
+	packData(readingBuf, avgPower);
+
+	ccm_auth_encrypt_start(LEN_LEN, 0, myNonce, aData, ADATA_LEN, 
+		pData, myPDATA_LEN, MIC_LEN, NULL);
+	while(ccm_auth_encrypt_check_status()!=AES_CTRL_INT_STAT_RESULT_AV){}
+	ccm_auth_encrypt_get_result(myMic, MIC_LEN);
+	memcpy(&packetData[5], readingBuf, myPDATA_LEN);
+	memcpy(&packetData[5+myPDATA_LEN], myMic, MIC_LEN);
+	packetbuf_copyfrom(packetData, packetLen);
+
+	if (triumviStatusReg & THREEPHASE_STATUSREG){
+		randBackOff = random_rand();
+		clock_delay_usec(randBackOff);
+	}
+	cc2538_on_and_transmit();
+	CC2538_RF_CSP_ISRFOFF();
+}
+
+int sampleAndCalculate(uint8_t triumviStatusReg, int* avgPower, uint16_t* currentRef, uint16_t* voltRef){
+	int tempPower;
+	int tempPower2 = 0;
+	uint8_t i;
+	uint8_t numOfCycles = 16;
+	uint8_t numOfBitShift = 4; // log2(numOfCycles)
+	uint16_t tempADCReading;
+	if (triumviStatusReg & EXTERNALVOLT_STATUSREG){
+		#ifdef CALIBRATE
+		numOfCycles = 1;
+		numOfBitShift = 0; // log2(numOfCycles)
+		#endif
+		for (i=0; i<numOfCycles; i++){
+			sampleCurrentVoltageWaveform();
+			tempADCReading = adc_get(V_REF_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_256);
+			*currentRef = ((tempADCReading>>5)>1023)? 0 : (tempADCReading>>5);
+			*voltRef = voltDataAverge(voltADCVal);
+			// shift two samples
+			voltADCVal[BUF_SIZE2] = voltADCVal[0];
+			voltADCVal[BUF_SIZE2+1] = voltADCVal[1];
+			if (currentVoltProcess(currentADCVal, voltADCVal+2, *currentRef, *voltRef, &tempPower, 0x01)<0)
+				return -1;
+			else
+				tempPower2 += tempPower;
+		}
+		*avgPower = tempPower2>>numOfBitShift;
+		return 1;
+	}
+	else{
+		sampleCurrentWaveform();
+		tempADCReading = adc_get(V_REF_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_512);
+		*currentRef = ((tempADCReading>>4)>2047)? 0 : (tempADCReading>>4);
+		disableAll();
+		return currentVoltProcess(currentADCVal, NULL, *currentRef, 0, avgPower, 0x00);
+	}
+}
+
+#ifdef FRAM_WRITE
+inline void writeFRAM(uint16_t powerRead, rv3049_time_t* rtctime){
+	reenableSPI();
+	rv3049_read_time(rtctime);
+	triumviFramWrite(powerRead, rtctime);
+	disableSPI();
+}
+#endif
+
+
 #ifndef CALIBRATE
 static void disable_all_ioc_override() {
 	uint8_t portnum = 0;
@@ -729,11 +728,37 @@ static void disable_all_ioc_override() {
 		}
 	}
 }
+#else
+void printCalibrationValuse(uint8_t triumviStatusReg, inaGain, currentRef, voltRef){
+	uint8_t i;
+	if (calibrate_cnt<255)
+		calibrate_cnt++;
+	else
+		triumviLEDToggle();
+	printf("ADC reference: %u\r\n", currentRef);
+	printf("Time difference: %lu\r\n", (timerVal[0]-timerVal[1]));
+	printf("INA Gain: %u\r\n", inaGain);
+	if (triumviStatusReg & EXTERNALVOLT_STATUSREG){
+		for (i=0; i<BUF_SIZE2; i+=1){
+			printf("Current reading: %d (mA) Voltage Reading: %d (V)\r\n", 
+			currentDataTransform(currentADCVal[i]-currentRef, inaGain, 0x1), voltDataTransform(voltADCVal[i+2], voltRef));
+			//currentADCVal[i]-currentRef, voltDataTransform(voltADCVal[i], voltRef));
+		}
+		printf("Calculated Power: %d\r\n", avgPower);
+	}
+	else{
+		for (i=0; i<BUF_SIZE; i+=1){
+			//printf("Current reading: %d\r\n", currentDataTransform(currentADCVal[i]-currentRef, inaGain, 0x0));
+			//printf("Current reading: %d\r\n", currentADCVal[i]-currentRef);
+			printf("Current reading: %d\r\n", currentADCVal[i]);
+		}
+	}
+	
+}
 #endif
 
 #ifdef THREEPHASE_SLAVE
 static void threephaseStartMeasure(uint8_t port, uint8_t pin){
-	triumviLEDON();
 	GPIO_DISABLE_INTERRUPT(I2C_SCL_GPIO_BASE, 0x1<<I2C_SCL_GPIO_PIN);
 	nvic_interrupt_disable(I2C_SCL_NVIC_PORT);
 	referenceInt = 1;
