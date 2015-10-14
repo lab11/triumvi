@@ -108,7 +108,7 @@ unit is A, multiply by 1000 gets mA
 
 
 // Function prototypes
-#ifndef THREEPHASE_SLAVE
+#ifndef THREEPHASE_UNIT
 static void referenceIntCallBack(uint8_t port, uint8_t pin);
 #endif
 void sampleCurrentWaveform();
@@ -131,8 +131,10 @@ static void disable_all_ioc_override();
 #else
 void printCalibrationValuse(triumviStatusReg, inaGain, currentRef, voltRef);
 #endif
-#ifdef THREEPHASE_SLAVE
+#ifdef THREEPHASE_UNIT
+#ifndef THREEPHASE_MASTER
 static void threephaseStartMeasure(uint8_t port, uint8_t pin);
+#endif
 #endif
 #ifdef FRAM_WRITE
 inline void writeFRAM(uint16_t powerRead, rv3049_time_t* rtctime);
@@ -161,7 +163,7 @@ volatile static state_t myState;
 PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 {
 	PROCESS_BEGIN();
-	#ifdef THREEPHASE_SLAVE
+	#ifdef THREEPHASE_UNIT
 	random_init(0);
 	#endif
 	CC2538_RF_CSP_ISRFOFF();
@@ -228,7 +230,11 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 					meterSenseConfig(CURRENT, SENSE_ENABLE);
 					meterMUXConfig(SENSE_ENABLE);
 					setINAGain(inaGain);
+					#ifdef THREEPHASE_MASTER
+					rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*5, 1, &rtimerEvent, NULL);
+					#else
 					rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.04, 1, &rtimerEvent, NULL);
+					#endif
 					#ifdef COMPARATOR_NEGEDGE
 					myState = waitingComparatorStable2;
 					#else
@@ -237,7 +243,7 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 				}
 			break;
 
-			#ifndef THREEPHASE_SLAVE
+			#ifndef THREEPHASE_UNIT
 			#ifdef COMPARATOR_NEGEDGE
 			case waitingComparatorStable2:
 				if (rTimerExpired==1){
@@ -273,11 +279,17 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 					#ifdef FRAM_WRITE
 					triumviStatusReg |= FRAMWRITE_STATUSREG;
 					#endif
-					#ifdef THREEPHASE_SLAVE
+					#ifdef THREEPHASE_UNIT
 					triumviStatusReg |= THREEPHASE_STATUSREG;
+					#ifdef THREEPHASE_MASTER
+					GPIO_SET_PIN(I2C_SCL_GPIO_BASE, 0x1<<I2C_SCL_GPIO_PIN);
+					clock_delay_usec(20);
+					GPIO_CLR_PIN(I2C_SCL_GPIO_BASE, 0x1<<I2C_SCL_GPIO_PIN);
+					#else
 					GPIO_ENABLE_INTERRUPT(I2C_SCL_GPIO_BASE, 0x1<<I2C_SCL_GPIO_PIN);
 					nvic_interrupt_enable(I2C_SCL_NVIC_PORT);
-					#else
+					#endif // End of THREEPHASE_MASTER
+					#else // non three phase unit
 					if (batteryPackIsAttached()){
 						triumviStatusReg |= BATTERYPACK_STATUSREG;
 						triumviLEDON();
@@ -288,7 +300,9 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 					ungate_gpt(GPTIMER_1);
 					#endif
 					REG(SYSTICK_STCTRL) &= (~SYSTICK_STCTRL_INTEN);
+					#ifndef THREEPHASE_MASTER
 					while (referenceInt==0){}
+					#endif
 					powerValid = sampleAndCalculate(triumviStatusReg, &avgPower, &currentRef, &voltRef);
 					referenceInt = 0;
 					inaGain = getINAGain();
@@ -347,7 +361,7 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 	PROCESS_END();
 }
 
-#ifndef THREEPHASE_SLAVE
+#ifndef THREEPHASE_UNIT
 // Don't add/remove any lines in this subroutine
 static void referenceIntCallBack(uint8_t port, uint8_t pin){
 	meterVoltageComparator(SENSE_DISABLE);
@@ -427,7 +441,8 @@ void meterInit(){
 	// tactile button
 	GPIO_SET_INPUT(MEM_RST_GPIO_BASE, 0x1<<MEM_RST_GPIO_PIN);
 
-	#ifdef THREEPHASE_SLAVE
+	#ifdef THREEPHASE_UNIT
+	#ifndef THREEPHASE_MASTER
 	// 3 phase slave trigger, use SCL as trigger input
 	GPIO_SET_INPUT(I2C_SCL_GPIO_BASE, 0x1<<I2C_SCL_GPIO_PIN);
 	ioc_set_over(I2C_SCL_GPIO_NUM, I2C_SCL_GPIO_PIN, IOC_OVERRIDE_PDE);
@@ -438,6 +453,7 @@ void meterInit(){
 	gpio_register_callback(threephaseStartMeasure, I2C_SCL_GPIO_NUM, I2C_SCL_GPIO_PIN);
 	GPIO_DISABLE_INTERRUPT(I2C_SCL_GPIO_BASE, 0x1<<I2C_SCL_GPIO_PIN);
 	nvic_interrupt_disable(I2C_SCL_NVIC_PORT);
+	#endif
 	#endif
 
 
@@ -454,7 +470,7 @@ void meterInit(){
 	GPIO_CLR_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_EN_GPIO_PIN);
 	setINAGain(inaGainArr[MAX_INA_GAIN_IDX]);
 
-	#ifndef THREEPHASE_SLAVE
+	#ifndef THREEPHASE_UNIT
 	// Set voltage reference crossing as input
 	// Disable pull up/down resistor
 	// Enable interrupt on rising edge
@@ -671,6 +687,7 @@ void encryptAndTransmit(uint8_t triumviStatusReg, int avgPower, uint8_t* myNonce
 	if (triumviStatusReg & THREEPHASE_STATUSREG){
 		randBackOff = random_rand();
 		clock_delay_usec(randBackOff);
+		clock_delay_usec(randBackOff);
 	}
 	cc2538_on_and_transmit();
 	CC2538_RF_CSP_ISRFOFF();
@@ -762,13 +779,15 @@ void printCalibrationValuse(uint8_t triumviStatusReg, inaGain, currentRef, voltR
 }
 #endif
 
-#ifdef THREEPHASE_SLAVE
+#ifdef THREEPHASE_UNIT
+#ifndef THREEPHASE_MASTER
 static void threephaseStartMeasure(uint8_t port, uint8_t pin){
 	GPIO_DISABLE_INTERRUPT(I2C_SCL_GPIO_BASE, 0x1<<I2C_SCL_GPIO_PIN);
 	nvic_interrupt_disable(I2C_SCL_NVIC_PORT);
 	referenceInt = 1;
 	process_poll(&wirelessMeterProcessing);
 }
+#endif
 #endif
 
 /*---------------------------------------------------------------------------*/
