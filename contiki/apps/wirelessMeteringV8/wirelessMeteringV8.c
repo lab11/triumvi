@@ -104,6 +104,7 @@ unit is A, multiply by 1000 gets mA
 #define EXTERNALVOLT_STATUSREG 0x80
 #define BATTERYPACK_STATUSREG 0x40
 #define THREEPHASE_STATUSREG 0x20
+#define FRAMWRITE_STATUSREG 0x10
 
 
 // Function prototypes
@@ -264,10 +265,14 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 					// Bit 8: External Volt Selected
 					// Bit 7: Battery Pack attached
 					// Bit 6: Three Phase Slave Selected
+					// Bit 5: FRAM WRITE Enabled
 					// Note: bit 6 & 7 cannot be set simultaneously
 					uint8_t triumviStatusReg = 0x00;
 					if (externalVoltSel())
 						triumviStatusReg |= EXTERNALVOLT_STATUSREG;
+					#ifdef FRAM_WRITE
+					triumviStatusReg |= FRAMWRITE_STATUSREG;
+					#endif
 					#ifdef THREEPHASE_SLAVE
 					triumviStatusReg |= THREEPHASE_STATUSREG;
 					GPIO_ENABLE_INTERRUPT(I2C_SCL_GPIO_BASE, 0x1<<I2C_SCL_GPIO_PIN);
@@ -632,25 +637,25 @@ int currentDataTransform(int currentReading, uint8_t inaGain, uint8_t externalVo
 }
 
 void encryptAndTransmit(uint8_t triumviStatusReg, int avgPower, uint8_t* myNonce, uint32_t nonceCounter){
-	static uint8_t packetData[15];
-	static uint8_t readingBuf[6]; // 4 bytes reading, 1 byte panel ID, 1 byte circuit ID
+	// 1 byte Identifier, 4 bytes nonce, 5~7 bytes payload, 4 byte MIC
+	static uint8_t packetData[16];
+	// 4 bytes reading, 1 byte status reg, (1 byte panel ID, 1 byte circuit ID optional)
+	static uint8_t readingBuf[7]; 
 	uint8_t* aData = myNonce;
 	uint8_t* pData = readingBuf;
 	uint8_t myMic[8] = {0x0};
 	uint8_t myPDATA_LEN = PDATA_LEN;
-	uint8_t packetLen = 13;
+	uint8_t packetLen = 14;
 	uint16_t randBackOff;
 
+	packetData[0] = TRIUMVI_PKT_IDENTIFIER;
 	if (triumviStatusReg & BATTERYPACK_STATUSREG){
-		packetData[0] = AES_PKT_IDENTIFIER+1;
 		readingBuf[PDATA_LEN] = batteryPackReadPanelID();
 		readingBuf[PDATA_LEN+1] = batteryPackReadCircuitID();
 		myPDATA_LEN += 2;
 		packetLen += 2;
 	}
-	else{
-		packetData[0] = AES_PKT_IDENTIFIER;
-	}
+	readingBuf[4] = triumviStatusReg;
 	packData(&packetData[1], nonceCounter);
 	packData(&myNonce[9], nonceCounter);
 	packData(readingBuf, avgPower);
