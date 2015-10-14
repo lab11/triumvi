@@ -111,12 +111,10 @@ main(void)
   //button_sensor_init();
   spi_init();
   fm25v02_init();
-  //fm25v02_sleep();
+  fm25v02_sleep();
   rv3049_init();
-#ifdef AES_ENABLE
 	crypto_init();
 	REG(AES_CTRL_ALG_SEL) = 0x00000000; // reset AES module
-#endif
 
   /*
    * Character I/O Initialization.

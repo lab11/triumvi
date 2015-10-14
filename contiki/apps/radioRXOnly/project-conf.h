@@ -6,6 +6,7 @@
  */
 
 #define STARTUP_CONF_VERBOSE 0
+#define UART_CONF_ENABLE 1
 #define NETSTACK_CONF_NETWORK	simple_network_driver
 #define CC2538_RF_CONF_SNIFFER  1
 #define AES_ENABLE

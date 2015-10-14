@@ -11,7 +11,7 @@
 
 /**
 * \file   Driver for the FM25V02 series of flash chips
-* \author Brad Campbell <bradjc@umich.edu>
+* \author Ye-Sheng Kuo <samkuo@umich.edu>
 */
 
 /**
@@ -169,12 +169,13 @@ void fm25v02_eraseAll(){
 
 void fm25v02_dummyWakeup(){
 	uint8_t dummyReg;
-	uint16_t dummyCnt;
+	//uint16_t dummyCnt;
 	spi_set_mode(SSI_CR0_FRF_MOTOROLA, 0, 0, 8);
 	SPI_CS_CLR(FM25V02_CS_N_PORT_NUM, FM25V02_CS_N_PIN);
 	// Delay for 400-ish us
-	for (dummyCnt=0; dummyCnt<800; dummyCnt++)
-		asm("nop");
+	clock_delay_usec(400);
+	//for (dummyCnt=0; dummyCnt<800; dummyCnt++)
+	//	asm("nop");
 	SPI_FLUSH();
 	SPI_READ(dummyReg);
 	SPI_CS_SET(FM25V02_CS_N_PORT_NUM, FM25V02_CS_N_PIN);
