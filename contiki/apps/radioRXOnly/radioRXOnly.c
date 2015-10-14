@@ -48,7 +48,8 @@ PROCESS_THREAD(radioRXOnlyProcess, ev, data)
 	simple_network_set_callback(&rf_rx_handler);
 	NETSTACK_RADIO.on();
 	static uint8_t packetPayload[128];
-	static uint8_t* cData = &packetPayload[5];
+	static uint8_t packetDuplicated[123];
+	static uint8_t* cData = packetDuplicated;
 	static uint8_t* aData = srcExtAddr;
 
 
@@ -78,22 +79,37 @@ PROCESS_THREAD(radioRXOnlyProcess, ev, data)
 			int meterData = (packet_ptr[5]<<24 | packet_ptr[4]<<16 | packet_ptr[3]<<8 | packet_ptr[2]);
 			printf("Meter data: %d mW\r\n", meterData);
 		}
-		else if ((packet_ptr[0]==AES_PKT_IDENTIFIER) || (packet_ptr[0]==AES_PKT_IDENTIFIER+1)){
+		else if ((packet_ptr[0]==AES_PKT_IDENTIFIER) || (packet_ptr[0]==AES_PKT_IDENTIFIER+1) || packet_ptr[0]==TRIUMVI_PKT_IDENTIFIER){
 			printf("Encrypted message...\r\n");
 			memcpy(myNonce, srcExtAddr, 8);
 			memcpy(&myNonce[9], &packetPayload[1], 4); // Nonce[8] should be 0
 			uint8_t auth_res;
-			if (packet_ptr[0]==AES_PKT_IDENTIFIER+1){
-				ccm_auth_decrypt_start(LEN_LEN, 0, myNonce, aData, ADATA_LEN, 
-					cData, (PDATA_LEN+MIC_LEN+2), MIC_LEN, NULL);
-				while (ccm_auth_decrypt_check_status()!=AES_CTRL_INT_STAT_RESULT_AV){}
-				auth_res = ccm_auth_decrypt_get_result(cData, PDATA_LEN+MIC_LEN+2, myMic, MIC_LEN);
+			uint8_t myPDATA_LEN = PDATA_LEN;
+			// Old triumvi format, without status register
+			switch (packet_ptr[0]){
+				case AES_PKT_IDENTIFIER:
+					myPDATA_LEN -= 1;
+				break;
+				case AES_PKT_IDENTIFIER+1:
+					myPDATA_LEN += 1;
+				break;
 			}
-			else{
+			
+			uint8_t i;
+			uint8_t numOfTrial;
+			numOfTrial = (packet_ptr[0]==TRIUMVI_PKT_IDENTIFIER)? 2 : 1;
+			for (i=0; i<numOfTrial; i++){
+				memcpy(packetDuplicated, &packetPayload[5], packet_length-5);
 				ccm_auth_decrypt_start(LEN_LEN, 0, myNonce, aData, ADATA_LEN, 
-					cData, (PDATA_LEN+MIC_LEN), MIC_LEN, NULL);
+					cData, (myPDATA_LEN+MIC_LEN), MIC_LEN, NULL);
 				while (ccm_auth_decrypt_check_status()!=AES_CTRL_INT_STAT_RESULT_AV){}
-				auth_res = ccm_auth_decrypt_get_result(cData, PDATA_LEN+MIC_LEN, myMic, MIC_LEN);
+				auth_res = ccm_auth_decrypt_get_result(cData, myPDATA_LEN+MIC_LEN, myMic, MIC_LEN);
+				if (auth_res==CRYPTO_SUCCESS)
+					break;
+				// Only for Triumvi packet identidier, since it chould have 
+				// two different length
+				else
+					myPDATA_LEN += 2;
 			}
 
 			if (auth_res==CRYPTO_SUCCESS){
@@ -101,6 +117,13 @@ PROCESS_THREAD(radioRXOnlyProcess, ev, data)
 				if (packet_ptr[0]==AES_PKT_IDENTIFIER+1){
 					printf("Panel ID: %x\r\n", cData[4]);
 					printf("Circuit #: %d\r\n", cData[5]);
+				}
+				else if (packet_ptr[0]==TRIUMVI_PKT_IDENTIFIER){
+					printf("Status Register: %x\r\n", cData[4]);
+					if (cData[4]&BATTERYPACK_STATUSREG){
+						printf("Panel ID: %x\r\n", cData[5]);
+						printf("Circuit #: %d\r\n", cData[6]);
+					}
 				}
 				int meterData = (cData[3]<<24 | cData[2]<<16 | cData[1]<<8 | cData[0]);
 				printf("Meter data: %d mW\r\n", meterData);
