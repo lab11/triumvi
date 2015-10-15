@@ -11,3 +11,4 @@ CONTIKI = ../../../../contiki
 include $(CONTIKI)/Makefile.include
 
 CFLAGS += -DCC2538_RF_CONF_CHANNEL=11
+CFLAGS += -DTHREEPHASE_ID=$(threephaseID)
