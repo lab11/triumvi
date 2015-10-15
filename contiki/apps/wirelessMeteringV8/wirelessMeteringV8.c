@@ -103,8 +103,12 @@ unit is A, multiply by 1000 gets mA
 
 #define EXTERNALVOLT_STATUSREG 0x80
 #define BATTERYPACK_STATUSREG 0x40
-#define THREEPHASE_STATUSREG 0x20
-#define FRAMWRITE_STATUSREG 0x10
+#define THREEPHASE_STATUSREG 0x30
+#define FRAMWRITE_STATUSREG 0x08
+
+#ifndef THREEPHASE_ID
+#define THREEPHASE_ID 0
+#endif
 
 
 // Function prototypes
@@ -270,8 +274,9 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 					// Layout of Status Reg:
 					// Bit 8: External Volt Selected
 					// Bit 7: Battery Pack attached
-					// Bit 6: Three Phase Slave Selected
-					// Bit 5: FRAM WRITE Enabled
+					// Bit 6:5: Three Phase Slave Selected
+					// 00 --> non, 01 --> Master, 10 --> slave 1, 11 --> slave2
+					// Bit 4: FRAM WRITE Enabled
 					// Note: bit 6 & 7 cannot be set simultaneously
 					uint8_t triumviStatusReg = 0x00;
 					if (externalVoltSel())
@@ -280,7 +285,7 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 					triumviStatusReg |= FRAMWRITE_STATUSREG;
 					#endif
 					#ifdef THREEPHASE_UNIT
-					triumviStatusReg |= THREEPHASE_STATUSREG;
+					triumviStatusReg |= ((THREEPHASE_ID&3)<<4);
 					#ifdef THREEPHASE_MASTER
 					GPIO_SET_PIN(I2C_SCL_GPIO_BASE, 0x1<<I2C_SCL_GPIO_PIN);
 					clock_delay_usec(20);
