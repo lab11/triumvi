@@ -133,7 +133,7 @@ void encryptAndTransmit(uint8_t triumviStatusReg, int avgPower, uint8_t* myNonce
 #ifndef CALIBRATE
 static void disable_all_ioc_override();
 #else
-void printCalibrationValuse(triumviStatusReg, inaGain, currentRef, voltRef);
+void printCalibrationValuse(uint8_t triumviStatusReg, uint8_t inaGain, uint16_t currentRef, uint16_t voltRef);
 #endif
 #ifdef THREEPHASE_UNIT
 #ifndef THREEPHASE_MASTER
@@ -288,7 +288,7 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 					triumviStatusReg |= ((THREEPHASE_ID&3)<<4);
 					#ifdef THREEPHASE_MASTER
 					GPIO_SET_PIN(I2C_SCL_GPIO_BASE, 0x1<<I2C_SCL_GPIO_PIN);
-					clock_delay_usec(20);
+					clock_delay_usec(13);
 					GPIO_CLR_PIN(I2C_SCL_GPIO_BASE, 0x1<<I2C_SCL_GPIO_PIN);
 					#else
 					GPIO_ENABLE_INTERRUPT(I2C_SCL_GPIO_BASE, 0x1<<I2C_SCL_GPIO_PIN);
@@ -706,6 +706,7 @@ int sampleAndCalculate(uint8_t triumviStatusReg, int* avgPower, uint16_t* curren
 	uint8_t numOfBitShift = 4; // log2(numOfCycles)
 	uint16_t tempADCReading;
 	if (triumviStatusReg & EXTERNALVOLT_STATUSREG){
+		//GPIO_SET_PIN(I2C_SDA_GPIO_BASE, 1<<I2C_SDA_GPIO_PIN); // Test timing
 		#ifdef CALIBRATE
 		numOfCycles = 1;
 		numOfBitShift = 0; // log2(numOfCycles)
@@ -724,6 +725,7 @@ int sampleAndCalculate(uint8_t triumviStatusReg, int* avgPower, uint16_t* curren
 				tempPower2 += tempPower;
 		}
 		*avgPower = tempPower2>>numOfBitShift;
+		//GPIO_CLR_PIN(I2C_SDA_GPIO_BASE, 1<<I2C_SDA_GPIO_PIN); // Test timing
 		return 1;
 	}
 	else{
@@ -756,7 +758,7 @@ static void disable_all_ioc_override() {
 	}
 }
 #else
-void printCalibrationValuse(uint8_t triumviStatusReg, inaGain, currentRef, voltRef){
+void printCalibrationValuse(uint8_t triumviStatusReg, uint8_t inaGain, uint16_t currentRef, uint16_t voltRef){
 	uint8_t i;
 	if (calibrate_cnt<255)
 		calibrate_cnt++;
@@ -771,7 +773,7 @@ void printCalibrationValuse(uint8_t triumviStatusReg, inaGain, currentRef, voltR
 			currentDataTransform(currentADCVal[i]-currentRef, inaGain, 0x1), voltDataTransform(voltADCVal[i+2], voltRef));
 			//currentADCVal[i]-currentRef, voltDataTransform(voltADCVal[i], voltRef));
 		}
-		printf("Calculated Power: %d\r\n", avgPower);
+		//printf("Calculated Power: %d\r\n", avgPower);
 	}
 	else{
 		for (i=0; i<BUF_SIZE; i+=1){
