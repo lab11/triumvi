@@ -608,7 +608,7 @@ uint16_t voltDataAverge(uint16_t* voltData){
 }
 
 int voltDataTransform(uint16_t voltReading, uint16_t voltReference){
-	float voltageScaling = 1.2;
+	float voltageScaling = 1.262;
 	return (int)((voltReading - voltReference)*voltageScaling);
 }
 
