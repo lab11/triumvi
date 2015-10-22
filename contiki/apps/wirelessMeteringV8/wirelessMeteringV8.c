@@ -167,9 +167,7 @@ volatile static state_t myState;
 PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 {
 	PROCESS_BEGIN();
-	#ifdef THREEPHASE_UNIT
 	random_init(0);
-	#endif
 	CC2538_RF_CSP_ISRFOFF();
 	fm25v02_sleep();
 	disableSPI();
@@ -320,8 +318,8 @@ PROCESS_THREAD(wirelessMeterProcessing, ev, data)
 						#ifdef FRAM_WRITE
 						writeFRAM((uint16_t)(avgPower/1000), &rtctime);
 						#endif // FRAM_WRITE
+						nonceCounter = random_rand();
 						encryptAndTransmit(triumviStatusReg, avgPower, myNonce, nonceCounter);
-						nonceCounter += 1;
 						#endif // CALIBRATE
 						if (triumviStatusReg & THREEPHASE_STATUSREG){
 							triumviLEDON();
