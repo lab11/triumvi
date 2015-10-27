@@ -62,6 +62,7 @@ void cc2538_rf_rx_tx_isr(void);
 void cc2538_rf_err_isr(void);
 void udma_isr(void);
 void udma_err_isr(void);
+void i2c_isr(void);
 
 /* Boot Loader Backdoor selection */
 #if FLASH_CCA_CONF_BOOTLDR_BACKDOOR
@@ -151,7 +152,7 @@ void(*const vectors[])(void) =
   uart0_isr,                  /* 21 UART0 Rx and Tx */
   uart1_isr,                  /* 22 UART1 Rx and Tx */
   default_handler,            /* 23 SSI0 Rx and Tx */
-  default_handler,            /* 24 I2C Master and Slave */
+  i2c_isr,                    /* 24 I2C Master and Slave */
   0,                          /* 25 Reserved */
   0,                          /* 26 Reserved */
   0,                          /* 27 Reserved */
