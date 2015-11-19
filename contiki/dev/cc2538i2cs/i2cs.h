@@ -276,7 +276,6 @@ uint32_t i2c_slave_data_get(void);
 uint32_t i2c_slave_status(void);
 void i2c_register_callback(i2c_callback_t f);
 void i2cs_init(uint8_t port_sda, uint8_t pin_sda, 
-               uint8_t port_scl, uint8_t pin_scl,
-               uint32_t bus_speed);
+               uint8_t port_scl, uint8_t pin_scl);
 
 #endif

@@ -44,8 +44,7 @@ PROCESS_THREAD(i2ctest_process, ev, data) {
 	*/
 	triumviLEDinit();
 	i2cs_init(I2C_SDA_GPIO_NUM, I2C_SDA_GPIO_PIN, 
-	          I2C_SCL_GPIO_NUM, I2C_SCL_GPIO_PIN, 
-              I2C_SCL_NORMAL_BUS_SPEED); 
+	          I2C_SCL_GPIO_NUM, I2C_SCL_GPIO_PIN);
 	ioc_set_over(I2C_SCL_GPIO_NUM, I2C_SCL_GPIO_PIN, IOC_OVERRIDE_PUE);
 	ioc_set_over(I2C_SDA_GPIO_NUM, I2C_SDA_GPIO_PIN, IOC_OVERRIDE_PUE);
 	i2c_register_callback(i2c_slave_callback);
@@ -53,20 +52,27 @@ PROCESS_THREAD(i2ctest_process, ev, data) {
 	i2c_slave_int_enable_ex(I2C_SLAVE_INT_DATA);
 	nvic_interrupt_enable(NVIC_INT_I2C);
 	uint32_t status;
+	static uint8_t txCnt = 0;
 	while (1){
 		PROCESS_YIELD();
 		status = i2c_slave_status();
-		printf("I2C Slave status register: %x\r\n", status);
-		printf("DATA: %x\r\n", i2c_slave_data_get());
-		status = i2c_slave_status();
-		printf("I2C Slave status register: %x\r\n", status);
+		if (status & I2CS_STAT_RREQ){
+			printf("DATA: %x\r\n", i2c_slave_data_get());
+		}
+		else if (status & I2CS_STAT_TREQ){
+			i2c_slave_data_put(txCnt);
+			txCnt++;
+		}
+		//printf("I2C Slave status register: %x\r\n", status);
+		//status = i2c_slave_status();
+		//printf("I2C Slave status register: %x\r\n", status);
 	}
 	PROCESS_END();
 }
 
 static void i2c_slave_callback(){
 	i2c_slave_int_clear_ex(I2C_SLAVE_INT_DATA);
-	triumviLEDON();
+	triumviLEDToggle();
 	process_poll(&i2ctest_process);
 }
 
