@@ -1,0 +1,57 @@
+# Edison platform makefile
+
+ifndef CONTIKI
+  $(error CONTIKI not defined! You must specify where CONTIKI resides!)
+endif
+
+CONTIKI_TARGET_DIRS = . dev ../../dev/spiSlave
+
+CONTIKI_TARGET_SOURCEFILES += leds.c leds-arch.c
+CONTIKI_TARGET_SOURCEFILES += contiki-main.c
+CONTIKI_TARGET_SOURCEFILES += spiSlave.c
+
+TARGET_START_SOURCEFILES += startup-gcc.c
+TARGET_STARTFILES = ${addprefix $(OBJECTDIR)/,${call oname, $(TARGET_START_SOURCEFILES)}}
+
+CONTIKI_SOURCEFILES += $(CONTIKI_TARGET_SOURCEFILES)
+
+CLEAN += *.edison
+
+### Unless the example dictates otherwise, build with code size optimisations
+ifndef SMALL
+  SMALL = 1
+endif
+
+### special rule for RTC
+SELF_DIR := $(dir $(lastword $(MAKEFILE_LIST)))
+FORCE:
+RTC_FLAGS = $(shell $(SELF_DIR)../../tools/contiki-make-time)
+$(OBJECTDIR)/rv3049.o: rv3049.c FORCE | $(OBJECTDIR)
+	$(TRACE_CC)
+	$(Q)$(CC) $(CFLAGS) $(RTC_FLAGS) -c $< -o $@
+
+### Define the CPU directory
+CONTIKI_CPU=$(CONTIKI)/cpu/cc2538
+include $(CONTIKI_CPU)/Makefile.cc2538
+
+MODULES += core/net core/net/mac \
+           core/net/mac/contikimac \
+           core/net/llsec
+
+BSL = $(CONTIKI)/tools/cc2538-bsl/cc2538-bsl.py
+
+ifdef ID
+  BSL_FLAGS += -i $(ID)
+endif
+
+ifdef PORT
+  BSL_FLAGS += -p $(PORT)
+endif
+
+install: all
+ifeq ($(wildcard $(BSL)), )
+	@echo "ERROR: Could not find the cc2538-bsl script. Did you run 'git submodule update --init' ?"
+else
+	python2 $(BSL) -b 115200 -e -w -v $(BSL_FLAGS) $(CONTIKI_PROJECT).bin
+endif
+
