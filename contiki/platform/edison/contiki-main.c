@@ -33,8 +33,8 @@
 #include "reg.h"
 #include "ieee-addr.h"
 #include "lpm.h"
-//#include "dev/crypto.h"
-//#include "dev/ccm.h"
+#include "dev/crypto.h"
+#include "dev/ccm.h"
 //#include "spi.h"
 //#include "fm25v02.h"
 //#include "rv3049.h"
@@ -112,8 +112,8 @@ main(void)
 //  fm25v02_init();
 //  fm25v02_sleep();
 //  rv3049_init();
-//	crypto_init();
-//	REG(AES_CTRL_ALG_SEL) = 0x00000000; // reset AES module
+	crypto_init();
+	REG(AES_CTRL_ALG_SEL) = 0x00000000; // reset AES module
 
   /*
    * Character I/O Initialization.
