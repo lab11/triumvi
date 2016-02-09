@@ -1,5 +1,14 @@
 
+/* CC2538 SPI Slave driver
+ *
+ * Author: Ye-Sheng Kuo <samkuo@umich.edu>
+ *
+ */
+
 #include "spiSlave.h"
+#include "dev/leds.h"
+
+static spi_callback_t spi_callback;
 
 void spix_slave_init(uint8_t spi){
   if (spi > SSI_INSTANCE_COUNT)
@@ -52,9 +61,9 @@ void spix_slave_init(uint8_t spi){
    *   data:  Valid on rising edges of the clock
    *   bits:  8 byte data
    */
-  //REG(regs->base + SSI_CR0) = SSI_CR0_SPH | SSI_CR0_SPO | (0x07);
   // Set it to 9 bit per data, for edison extra bit
-  REG(regs->base + SSI_CR0) = SSI_CR0_SPH | SSI_CR0_SPO | (0x08);
+  //REG(regs->base + SSI_CR0) = SSI_CR0_SPH | SSI_CR0_SPO | (0x08);
+  REG(regs->base + SSI_CR0) = SSI_CR0_SPH | SSI_CR0_SPO | (0x07);
 
   /* Enable the SSI */
   REG(regs->base + SSI_CR1) |= SSI_CR1_SSE;
@@ -77,7 +86,7 @@ inline int spix_check_rx_fifo_empty(uint8_t spi){
 }
 
 // return 1 if tx fifo is full
-inline int spix_check_tx_fifo_full(uint8_t spi){
+inline uint32_t spix_check_tx_fifo_full(uint8_t spi){
   const spi_slave_reg_t* regs = &spi_slave_regs[spi];
   if ((REG(regs->base + SSI_SR) & SSI_SR_TNF_M) > 0)
     return 0;
@@ -86,15 +95,61 @@ inline int spix_check_tx_fifo_full(uint8_t spi){
   
 }
 
-uint16_t spix_get_data(uint8_t spi){
+uint16_t spix_get_data(uint8_t spi, uint8_t* data){
   const spi_slave_reg_t* regs = &spi_slave_regs[spi];
-  uint16_t rx_data = REG(regs->base + SSI_DR) & SSI_DR_DATA_M;
-  return rx_data;
+  uint16_t dataLen = 0;
+  while ((REG(regs->base + SSI_SR) & SSI_SR_RNE_M) > 0){
+    data[dataLen] = (uint8_t)(REG(regs->base + SSI_DR) & SSI_DR_DATA_M);
+    dataLen += 1;
+  }
+  return dataLen;
 }
 
-void spix_put_data(uint8_t spi, uint8_t data){
+void spix_put_data(uint8_t spi, uint8_t* data, uint8_t data_length){
+  const spi_slave_reg_t* regs = &spi_slave_regs[spi];
+  uint8_t i;
+  for (i=0; i<data_length; i++){
+    while (spix_check_tx_fifo_full(spi)){}
+    REG(regs->base + SSI_DR) = data[i];
+  }
+}
+
+void spix_put_data_single(uint8_t spi, uint8_t data){
   const spi_slave_reg_t* regs = &spi_slave_regs[spi];
   while (spix_check_tx_fifo_full(spi)){}
   REG(regs->base + SSI_DR) = data;
 }
 
+void spix_interrupt_enable(uint8_t spi, uint32_t interruptFlags){
+    const spi_slave_reg_t* regs = &spi_slave_regs[spi];
+    REG(regs->base + SSI_IM) |= interruptFlags;
+}
+
+void spix_interrupt_disable(uint8_t spi, uint32_t interruptFlags){
+    const spi_slave_reg_t* regs = &spi_slave_regs[spi];
+    REG(regs->base + SSI_IM) &= (~interruptFlags);
+}
+
+uint32_t spix_interrupt_get_status(uint8_t spi, uint8_t masked){
+    const spi_slave_reg_t* regs = &spi_slave_regs[spi];
+    if (masked)
+        return REG(regs->base + SSI_MIS);
+    else
+        return REG(regs->base + SSI_RIS);
+}
+
+void spix_interrupt_clear(uint8_t spi, uint32_t interruptFlags){
+    const spi_slave_reg_t* regs = &spi_slave_regs[spi];
+    REG(regs->base + SSI_ICR) = interruptFlags;
+}
+
+void spi_register_callback(spi_callback_t f){
+  spi_callback = f;
+}
+
+void spi_isr()
+{
+  lpm_exit();
+  (*spi_callback)();
+  ENERGEST_OFF(ENERGEST_TYPE_IRQ);
+}

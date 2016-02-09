@@ -1,5 +1,5 @@
 
-/* CC2538 SPI Slave driver
+/* CC2538 I2C Slave driver
  *
  * Author: Ye-Sheng Kuo <samkuo@umich.edu>
  *

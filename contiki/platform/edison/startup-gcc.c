@@ -63,6 +63,7 @@ void cc2538_rf_err_isr(void);
 void udma_isr(void);
 void udma_err_isr(void);
 void i2c_isr(void);
+void spi_isr(void);
 
 /* Boot Loader Backdoor selection */
 #if FLASH_CCA_CONF_BOOTLDR_BACKDOOR
@@ -178,7 +179,7 @@ void(*const vectors[])(void) =
   default_handler,            /* 47 PKA (Alternate) */
   default_handler,            /* 48 SM Timer (Alternate) */
   default_handler,            /* 49 MacTimer (Alternate) */
-  default_handler,            /* 50 SSI1 Rx and Tx */
+  spi_isr,                    /* 50 SSI1 Rx and Tx */
   default_handler,            /* 51 Timer 3 subtimer A */
   default_handler,            /* 52 Timer 3 subtimer B */
   0,                          /* 53 Reserved */

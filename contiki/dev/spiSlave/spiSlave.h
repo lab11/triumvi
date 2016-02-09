@@ -63,6 +63,8 @@
 
 #define SSI_INSTANCE_COUNT 2
 
+typedef void (* spi_callback_t)();
+
 typedef struct{
   int8_t port;
   int8_t pin;
@@ -109,9 +111,24 @@ static const spi_slave_reg_t spi_slave_regs[SSI_INSTANCE_COUNT] = {
 void spix_slave_init(uint8_t spi);
 void spix_enable(uint8_t spi);
 inline int spix_check_rx_fifo_empty(uint8_t spi);
-inline int spix_check_tx_fifo_full(uint8_t spi);
-uint16_t spix_get_data(uint8_t spi);
-void spix_put_data(uint8_t spi, uint8_t data);
+inline uint32_t spix_check_tx_fifo_full(uint8_t spi);
+uint16_t spix_get_data(uint8_t spi, uint8_t* data);
+void spix_put_data(uint8_t spi, uint8_t* data, uint8_t data_length);
+void spix_put_data_single(uint8_t spi, uint8_t data);
+/* Valid flags are: */
+/* SSI_IM_TXIM_M   < Transmit FIFO interrupt mask mask */
+/* SSI_IM_RXIM_M   < Receive FIFO interrupt mask mask */
+/* SSI_IM_RTIM_M   < Receive time-out interrupt mask mask */
+/* SSI_IM_RORIM_M  < Receive overrun interrupt mask mask */
+void spix_interrupt_enable(uint8_t spi, uint32_t interruptFlags);
+void spix_interrupt_disable(uint8_t spi, uint32_t interruptFlags);
+uint32_t spix_interrupt_get_status(uint8_t spi, uint8_t masked);
+/* Valid flags are: */
+/* SSI_IM_RTIM_M   < Receive time-out interrupt mask mask */
+/* SSI_IM_RORIM_M  < Receive overrun interrupt mask mask */
+void spix_interrupt_clear(uint8_t spi, uint32_t interruptFlags);
+void spi_register_callback(spi_callback_t f);
+void spi_isr();
 
 #endif
 

@@ -38,6 +38,8 @@
 #define TRIUMVI_DATA_READY_PIN          1
 #define TRIUMVI_DATA_READY_MASK         GPIO_PIN_MASK(TRIUMVI_DATA_READY_PIN)
 
+#define WATCHDOG_CONF_ENABLE            1
+
 #endif /* PROJECT_CONF_H_ */
 
 /** @} */

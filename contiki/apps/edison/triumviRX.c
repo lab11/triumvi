@@ -27,6 +27,8 @@ packet_header_t rx_pkt_header;
 static void spiCScallBack(uint8_t port, uint8_t pin);
 static void resetcallBack(uint8_t port, uint8_t pin);
 void rf_rx_handler();
+void spiCallBack();
+
 
 #define FIFOSIZE 8
 #define SPIDEV 0
@@ -76,6 +78,9 @@ PROCESS_THREAD(edisonIntProcess, ev, data) {
     uint8_t spi_data_fifo[FIFOSIZE];
 
     spi_packet_t spi_rx_pkt;
+    spi_register_callback(spiCallBack);
+    //spix_interrupt_enable(SPIDEV, SSI_IM_RORIM_M);
+    //nvic_interrupt_enable(NVIC_INT_SSI0);
 
     process_start(&radioRXOnlyProcess, NULL);
     while(1) {
@@ -118,6 +123,12 @@ PROCESS_THREAD(edisonIntProcess, ev, data) {
 
   }
   PROCESS_END();
+}
+
+void spiCallBack(){
+    spix_interrupt_clear(SPIDEV, SSI_IM_RORIM_M);
+    leds_on(LEDS_GREEN);
+    process_poll(&edisonIntProcess);
 }
 
 static void spiCScallBack(uint8_t port, uint8_t pin){
