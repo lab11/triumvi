@@ -129,6 +129,10 @@ uint32_t spix_interrupt_get_status(uint8_t spi, uint8_t masked);
 void spix_interrupt_clear(uint8_t spi, uint32_t interruptFlags);
 void spi_register_callback(spi_callback_t f);
 void spi_isr();
+void spix_txdma_enable(uint8_t spi);
+void spix_txdma_disable(uint8_t spi);
+void spix_rxdma_enable(uint8_t spi);
+void spix_rxdma_disable(uint8_t spi);
 
 #endif
 

@@ -129,7 +129,8 @@ typedef uint32_t rtimer_clock_t;
 #define USB_ARCH_CONF_TX_DMA_CHAN   1 /**< RAM -> USB DMA channel */
 #define CC2538_RF_CONF_TX_DMA_CHAN  2 /**< RF -> RAM DMA channel */
 #define CC2538_RF_CONF_RX_DMA_CHAN  3 /**< RAM -> RF DMA channel */
-#define UDMA_CONF_MAX_CHANNEL       CC2538_RF_CONF_RX_DMA_CHAN
+#define CC2538_SPI0_TX_DMA_CHAN     11
+#define UDMA_CONF_MAX_CHANNEL       CC2538_SPI0_TX_DMA_CHAN
 /** @} */
 /*---------------------------------------------------------------------------*/
 /**

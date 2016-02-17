@@ -153,3 +153,23 @@ void spi_isr()
   (*spi_callback)();
   ENERGEST_OFF(ENERGEST_TYPE_IRQ);
 }
+
+void spix_txdma_enable(uint8_t spi){
+    const spi_slave_reg_t* regs = &spi_slave_regs[spi];
+    REG(regs->base + SSI_DMACTL) |= SSI_DMACTL_TXDMAE;
+}
+
+void spix_txdma_disable(uint8_t spi){
+    const spi_slave_reg_t* regs = &spi_slave_regs[spi];
+    REG(regs->base + SSI_DMACTL) &= (~SSI_DMACTL_TXDMAE);
+}
+
+void spix_rxdma_enable(uint8_t spi){
+    const spi_slave_reg_t* regs = &spi_slave_regs[spi];
+    REG(regs->base + SSI_DMACTL) |= SSI_DMACTL_RXDMAE;
+}
+
+void spix_rxdma_disable(uint8_t spi){
+    const spi_slave_reg_t* regs = &spi_slave_regs[spi];
+    REG(regs->base + SSI_DMACTL) &= (~SSI_DMACTL_RXDMAE);
+}
