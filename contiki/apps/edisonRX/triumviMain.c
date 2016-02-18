@@ -45,10 +45,12 @@ static uint8_t radio_packet_received = 0;
 
 typedef enum{
     INT_EDISON,
-    SPI_WAIT
+    SPI_WAIT,
+    WAIT_EDISON
 }spiState_t;
 
 static spiState_t spiState = INT_EDISON;
+static struct etimer edison_delay_timer;
 
 
 /*---------------------------------------------------------------------------*/
@@ -124,8 +126,9 @@ PROCESS_THREAD(mainProcess, ev, data) {
             radio_packet_received = 0;
             process_poll(&decryptProcess);
         }
-        // buffer is not empty
-        if ((spiState==INT_EDISON) && ((triumviAvailIDX!=triumviFullIDX) || (triumviRXBufFull==1))){
+        // buffer is not empty, or 20 ms delay expired
+        if (((spiState==INT_EDISON) && ((triumviAvailIDX!=triumviFullIDX) || (triumviRXBufFull==1))) ||
+            ((spiState==WAIT_EDISON)&&(etimer_expired(&edison_delay_timer))) ){
             process_poll(&spiProcess);
         }
         // Edison missed interrupt, reassert again
@@ -149,6 +152,7 @@ PROCESS_THREAD(spiProcess, ev, data) {
     while (1){
         PROCESS_YIELD();
         switch (spiState){
+            /* Assert Interrupt to Edison */
             case INT_EDISON:
                 GPIO_SET_PIN(TRIUMVI_DATA_READY_PORT_BASE, TRIUMVI_DATA_READY_MASK);
                 GPIO_ENABLE_INTERRUPT(SPI0_CS_PORT_BASE, SPI0_CS_PIN_MASK);
@@ -157,6 +161,7 @@ PROCESS_THREAD(spiProcess, ev, data) {
                 leds_on(LEDS_BLUE);
             break;
 
+            /* Wait SPI from Edison*/
             case SPI_WAIT:
                 if (!spix_check_rx_fifo_empty(SPIDEV)){
                     spix_get_data(SPIDEV, spi_data_fifo);
@@ -185,10 +190,11 @@ PROCESS_THREAD(spiProcess, ev, data) {
                                 triumviFullIDX = 0;
                             else
                                 triumviFullIDX += 1;
-                            spiState = INT_EDISON;
-                            process_poll(&mainProcess);
                             leds_off(LEDS_BLUE);
                             leds_off(LEDS_GREEN);
+                            etimer_set(&edison_delay_timer, CLOCK_SECOND*0.02);
+                            spiState = WAIT_EDISON;
+                            process_poll(&mainProcess);
                         break;
 
                         default:
@@ -197,6 +203,12 @@ PROCESS_THREAD(spiProcess, ev, data) {
                 }
                 nvic_interrupt_enable(SPI0_CS_NVIC_PORT);
                 GPIO_ENABLE_INTERRUPT(SPI0_CS_PORT_BASE, SPI0_CS_PIN_MASK);
+            break;
+            
+            /* Wait 20 ms before next interrupt */
+            case WAIT_EDISON:
+                spiState = INT_EDISON;
+                process_poll(&mainProcess);
             break;
 
             default:
