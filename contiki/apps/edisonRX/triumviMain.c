@@ -101,7 +101,7 @@ PROCESS_THREAD(mainProcess, ev, data) {
     spix_slave_init(SPIDEV);
     spix_txdma_enable(SPIDEV);
 
-    // uDMA
+    // uDMA SPI0 TX
     udma_channel_disable(CC2538_SPI0_TX_DMA_CHAN);
     udma_channel_prio_set_default(CC2538_SPI0_TX_DMA_CHAN);
     udma_channel_use_primary(CC2538_SPI0_TX_DMA_CHAN);
@@ -126,6 +126,12 @@ PROCESS_THREAD(mainProcess, ev, data) {
         }
         // buffer is not empty
         if ((spiState==INT_EDISON) && ((triumviAvailIDX!=triumviFullIDX) || (triumviRXBufFull==1))){
+            process_poll(&spiProcess);
+        }
+        // Edison missed interrupt, reassert again
+        else if ((triumviRXBufFull==1)&&(spiState==SPI_WAIT)){
+            GPIO_CLR_PIN(TRIUMVI_DATA_READY_PORT_BASE, TRIUMVI_DATA_READY_MASK);
+            spiState = INT_EDISON;
             process_poll(&spiProcess);
         }
     }
@@ -160,7 +166,6 @@ PROCESS_THREAD(spiProcess, ev, data) {
                         case SPI_MASTER_REQ_DATA:
                             spix_put_data_single(SPIDEV, triumviRXPackets[triumviFullIDX].length);
                             GPIO_CLR_PIN(TRIUMVI_DATA_READY_PORT_BASE, TRIUMVI_DATA_READY_MASK);
-                            leds_off(LEDS_BLUE);
                         break;
 
                         // write data into tx fifo
@@ -180,9 +185,10 @@ PROCESS_THREAD(spiProcess, ev, data) {
                                 triumviFullIDX = 0;
                             else
                                 triumviFullIDX += 1;
-                            leds_off(LEDS_GREEN);
                             spiState = INT_EDISON;
                             process_poll(&mainProcess);
+                            leds_off(LEDS_BLUE);
+                            leds_off(LEDS_GREEN);
                         break;
 
                         default:
