@@ -34,11 +34,13 @@ static uint8_t triumviAvailIDX = 0;
 static uint8_t triumviFullIDX = 0;
 static uint8_t triumviRXBufFull = 0;
 
+static uint8_t spi_rxfifo_halffull = 0;
+static uint8_t spi_cs_int = 0;
 static uint8_t radio_packet_received = 0;
 
 /* spi interface */
 #define SPIDEV          0
-#define SPIFIFOSIZE     8
+#define SPIFIFOSIZE     32
 #define SPI0DR          (SSI0_BASE+SSI_DR)
 
 #define SPI0TX_DMA_FLAG (UDMA_CHCTL_DSTINC_NONE | UDMA_CHCTL_DSTSIZE_8 | UDMA_CHCTL_SRCINC_8 | UDMA_CHCTL_SRCSIZE_8 | UDMA_CHCTL_ARBSIZE_4 | UDMA_CHCTL_XFERMODE_BASIC)
@@ -58,6 +60,7 @@ static struct etimer edison_delay_timer;
 void rf_rx_handler();
 static void spiCScallBack(uint8_t port, uint8_t pin);
 static void resetcallBack(uint8_t port, uint8_t pin);
+static void spiFIFOcallBack();
 /*---------------------------------------------------------------------------*/
 
 /*---------------------------------------------------------------------------*/
@@ -102,6 +105,9 @@ PROCESS_THREAD(mainProcess, ev, data) {
     // SPI interface
     spix_slave_init(SPIDEV);
     spix_txdma_enable(SPIDEV);
+    spi_register_callback(spiFIFOcallBack);
+    spix_interrupt_enable(SPIDEV, SSI_IM_RXIM_M); // RX FIFO half full
+    nvic_interrupt_enable(NVIC_INT_SSI0);
 
     // uDMA SPI0 TX
     udma_channel_disable(CC2538_SPI0_TX_DMA_CHAN);
@@ -147,6 +153,7 @@ PROCESS_THREAD(spiProcess, ev, data) {
     uint8_t packetLen;
     spi_packet_t spi_rx_pkt;
     uint8_t* dma_src_end_addr;
+    static uint8_t spi_data_ptr;
 
 
     while (1){
@@ -158,13 +165,22 @@ PROCESS_THREAD(spiProcess, ev, data) {
                 GPIO_ENABLE_INTERRUPT(SPI0_CS_PORT_BASE, SPI0_CS_PIN_MASK);
                 nvic_interrupt_enable(SPI0_CS_NVIC_PORT);
                 spiState = SPI_WAIT;
+                spi_data_ptr = 0;
                 leds_on(LEDS_BLUE);
             break;
 
             /* Wait SPI from Edison*/
             case SPI_WAIT:
-                if (!spix_check_rx_fifo_empty(SPIDEV)){
-                    spix_get_data(SPIDEV, spi_data_fifo);
+                if (spi_rxfifo_halffull==1){
+                    spi_rxfifo_halffull = 0; 
+                    spi_data_ptr += spix_get_data(SPIDEV, spi_data_fifo+spi_data_ptr);
+                    spix_interrupt_enable(SPIDEV, SSI_IM_RXIM_M);
+                }
+                else if (spi_cs_int==1){
+                    if (!spix_check_rx_fifo_empty(SPIDEV))
+                        spi_data_ptr += spix_get_data(SPIDEV, spi_data_fifo+spi_data_ptr);
+                    spi_cs_int = 0;
+                    spi_data_ptr = 0;
                     spi_packet_parse(&spi_rx_pkt, spi_data_fifo);
                     switch (spi_rx_pkt.cmd){
                         // write length into tx fifo
@@ -334,10 +350,17 @@ static void spiCScallBack(uint8_t port, uint8_t pin){
     GPIO_DISABLE_INTERRUPT(SPI0_CS_PORT_BASE, SPI0_CS_PIN_MASK);
     GPIO_CLEAR_INTERRUPT(SPI0_CS_PORT_BASE, SPI0_CS_PIN_MASK);
     nvic_interrupt_disable(SPI0_CS_NVIC_PORT);
+    spi_cs_int = 1;
     process_poll(&spiProcess);
 }
 
 static void resetcallBack(uint8_t port, uint8_t pin){
     leds_on(LEDS_RED);
     watchdog_reboot();
+}
+
+static void spiFIFOcallBack(){
+    spix_interrupt_disable(SPIDEV, SSI_IM_RXIM_M);
+    spi_rxfifo_halffull = 1;
+    process_poll(&spiProcess);
 }

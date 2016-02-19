@@ -6,7 +6,6 @@
  */
 
 #include "spiSlave.h"
-#include "dev/leds.h"
 
 static spi_callback_t spi_callback;
 
@@ -95,9 +94,9 @@ inline uint32_t spix_check_tx_fifo_full(uint8_t spi){
   
 }
 
-uint16_t spix_get_data(uint8_t spi, uint8_t* data){
+uint8_t spix_get_data(uint8_t spi, uint8_t* data){
   const spi_slave_reg_t* regs = &spi_slave_regs[spi];
-  uint16_t dataLen = 0;
+  uint8_t dataLen = 0;
   while ((REG(regs->base + SSI_SR) & SSI_SR_RNE_M) > 0){
     data[dataLen] = (uint8_t)(REG(regs->base + SSI_DR) & SSI_DR_DATA_M);
     dataLen += 1;
@@ -147,8 +146,8 @@ void spi_register_callback(spi_callback_t f){
   spi_callback = f;
 }
 
-void spi_isr()
-{
+// register to ssi0 isr
+void spi_isr() {
   lpm_exit();
   (*spi_callback)();
   ENERGEST_OFF(ENERGEST_TYPE_IRQ);

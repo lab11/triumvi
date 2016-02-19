@@ -152,7 +152,7 @@ void(*const vectors[])(void) =
   0,                          /* 20 none */
   uart0_isr,                  /* 21 UART0 Rx and Tx */
   uart1_isr,                  /* 22 UART1 Rx and Tx */
-  default_handler,            /* 23 SSI0 Rx and Tx */
+  spi_isr,                    /* 23 SSI0 Rx and Tx */
   default_handler,            /* 24 I2C Master and Slave */
   0,                          /* 25 Reserved */
   0,                          /* 26 Reserved */
@@ -179,7 +179,7 @@ void(*const vectors[])(void) =
   default_handler,            /* 47 PKA (Alternate) */
   default_handler,            /* 48 SM Timer (Alternate) */
   default_handler,            /* 49 MacTimer (Alternate) */
-  spi_isr,                    /* 50 SSI1 Rx and Tx */
+  default_handler,            /* 50 SSI1 Rx and Tx */
   default_handler,            /* 51 Timer 3 subtimer A */
   default_handler,            /* 52 Timer 3 subtimer B */
   0,                          /* 53 Reserved */

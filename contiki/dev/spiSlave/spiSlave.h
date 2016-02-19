@@ -8,6 +8,7 @@
 #include "dev/sys-ctrl.h"
 #include "dev/ssi.h"
 #include "dev/gpio.h"
+#include "lpm.h"
 
 #ifndef SPI0_CLK_PORT
 #define SPI0_CLK_PORT             (-1)
@@ -112,7 +113,7 @@ void spix_slave_init(uint8_t spi);
 void spix_enable(uint8_t spi);
 inline int spix_check_rx_fifo_empty(uint8_t spi);
 inline uint32_t spix_check_tx_fifo_full(uint8_t spi);
-uint16_t spix_get_data(uint8_t spi, uint8_t* data);
+uint8_t spix_get_data(uint8_t spi, uint8_t* data);
 void spix_put_data(uint8_t spi, uint8_t* data, uint8_t data_length);
 void spix_put_data_single(uint8_t spi, uint8_t data);
 /* Valid flags are: */
