@@ -161,12 +161,14 @@ PROCESS_THREAD(spiProcess, ev, data) {
         switch (spiState){
             /* Assert Interrupt to Edison */
             case INT_EDISON:
-                GPIO_SET_PIN(TRIUMVI_DATA_READY_PORT_BASE, TRIUMVI_DATA_READY_MASK);
-                GPIO_ENABLE_INTERRUPT(SPI0_CS_PORT_BASE, SPI0_CS_PIN_MASK);
-                nvic_interrupt_enable(SPI0_CS_NVIC_PORT);
-                spiState = SPI_WAIT;
-                spi_data_ptr = 0;
-                leds_on(LEDS_BLUE);
+                if ((triumviAvailIDX!=triumviFullIDX) || (triumviRXBufFull==1)){
+                    GPIO_SET_PIN(TRIUMVI_DATA_READY_PORT_BASE, TRIUMVI_DATA_READY_MASK);
+                    GPIO_ENABLE_INTERRUPT(SPI0_CS_PORT_BASE, SPI0_CS_PIN_MASK);
+                    nvic_interrupt_enable(SPI0_CS_NVIC_PORT);
+                    spiState = SPI_WAIT;
+                    spi_data_ptr = 0;
+                    leds_on(LEDS_BLUE);
+                }
             break;
 
             /* Wait SPI from Edison*/
@@ -311,8 +313,9 @@ PROCESS_THREAD(decryptProcess, ev, data) {
                 if (auth_res==CRYPTO_SUCCESS){
                     triumviRXPackets[triumviAvailIDX].payload[0] = packet_ptr[0];
                     tmp = triumviRXPackets[triumviAvailIDX].length;
-                    for (i=0; i<4; i++)
+                    for (i=0; i<4; i++){
                         triumviRXPackets[triumviAvailIDX].payload[tmp+i] = cData[i];
+                    }
                     triumviRXPackets[triumviAvailIDX].payload[tmp+4] = cData[4]; // Status register
                     if (cData[4]&BATTERYPACK_STATUSREG){
                         triumviRXPackets[triumviAvailIDX].payload[tmp+5] = cData[5]; // Panel ID
