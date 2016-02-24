@@ -134,6 +134,7 @@ void spix_txdma_enable(uint8_t spi);
 void spix_txdma_disable(uint8_t spi);
 void spix_rxdma_enable(uint8_t spi);
 void spix_rxdma_disable(uint8_t spi);
+uint8_t spix_busy(uint8_t spi);
 
 #endif
 

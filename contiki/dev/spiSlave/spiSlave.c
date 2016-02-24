@@ -172,3 +172,8 @@ void spix_rxdma_disable(uint8_t spi){
     const spi_slave_reg_t* regs = &spi_slave_regs[spi];
     REG(regs->base + SSI_DMACTL) &= (~SSI_DMACTL_RXDMAE);
 }
+
+uint8_t spix_busy(uint8_t spi){
+    const spi_slave_reg_t* regs = &spi_slave_regs[spi];
+    return (REG(regs->base + SSI_SR) & SSI_SR_BSY_M)>>SSI_SR_BSY_S;
+}

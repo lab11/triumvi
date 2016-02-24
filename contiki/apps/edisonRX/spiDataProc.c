@@ -4,9 +4,9 @@
 // REQ_DATA doesn't need length
 // GET_DATA requires length
 
-#define SPI_MASTER_REQ_DATA 0
-#define SPI_MASTER_DUMMY 1
-#define SPI_MASTER_GET_DATA 2
+#define SPI_MASTER_REQ_DATA 0x00
+#define SPI_MASTER_DUMMY 0x01
+#define SPI_MASTER_GET_DATA 0x02
 
 #define MAX_SPI_LENGTH 128
 
