@@ -17,7 +17,7 @@ typedef struct{
 } spi_packet_t;
 
 // return number of bytes are processed
-uint16_t spi_packet_parse(spi_packet_t* rx_packet, uint8_t* data_ptr){
+uint8_t spi_packet_parse(spi_packet_t* rx_packet, uint8_t* data_ptr){
   rx_packet->cmd = data_ptr[0];
   uint8_t i;
   switch (rx_packet->cmd){

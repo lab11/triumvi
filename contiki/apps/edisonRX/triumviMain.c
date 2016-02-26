@@ -37,21 +37,29 @@ static uint8_t triumviRXBufFull = 0;
 static uint8_t spi_rxfifo_halffull = 0;
 static uint8_t spi_cs_int = 0;
 static uint8_t radio_packet_received = 0;
+static uint8_t spiInUse = 0;
 
 /* spi interface */
 #define SPIDEV          0
-#define SPIFIFOSIZE     32
-#define SPI0DR          (SSI0_BASE+SSI_DR)
+#define SPIFIFOSIZE     32                  // maximum receiving buffer size per spi transaction
+#define SPI0DR          (SSI0_BASE+SSI_DR)  // SPIDEV fifo address
+#define SPI_DELAY       CLOCK_SECOND*0.02   // delay between asserting next interrupt
 
-#define SPI0TX_DMA_FLAG (UDMA_CHCTL_DSTINC_NONE | UDMA_CHCTL_DSTSIZE_8 | UDMA_CHCTL_SRCINC_8 | UDMA_CHCTL_SRCSIZE_8 | UDMA_CHCTL_ARBSIZE_4 | UDMA_CHCTL_XFERMODE_BASIC)
+#define SPI0TX_DMA_FLAG (UDMA_CHCTL_DSTINC_NONE | \
+                        UDMA_CHCTL_DSTSIZE_8 | \
+                        UDMA_CHCTL_SRCINC_8 | \
+                        UDMA_CHCTL_SRCSIZE_8 | \
+                        UDMA_CHCTL_ARBSIZE_4 | \
+                        UDMA_CHCTL_XFERMODE_BASIC)
+//#define LED_DEBUG
 
 typedef enum{
-    INT_EDISON,
+    SPI_RESET,
     SPI_WAIT,
     WAIT_EDISON
 }spiState_t;
 
-static spiState_t spiState = INT_EDISON;
+static spiState_t spiState = SPI_WAIT;
 static struct etimer edison_delay_timer;
 
 
@@ -101,6 +109,7 @@ PROCESS_THREAD(mainProcess, ev, data) {
     GPIO_DETECT_RISING(SPI0_CS_PORT_BASE, SPI0_CS_PIN_MASK);
     GPIO_TRIGGER_SINGLE_EDGE(SPI0_CS_PORT_BASE, SPI0_CS_PIN_MASK);
     gpio_register_callback(spiCScallBack, SPI0_CS_PORT, SPI0_CS_PIN);
+    GPIO_ENABLE_INTERRUPT(SPI0_CS_PORT_BASE, SPI0_CS_PIN_MASK);
 
     // SPI interface
     spix_slave_init(SPIDEV);
@@ -132,17 +141,37 @@ PROCESS_THREAD(mainProcess, ev, data) {
             radio_packet_received = 0;
             process_poll(&decryptProcess);
         }
-        // buffer is not empty, or 20 ms delay expired
-        if (((spiState==INT_EDISON) && ((triumviAvailIDX!=triumviFullIDX) || (triumviRXBufFull==1))) ||
-            ((spiState==WAIT_EDISON)&&(etimer_expired(&edison_delay_timer))) ){
-            process_poll(&spiProcess);
+
+        // buffer is not empty, spi is not in use
+        //if ((spiInUse==0) && (spix_busy(SPIDEV)==0) && ((triumviAvailIDX!=triumviFullIDX) || (triumviRXBufFull==1))){
+        if ((spiInUse==0) && ((triumviAvailIDX!=triumviFullIDX) || (triumviRXBufFull==1))){
+            GPIO_SET_PIN(TRIUMVI_DATA_READY_PORT_BASE, TRIUMVI_DATA_READY_MASK);
+            #ifdef LED_DEBUG
+            leds_on(LEDS_RED);
+            leds_off(LEDS_GREEN);
+            leds_off(LEDS_BLUE);
+            #endif
         }
-        // Edison missed interrupt, reassert again
-        else if ((triumviRXBufFull==1)&&(spiState==SPI_WAIT)){
-            GPIO_CLR_PIN(TRIUMVI_DATA_READY_PORT_BASE, TRIUMVI_DATA_READY_MASK);
-            spiState = INT_EDISON;
+        // 20 ms timer expired, CC2538 can assert next interrupt
+        else if (etimer_expired(&edison_delay_timer) && spiState==WAIT_EDISON){
             process_poll(&spiProcess);
+            #ifdef LED_DEBUG
+            leds_off(LEDS_RED);
+            leds_on(LEDS_GREEN);
+            leds_off(LEDS_BLUE);
+            #endif
         }
+        // Fail safe, CC2538 missing some SPI commands, reset spi state
+        else if (triumviRXBufFull==1){
+            spiState = SPI_RESET;
+            process_poll(&spiProcess);
+            #ifdef LED_DEBUG
+            leds_off(LEDS_RED);
+            leds_off(LEDS_GREEN);
+            leds_on(LEDS_BLUE);
+            #endif
+        }
+
     }
     PROCESS_END();
 }
@@ -153,22 +182,27 @@ PROCESS_THREAD(spiProcess, ev, data) {
     uint8_t packetLen;
     spi_packet_t spi_rx_pkt;
     uint8_t* dma_src_end_addr;
-    static uint8_t spi_data_ptr;
+    static uint8_t spi_data_ptr = 0;
+    uint8_t proc_idx;
 
 
     while (1){
         PROCESS_YIELD();
         switch (spiState){
-            /* Assert Interrupt to Edison */
-            case INT_EDISON:
-                if ((triumviAvailIDX!=triumviFullIDX) || (triumviRXBufFull==1)){
-                    GPIO_SET_PIN(TRIUMVI_DATA_READY_PORT_BASE, TRIUMVI_DATA_READY_MASK);
-                    GPIO_ENABLE_INTERRUPT(SPI0_CS_PORT_BASE, SPI0_CS_PIN_MASK);
-                    nvic_interrupt_enable(SPI0_CS_NVIC_PORT);
-                    spiState = SPI_WAIT;
-                    spi_data_ptr = 0;
-                    leds_on(LEDS_BLUE);
-                }
+            case SPI_RESET:
+                triumviRXBufFull = 0;
+                spi_cs_int = 0;
+                spi_rxfifo_halffull = 0; 
+                spiInUse = 0;
+                spi_data_ptr = 0;
+                spix_interrupt_enable(SPIDEV, SSI_IM_RXIM_M);
+                spiState = SPI_WAIT;
+                process_poll(&mainProcess);
+                #ifdef LED_DEBUG
+                leds_off(LEDS_RED);
+                leds_on(LEDS_GREEN);
+                leds_on(LEDS_BLUE);
+                #endif
             break;
 
             /* Wait SPI from Edison*/
@@ -177,55 +211,74 @@ PROCESS_THREAD(spiProcess, ev, data) {
                     spi_rxfifo_halffull = 0; 
                     spi_data_ptr += spix_get_data(SPIDEV, spi_data_fifo+spi_data_ptr);
                     spix_interrupt_enable(SPIDEV, SSI_IM_RXIM_M);
+                    spiInUse = 1;
                 }
                 else if (spi_cs_int==1){
-                    if (!spix_check_rx_fifo_empty(SPIDEV))
-                        spi_data_ptr += spix_get_data(SPIDEV, spi_data_fifo+spi_data_ptr);
+                    spi_data_ptr += spix_get_data(SPIDEV, spi_data_fifo+spi_data_ptr);
                     spi_cs_int = 0;
-                    spi_data_ptr = 0;
-                    spi_packet_parse(&spi_rx_pkt, spi_data_fifo);
-                    switch (spi_rx_pkt.cmd){
-                        // write length into tx fifo
-                        case SPI_MASTER_REQ_DATA:
-                            spix_put_data_single(SPIDEV, triumviRXPackets[triumviFullIDX].length);
-                            GPIO_CLR_PIN(TRIUMVI_DATA_READY_PORT_BASE, TRIUMVI_DATA_READY_MASK);
-                        break;
+                    spiInUse = 1;
+                    proc_idx = 0;
+                    while (proc_idx < spi_data_ptr){
+                        proc_idx += spi_packet_parse(&spi_rx_pkt, spi_data_fifo+proc_idx);
+                        switch (spi_rx_pkt.cmd){
+                            // write length and data into tx fifo
+                            case SPI_MASTER_REQ_DATA:
+                                packetLen = triumviRXPackets[triumviFullIDX].length;
+                                spix_put_data_single(SPIDEV, packetLen);
+                                dma_src_end_addr = triumviRXPackets[triumviFullIDX].payload + packetLen - 1;
+                                udma_set_channel_src(CC2538_SPI0_TX_DMA_CHAN, (uint32_t)(dma_src_end_addr));
+                                udma_set_channel_control_word(CC2538_SPI0_TX_DMA_CHAN, 
+                                    (SPI0TX_DMA_FLAG | udma_xfer_size(packetLen)));
+                                udma_channel_enable(CC2538_SPI0_TX_DMA_CHAN);
+                                GPIO_CLR_PIN(TRIUMVI_DATA_READY_PORT_BASE, TRIUMVI_DATA_READY_MASK);
+                            break;
 
-                        // write data into tx fifo
-                        case SPI_MASTER_DUMMY:
-                            packetLen = triumviRXPackets[triumviFullIDX].length;
-                            dma_src_end_addr = triumviRXPackets[triumviFullIDX].payload + packetLen - 1;
-                            udma_set_channel_src(CC2538_SPI0_TX_DMA_CHAN, (uint32_t)(dma_src_end_addr));
-                            udma_set_channel_control_word(CC2538_SPI0_TX_DMA_CHAN, 
-                                (SPI0TX_DMA_FLAG | udma_xfer_size(packetLen)));
-                            udma_channel_enable(CC2538_SPI0_TX_DMA_CHAN);
-                        break;
+                            // do nothing...
+                            case SPI_MASTER_DUMMY:
+                            break;
 
-                        // do nothing...
-                        case SPI_MASTER_GET_DATA:
-                            triumviRXBufFull = 0;
-                            if (triumviFullIDX == TRIUMVI_PACKET_BUF_LEN-1)
-                                triumviFullIDX = 0;
-                            else
-                                triumviFullIDX += 1;
-                            leds_off(LEDS_BLUE);
-                            leds_off(LEDS_GREEN);
-                            etimer_set(&edison_delay_timer, CLOCK_SECOND*0.02);
-                            spiState = WAIT_EDISON;
-                            process_poll(&mainProcess);
-                        break;
+                            // spi transmission is completed, advances pointer
+                            case SPI_MASTER_GET_DATA:
+                                if ((triumviAvailIDX!=triumviFullIDX) || (triumviRXBufFull==1)){
+                                    triumviRXBufFull = 0;
+                                    if (triumviFullIDX == TRIUMVI_PACKET_BUF_LEN-1)
+                                        triumviFullIDX = 0;
+                                    else
+                                        triumviFullIDX += 1;
+                                    leds_off(LEDS_GREEN);
+                                }
+                                etimer_set(&edison_delay_timer, SPI_DELAY);
+                                spiState = WAIT_EDISON;
+                            break;
 
-                        default:
-                        break;
+                            default:
+                                etimer_set(&edison_delay_timer, SPI_DELAY);
+                                spiState = WAIT_EDISON;
+                            break;
+                        }
                     }
+                    spi_data_ptr = 0;
+                    #ifndef LED_DEBUG
+                    leds_on(LEDS_BLUE);
+                    #else
+                    leds_on(LEDS_RED);
+                    leds_off(LEDS_GREEN);
+                    leds_on(LEDS_BLUE);
+                    #endif
                 }
-                nvic_interrupt_enable(SPI0_CS_NVIC_PORT);
-                GPIO_ENABLE_INTERRUPT(SPI0_CS_PORT_BASE, SPI0_CS_PIN_MASK);
             break;
             
             /* Wait 20 ms before next interrupt */
             case WAIT_EDISON:
-                spiState = INT_EDISON;
+                spiInUse = 0;
+                spiState = SPI_WAIT;
+                #ifndef LED_DEBUG
+                leds_off(LEDS_BLUE);
+                #else
+                leds_on(LEDS_RED);
+                leds_on(LEDS_GREEN);
+                leds_off(LEDS_BLUE);
+                #endif
                 process_poll(&mainProcess);
             break;
 
@@ -265,7 +318,9 @@ PROCESS_THREAD(decryptProcess, ev, data) {
 
     while(1){
         PROCESS_YIELD();
+        #ifndef LED_DEBUG
         leds_on(LEDS_RED);
+        #endif
         // Get data from radio buffer and parse it
         packet_hdr = packetbuf_hdrptr();                                   
         packet_ptr = packetbuf_dataptr();                                  
@@ -328,7 +383,9 @@ PROCESS_THREAD(decryptProcess, ev, data) {
                     if (((triumviAvailIDX == TRIUMVI_PACKET_BUF_LEN-1) && (triumviFullIDX == 0)) || 
                         ((triumviAvailIDX != TRIUMVI_PACKET_BUF_LEN-1) && (triumviFullIDX == triumviAvailIDX+1))){
                         triumviRXBufFull = 1;
+                        #ifndef LED_DEBUG
                         leds_on(LEDS_GREEN);
+                        #endif
                     }
                     // advance pointer
                     if (triumviAvailIDX == TRIUMVI_PACKET_BUF_LEN-1)
@@ -338,7 +395,9 @@ PROCESS_THREAD(decryptProcess, ev, data) {
                 }
             }
         }
+        #ifndef LED_DEBUG
         leds_off(LEDS_RED);
+        #endif
         process_poll(&mainProcess);
     }
     PROCESS_END();
@@ -350,9 +409,7 @@ void rf_rx_handler(){
 }   
 
 static void spiCScallBack(uint8_t port, uint8_t pin){
-    GPIO_DISABLE_INTERRUPT(SPI0_CS_PORT_BASE, SPI0_CS_PIN_MASK);
     GPIO_CLEAR_INTERRUPT(SPI0_CS_PORT_BASE, SPI0_CS_PIN_MASK);
-    nvic_interrupt_disable(SPI0_CS_NVIC_PORT);
     spi_cs_int = 1;
     process_poll(&spiProcess);
 }
