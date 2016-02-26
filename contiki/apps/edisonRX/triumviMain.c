@@ -190,7 +190,6 @@ PROCESS_THREAD(spiProcess, ev, data) {
         PROCESS_YIELD();
         switch (spiState){
             case SPI_RESET:
-                triumviRXBufFull = 0;
                 spi_cs_int = 0;
                 spi_rxfifo_halffull = 0; 
                 spiInUse = 0;
