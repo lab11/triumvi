@@ -18,7 +18,6 @@
 #include "dev/ccm.h"
 #include "dev/udma.h"
 
-#include <stdio.h>
 
 
 /* Triumvi received packet buffer */
@@ -51,16 +50,14 @@ static uint8_t spiInUse = 0;
                         UDMA_CHCTL_SRCSIZE_8 | \
                         UDMA_CHCTL_ARBSIZE_4 | \
                         UDMA_CHCTL_XFERMODE_BASIC)
-//#define LED_DEBUG
+#define LED_DEBUG
 
 typedef enum{
     SPI_RESET,
     SPI_WAIT,
-    WAIT_EDISON
 }spiState_t;
 
 static spiState_t spiState = SPI_WAIT;
-static struct etimer edison_delay_timer;
 
 
 /*---------------------------------------------------------------------------*/
@@ -129,7 +126,7 @@ PROCESS_THREAD(mainProcess, ev, data) {
 
 
     simple_network_set_callback(&rf_rx_handler);
-    NETSTACK_RADIO.on();
+    //NETSTACK_RADIO.off();
     
     process_start(&decryptProcess, NULL);
     process_start(&spiProcess, NULL);
@@ -149,15 +146,6 @@ PROCESS_THREAD(mainProcess, ev, data) {
             #ifdef LED_DEBUG
             leds_on(LEDS_RED);
             leds_off(LEDS_GREEN);
-            leds_off(LEDS_BLUE);
-            #endif
-        }
-        // 20 ms timer expired, CC2538 can assert next interrupt
-        else if (etimer_expired(&edison_delay_timer) && spiState==WAIT_EDISON){
-            process_poll(&spiProcess);
-            #ifdef LED_DEBUG
-            leds_off(LEDS_RED);
-            leds_on(LEDS_GREEN);
             leds_off(LEDS_BLUE);
             #endif
         }
@@ -212,7 +200,7 @@ PROCESS_THREAD(spiProcess, ev, data) {
                     spix_interrupt_enable(SPIDEV, SSI_IM_RXIM_M);
                     spiInUse = 1;
                 }
-                else if (spi_cs_int==1){
+                if (spi_cs_int==1){
                     spi_data_ptr += spix_get_data(SPIDEV, spi_data_fifo+spi_data_ptr);
                     spi_cs_int = 0;
                     spiInUse = 1;
@@ -244,15 +232,25 @@ PROCESS_THREAD(spiProcess, ev, data) {
                                         triumviFullIDX = 0;
                                     else
                                         triumviFullIDX += 1;
+                                    #ifndef LED_DEBUG
                                     leds_off(LEDS_GREEN);
+                                    #endif
                                 }
-                                etimer_set(&edison_delay_timer, SPI_DELAY);
-                                spiState = WAIT_EDISON;
+                                spiInUse = 0;
+                            break;
+
+                            case SPI_MASTER_RADIO_ON:
+                                NETSTACK_RADIO.on();
+                                spiInUse = 0;
+                            break;
+
+                            case SPI_MASTER_RADIO_OFF:
+                                NETSTACK_RADIO.off();
+                                spiInUse = 0;
                             break;
 
                             default:
-                                etimer_set(&edison_delay_timer, SPI_DELAY);
-                                spiState = WAIT_EDISON;
+                                spiInUse = 0;
                             break;
                         }
                     }
@@ -264,23 +262,10 @@ PROCESS_THREAD(spiProcess, ev, data) {
                     leds_off(LEDS_GREEN);
                     leds_on(LEDS_BLUE);
                     #endif
+                    process_poll(&mainProcess);
                 }
             break;
             
-            /* Wait 20 ms before next interrupt */
-            case WAIT_EDISON:
-                spiInUse = 0;
-                spiState = SPI_WAIT;
-                #ifndef LED_DEBUG
-                leds_off(LEDS_BLUE);
-                #else
-                leds_on(LEDS_RED);
-                leds_on(LEDS_GREEN);
-                leds_off(LEDS_BLUE);
-                #endif
-                process_poll(&mainProcess);
-            break;
-
             default:
             break;
         }
