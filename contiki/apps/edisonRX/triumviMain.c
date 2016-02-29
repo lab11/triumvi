@@ -35,8 +35,9 @@ static uint8_t triumviRXBufFull = 0;
 
 static uint8_t spi_rxfifo_halffull = 0;
 static uint8_t spi_cs_int = 0;
-static uint8_t radio_packet_received = 0;
 static uint8_t spiInUse = 0;
+
+static uint8_t resetCnt = 0;
 
 /* spi interface */
 #define SPIDEV          0
@@ -51,6 +52,7 @@ static uint8_t spiInUse = 0;
                         UDMA_CHCTL_ARBSIZE_4 | \
                         UDMA_CHCTL_XFERMODE_BASIC)
 #define LED_DEBUG
+#define RESET_THRESHOLD 32  // if edison did not respond within 32 packets, reset CC2538
 
 typedef enum{
     SPI_RESET,
@@ -134,17 +136,18 @@ PROCESS_THREAD(mainProcess, ev, data) {
 
     while (1){
         PROCESS_YIELD();
-        if (radio_packet_received==1){
-            radio_packet_received = 0;
-            process_poll(&decryptProcess);
-        }
-
         // buffer is not empty, spi is not in use
         //if ((spiInUse==0) && (spix_busy(SPIDEV)==0) && ((triumviAvailIDX!=triumviFullIDX) || (triumviRXBufFull==1))){
         if ((spiInUse==0) && ((triumviAvailIDX!=triumviFullIDX) || (triumviRXBufFull==1))){
             GPIO_SET_PIN(TRIUMVI_DATA_READY_PORT_BASE, TRIUMVI_DATA_READY_MASK);
+            if (triumviRXBufFull==1){
+                resetCnt += 1;
+                if (resetCnt==RESET_THRESHOLD){
+                    watchdog_reboot();
+                }
+            }
             #ifdef LED_DEBUG
-            leds_on(LEDS_RED);
+            leds_off(LEDS_RED);
             leds_off(LEDS_GREEN);
             leds_off(LEDS_BLUE);
             #endif
@@ -159,7 +162,6 @@ PROCESS_THREAD(mainProcess, ev, data) {
             leds_on(LEDS_BLUE);
             #endif
         }
-
     }
     PROCESS_END();
 }
@@ -236,6 +238,7 @@ PROCESS_THREAD(spiProcess, ev, data) {
                                     leds_off(LEDS_GREEN);
                                     #endif
                                 }
+                                resetCnt  = 0;
                                 spiInUse = 0;
                             break;
 
@@ -262,8 +265,8 @@ PROCESS_THREAD(spiProcess, ev, data) {
                     leds_off(LEDS_GREEN);
                     leds_on(LEDS_BLUE);
                     #endif
-                    process_poll(&mainProcess);
                 }
+                process_poll(&mainProcess);
             break;
             
             default:
@@ -304,6 +307,10 @@ PROCESS_THREAD(decryptProcess, ev, data) {
         PROCESS_YIELD();
         #ifndef LED_DEBUG
         leds_on(LEDS_RED);
+        #else
+        leds_on(LEDS_RED);
+        leds_on(LEDS_GREEN);
+        leds_on(LEDS_BLUE);
         #endif
         // Get data from radio buffer and parse it
         packet_hdr = packetbuf_hdrptr();                                   
@@ -388,8 +395,7 @@ PROCESS_THREAD(decryptProcess, ev, data) {
 }
 
 void rf_rx_handler(){
-    radio_packet_received = 1;
-    process_poll(&mainProcess);
+    process_poll(&decryptProcess);
 }   
 
 static void spiCScallBack(uint8_t port, uint8_t pin){
@@ -399,7 +405,6 @@ static void spiCScallBack(uint8_t port, uint8_t pin){
 }
 
 static void resetcallBack(uint8_t port, uint8_t pin){
-    leds_on(LEDS_RED);
     watchdog_reboot();
 }
 
