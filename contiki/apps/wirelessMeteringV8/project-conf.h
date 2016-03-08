@@ -30,6 +30,9 @@
 #define ADATA_LEN 0x08
 #define PDATA_LEN 0x05
 
+// Use custom address for this address
+// make ID=c0:98:e5:54:52:a0:00:01
+#define IEEE_ADDR_CONF_USE_SECONDARY_LOCATION 1
 
 #endif /* PROJECT_CONF_H_ */
 
