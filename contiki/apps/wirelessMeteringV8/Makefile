@@ -11,13 +11,13 @@ CONTIKI = ../../../../contiki
 include $(CONTIKI)/Makefile.include
 
 ifndef calFile
-$(warning No calibration file, try make calFile='\"calibrate/V8node12SineTable.txt\"')
+$(warning No calibration file, try make calFile=calibrate/V8node12SineTable.txt)
 $(warning For me details: https://github.com/lab11/G2/issues/3)
 $(error Must define a calibration file)
 endif
 
 CFLAGS += -DCC2538_RF_CONF_CHANNEL=11
 CFLAGS += -DTHREEPHASE_ID=$(threephaseID)
-CFLAGS += -DCALIBRATE_FILE_NAME=$(calFile)
+CFLAGS += -DCALIBRATE_FILE_NAME=\"$(calFile)\"
 # Syntax is following
-# make calFile='\"calibrate/V8node12SineTable.txt\"' threephaseID=1 (optional)
+# make calFile=calibrate/V8node12SineTable.txt threephaseID=1 (optional)

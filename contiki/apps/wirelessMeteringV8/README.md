@@ -17,8 +17,8 @@ Compile
 
 You must point to the correct calibration file:
 
-    make calFile='\"calibrate/V8node12SineTable.txt\"'
+    make calFile=calibrate/V8node12SineTable.txt
     
 To flash the device:
 
-    make ID=c0:98:e5:54:52:a0:00:01 calFile='\"calibrate/V8node12SineTable.txt\"' install
+    make ID=c0:98:e5:54:52:a0:00:01 calFile=calibrate/V8node12SineTable.txt install
