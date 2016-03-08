@@ -61,23 +61,23 @@
 #define SX1509B_RegLEDDriverEnableA     0x21
 
 // LED Driver registers
-#define SX1509B_RegTOn0        0x29 
-#define SX1509B_RegIOn0        0x2A 
-#define SX1509B_RegOff0        0x2B 
-#define SX1509B_RegTOn1        0x2C 
-#define SX1509B_RegIOn1        0x2D 
-#define SX1509B_RegOff1        0x2E 
-#define SX1509B_RegTOn2        0x2F 
-#define SX1509B_RegIOn2        0x30 
-#define SX1509B_RegOff2        0x31 
-#define SX1509B_RegTOn3        0x32 
-#define SX1509B_RegIOn3        0x33 
-#define SX1509B_RegOff3        0x34 
-#define SX1509B_RegTOn4        0x35 
-#define SX1509B_RegIOn4        0x36 
-#define SX1509B_RegOff4        0x37 
-#define SX1509B_RegTRise4      0x38 
-#define SX1509B_RegTFall4      0x39 
+#define SX1509B_RegTOn0        0x29
+#define SX1509B_RegIOn0        0x2A
+#define SX1509B_RegOff0        0x2B
+#define SX1509B_RegTOn1        0x2C
+#define SX1509B_RegIOn1        0x2D
+#define SX1509B_RegOff1        0x2E
+#define SX1509B_RegTOn2        0x2F
+#define SX1509B_RegIOn2        0x30
+#define SX1509B_RegOff2        0x31
+#define SX1509B_RegTOn3        0x32
+#define SX1509B_RegIOn3        0x33
+#define SX1509B_RegOff3        0x34
+#define SX1509B_RegTOn4        0x35
+#define SX1509B_RegIOn4        0x36
+#define SX1509B_RegOff4        0x37
+#define SX1509B_RegTRise4      0x38
+#define SX1509B_RegTFall4      0x39
 #define SX1509B_RegTOn5        0x3A
 #define SX1509B_RegIOn5        0x3B
 #define SX1509B_RegOff5        0x3C
@@ -132,12 +132,12 @@
 #define SX1509B_RegReset       0x7D
 
 void sx1509b_init();
-inline uint8_t sx1509b_gpio_read_port(uint8_t port);
-inline void sx1509b_gpio_set_input(uint8_t port, uint8_t pin_mask);
-inline void sx1509b_gpio_set_output(uint8_t port, uint8_t pin_mask);
+uint8_t sx1509b_gpio_read_port(uint8_t port);
+void sx1509b_gpio_set_input(uint8_t port, uint8_t pin_mask);
+void sx1509b_gpio_set_output(uint8_t port, uint8_t pin_mask);
 
-inline void sx1509b_gpio_set_pin(uint8_t port, uint8_t pin_mask);
-inline void sx1509b_gpio_clr_pin(uint8_t port, uint8_t pin_mask);
+void sx1509b_gpio_set_pin(uint8_t port, uint8_t pin_mask);
+void sx1509b_gpio_clr_pin(uint8_t port, uint8_t pin_mask);
 void sx1509b_gpio_write_port(uint8_t port, uint8_t pin_mask, uint8_t val);
 void sx1509b_gpio_output_type(uint8_t port, uint8_t pin_mask, uint8_t type);
 
@@ -155,7 +155,7 @@ void sx1509b_oscillator_freq_divider(uint8_t divider);
 void sx1509b_led_driver_freq_divider(uint8_t divider);
 void sx1509b_led_driver_enable(uint8_t port, uint8_t pin_mask, uint8_t cfg);
 
-// val <= 31, 
+// val <= 31,
 // val = 0 --> static mode
 // 1  <= val <= 15 --> TOn =  64 * val * (255/CLKx)
 // 16 <= val <= 31 --> Ton = 512 * val * (255/CLKx)
@@ -164,7 +164,7 @@ void sx1509b_led_driver_TON(uint8_t pin, uint8_t val);
 uint8_t sx1509b_led_driver_get_ION(uint8_t pin);
 void sx1509b_led_driver_set_ION(uint8_t pin, uint8_t val);
 
-// val <= 31, 
+// val <= 31,
 // val = 0 --> static mode
 // 1  <= val <= 15 --> TOff =  64 * val * (255/CLKx)
 // 16 <= val <= 31 --> Toff = 512 * val * (255/CLKx)

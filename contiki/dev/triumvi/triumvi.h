@@ -6,7 +6,7 @@
 #include "ioc.h"
 
 #define FM25V02_MAX_ADDR 32760
-#define FM25V02_MIN_ADDR 16			// reserve first 16 bytes 
+#define FM25V02_MIN_ADDR 16			// reserve first 16 bytes
 #define FM25V02_WRITE_LOC_ADDR 12	// Addr 12~13
 #define FM25V02_READ_LOC_ADDR 14	// Addr 14~15
 #define READ_PTR_TYPE 0x0
@@ -42,17 +42,17 @@ int triumviFramWrite(uint16_t powerReading, rv3049_time_t* rtctime);
 int triumviFramRead(triumviData_t* record);
 void triumviFramPtrClear();
 
-inline void triumviLEDinit();
-inline void triumviLEDON();
-inline void triumviLEDOFF();
-inline void triumviLEDToggle();
+void triumviLEDinit();
+void triumviLEDON();
+void triumviLEDOFF();
+void triumviLEDToggle();
 
-inline void meterMUXConfig(uint8_t en);
-inline void meterSenseConfig(uint8_t type, uint8_t en);
-inline void meterVoltageComparator(uint8_t en);
+void meterMUXConfig(uint8_t en);
+void meterSenseConfig(uint8_t type, uint8_t en);
+void meterVoltageComparator(uint8_t en);
 
 void setINAGain(uint8_t gain);
-inline uint8_t getINAGain();
+uint8_t getINAGain();
 void increaseINAGain();
 void decreaseINAGain();
 
@@ -60,8 +60,8 @@ void disableSPI();
 void reenableSPI();
 
 
-inline uint8_t externalVoltSel();
-inline uint8_t isButtonPressed();
+uint8_t externalVoltSel();
+uint8_t isButtonPressed();
 
 // Battery Pack functions
 uint8_t batteryPackIsAttached();
