@@ -6,7 +6,7 @@
 #include "ioc.h"
 
 #define FM25V02_MAX_ADDR 32760
-#define FM25V02_MIN_ADDR 16			// reserve first 16 bytes 
+#define FM25V02_MIN_ADDR 16			// reserve first 16 bytes
 #define FM25V02_WRITE_LOC_ADDR 12	// Addr 12~13
 #define FM25V02_READ_LOC_ADDR 14	// Addr 14~15
 #define READ_PTR_TYPE 0x0
@@ -18,15 +18,10 @@
 #define SENSE_ENABLE 0x1
 #define SENSE_DISABLE 0x0
 
-#define MAX_INA_GAIN_IDX 3
-#define MAX_INA_GAIN 10
-#define MIN_INA_GAIN 1
-
 #define BATTERY_PACK_LED_RED 0x08
 #define BATTERY_PACK_LED_GREEN 0x04
 #define BATTERY_PACK_LED_BLUE 0x02
 
-static const uint8_t inaGainArr[4] = {1, 2, 5, 10};
 
 typedef struct {
 	uint16_t year;
@@ -42,28 +37,59 @@ int triumviFramWrite(uint16_t powerReading, rv3049_time_t* rtctime);
 int triumviFramRead(triumviData_t* record);
 void triumviFramPtrClear();
 
-inline void triumviLEDinit();
-inline void triumviLEDON();
-inline void triumviLEDOFF();
-inline void triumviLEDToggle();
+void triumviLEDinit();
+void triumviLEDON();
+void triumviLEDOFF();
+void triumviLEDToggle();
 
-inline void meterMUXConfig(uint8_t en);
-inline void meterSenseConfig(uint8_t type, uint8_t en);
-inline void meterVoltageComparator(uint8_t en);
+#ifdef VERSION9
+// Enable/Disable LDO on Sensing board
+inline void meterSenseVREn(uint8_t en);
 
-void setINAGain(uint8_t gain);
-inline uint8_t getINAGain();
+// Dessert READYn signal
+inline void unitReady();
+
+// Return 1 if all units in the chain are ready, 0 otherwise
+uint8_t allUnitsReady();
+
+// Return 1 if vcap is looping back, 0 otherwise
+inline uint8_t vcapLoopBack();
+#endif
+
+// Enable/Disable Voltage/Current Sensing
+void meterSenseConfig(uint8_t type, uint8_t en);
+
+// Enable comparater interrupt
+void meterVoltageComparator(uint8_t en);
+
+#ifndef VERSION9
+#define MAX_INA_GAIN_IDX 3
+#define MAX_INA_GAIN 10
+#define MIN_INA_GAIN 1
+void meterMUXConfig(uint8_t en);
+static const uint8_t inaGainArr[4] = {1, 2, 5, 10};
+uint8_t getINAGain();
 void increaseINAGain();
 void decreaseINAGain();
+#else
+#define MAX_INA_GAIN_IDX 5
+#define MIN_INA_GAIN_IDX 1
+static const uint8_t inaGainArr[6] = {1, 2, 3, 5, 9, 17};
+#endif
+void setINAGain(uint8_t gain);
+
 
 void disableSPI();
 void reenableSPI();
 
 
-inline uint8_t externalVoltSel();
-inline uint8_t isButtonPressed();
+uint8_t externalVoltSel();
+uint8_t isButtonPressed();
 
 // Battery Pack functions
+#ifdef VERSION9
+inline void batteryPackVoltageEn(uint8_t en);
+#endif
 uint8_t batteryPackIsAttached();
 uint8_t batteryPackIsUSBAttached();
 void batteryPackInit();

@@ -126,12 +126,31 @@ inline void triumviLEDToggle(){
 		GPIO_SET_PIN(LED_RED_BASE, LED_RED_MASK);
 }
 
-inline void meterMUXConfig(uint8_t en){
-	if (en==SENSE_ENABLE)
-		GPIO_SET_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_EN_GPIO_PIN);
-	else
-		GPIO_CLR_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_EN_GPIO_PIN);
+#ifdef VERSION9
+inline void meterSenseVREn(uint8_t en){
+    // enable voltage regulator
+    if (en==SENSE_ENABLE)
+        GPIO_SET_PIN(SENSE_VR_EN_GPIO_BASE , 0x1<<SENSE_VR_EN_GPIO_PIN );
+    else
+        GPIO_CLR_PIN(SENSE_VR_EN_GPIO_BASE , 0x1<<SENSE_VR_EN_GPIO_PIN );
 }
+
+inline void unitReady(){
+    GPIO_CLR_PIN(TRIUMVI_READYn_OUT_GPIO_BASE, 0x1<<TRIUMVI_READYn_OUT_GPIO_PIN);
+}
+
+uint8_t allUnitsReady(){
+    uint8_t tmp = GPIO_READ_PIN(TRIUMVI_RDYn_IN_GPIO_BASE, 0x1<<TRIUMVI_RDYn_IN_GPIO_PIN)>>TRIUMVI_RDYn_IN_GPIO_PIN;
+    if (tmp>0)
+        return 0;
+    else
+        return 1;
+}
+
+inline uint8_t vcapLoopBack(){
+    return GPIO_READ_PIN(CONFIG_VCAP_LOOPBACK_GPIO_BASE, 0x1<<CONFIG_VCAP_LOOPBACK_GPIO_PIN)>>CONFIG_VCAP_LOOPBACK_GPIO_PIN;
+}
+#endif
 
 inline void meterSenseConfig(uint8_t type, uint8_t en){
 	if (type==VOLTAGE){
@@ -160,6 +179,14 @@ inline void meterVoltageComparator(uint8_t en){
 	}
 }
 
+#ifndef VERSION9
+inline void meterMUXConfig(uint8_t en){
+	if (en==SENSE_ENABLE)
+		GPIO_SET_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_EN_GPIO_PIN);
+	else
+		GPIO_CLR_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_EN_GPIO_PIN);
+}
+
 inline uint8_t getINAIDX(){
 	uint8_t mux_a0_sel = GPIO_READ_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A0_GPIO_PIN)>>MUX_A0_GPIO_PIN;
 	uint8_t mux_a1_sel = GPIO_READ_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A1_GPIO_PIN)>>MUX_A1_GPIO_PIN;
@@ -180,7 +207,13 @@ void decreaseINAGain(){
 	}
 }
 
+inline uint8_t getINAGain(){
+	return inaGainArr[getINAIDX()];
+}
+#endif
+
 void setINAGain(uint8_t gain){
+    #ifndef VERSION9 
 	switch (gain){
 		case 1: // Select S1
 			GPIO_CLR_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A0_GPIO_PIN);
@@ -201,11 +234,57 @@ void setINAGain(uint8_t gain){
 		default:
 		break;
 	}
+    #else
+    // AD5272, 1024 tabs
+    #ifdef AD5272
+    switch (gain){
+        case 2:
+            ad5274_rdac_write(1023);
+        break;
+
+        case 3:
+            ad5274_rdac_write(512);
+        break;
+        
+        case 5:
+            ad5274_rdac_write(256);
+        break;
+
+        case 9:
+            ad5274_rdac_write(128);
+        break;
+
+        case 17:
+            ad5274_rdac_write(64);
+        break;
+    }
+    // AD5274, 256 tabs
+    #else
+    switch (gain){
+        case 2:
+            ad5274_rdac_write(255);
+        break;
+
+        case 3:
+            ad5274_rdac_write(128);
+        break;
+        
+        case 5:
+            ad5274_rdac_write(64);
+        break;
+
+        case 9:
+            ad5274_rdac_write(32);
+        break;
+
+        case 17:
+            ad5274_rdac_write(16);
+        break;
+    }
+    #endif
+    #endif
 }
 
-inline uint8_t getINAGain(){
-	return inaGainArr[getINAIDX()];
-}
 
 void disableSPI(){
 	GPIO_SOFTWARE_CONTROL(GPIO_PORT_TO_BASE(SPI_CLK_PORT), 0x1<<SPI_CLK_PIN);
@@ -225,6 +304,7 @@ void reenableSPI(){
 	GPIO_PERIPHERAL_CONTROL(GPIO_PORT_TO_BASE(SPI_MISO_PORT), 0x1<<SPI_MISO_PIN);
 }
 
+
 inline uint8_t externalVoltSel(){
 	return GPIO_READ_PIN(EXT_VOLT_IN_SEL_GPIO_BASE, 0x1<<EXT_VOLT_IN_SEL_GPIO_PIN)>>EXT_VOLT_IN_SEL_GPIO_PIN;
 }
@@ -236,7 +316,17 @@ inline uint8_t isButtonPressed(){
 		return 1;
 }
 
+#ifdef VERSION9
+inline void batteryPackVoltageEn(uint8_t en){
+    if (en==SENSE_ENABLE)
+        GPIO_SET_PIN(CONFIG_PWR_SW_GPIO_BASE , 0x1<<CONFIG_PWR_SW_GPIO_PIN);
+    else
+        GPIO_CLR_PIN(CONFIG_PWR_SW_GPIO_BASE , 0x1<<CONFIG_PWR_SW_GPIO_PIN);
+}
+#endif
+
 uint8_t batteryPackIsAttached(){
+    #ifndef VERSION9
 	// set input, disable internal pull-up
 	// If external battery pack is attached, I2C should be hold high
 	GPIO_SET_INPUT(I2C_SCL_GPIO_BASE, 0x1<<I2C_SCL_GPIO_PIN);
@@ -256,7 +346,17 @@ uint8_t batteryPackIsAttached(){
 	GPIO_SET_OUTPUT(I2C_SCL_GPIO_BASE, 0x1<<I2C_SCL_GPIO_PIN);
 	GPIO_CLR_PIN(I2C_SCL_GPIO_BASE, 0x1<<I2C_SCL_GPIO_PIN);
 	return 0;
-
+    #else
+    batteryPackVoltageEn(SENSE_ENABLE);
+	// enable pull down resistor for 10 us to discharge any chages on the pin
+	ioc_set_over(CONFIG_PWR_LOOPBAK_GPIO_NUM, CONFIG_PWR_LOOPBAK_GPIO_PIN, IOC_OVERRIDE_PDE);
+	clock_delay_usec(10);
+	// There is a 100k ohm resistor feedback, must disable pull down resistor (20k ohm).
+	ioc_set_over(CONFIG_PWR_LOOPBAK_GPIO_NUM, CONFIG_PWR_LOOPBAK_GPIO_PIN, IOC_OVERRIDE_DIS);
+	uint8_t tmp = GPIO_READ_PIN(CONFIG_PWR_LOOPBAK_GPIO_BASE, 0x1<<CONFIG_PWR_LOOPBAK_GPIO_PIN)>>CONFIG_PWR_LOOPBAK_GPIO_PIN;
+    batteryPackVoltageEn(SENSE_DISABLE);
+    return tmp;
+    #endif
 }
 
 void batteryPackInit(){
