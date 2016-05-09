@@ -1,4 +1,4 @@
-# enharvest platform makefile
+# triumvi platform makefile
 
 ifndef CONTIKI
   $(error CONTIKI not defined! You must specify where CONTIKI resides!)
@@ -21,7 +21,7 @@ TARGET_STARTFILES = ${addprefix $(OBJECTDIR)/,${call oname, $(TARGET_START_SOURC
 
 CONTIKI_SOURCEFILES += $(CONTIKI_TARGET_SOURCEFILES)
 
-CLEAN += *.enharvest
+CLEAN += *.triumvi
 
 ### Unless the example dictates otherwise, build with code size optimisations
 ifndef SMALL

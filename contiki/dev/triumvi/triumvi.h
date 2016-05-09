@@ -18,15 +18,10 @@
 #define SENSE_ENABLE 0x1
 #define SENSE_DISABLE 0x0
 
-#define MAX_INA_GAIN_IDX 3
-#define MAX_INA_GAIN 10
-#define MIN_INA_GAIN 1
-
 #define BATTERY_PACK_LED_RED 0x08
 #define BATTERY_PACK_LED_GREEN 0x04
 #define BATTERY_PACK_LED_BLUE 0x02
 
-static const uint8_t inaGainArr[4] = {1, 2, 5, 10};
 
 typedef struct {
 	uint16_t year;
@@ -47,14 +42,42 @@ void triumviLEDON();
 void triumviLEDOFF();
 void triumviLEDToggle();
 
-void meterMUXConfig(uint8_t en);
+#ifdef VERSION9
+// Enable/Disable LDO on Sensing board
+inline void meterSenseVREn(uint8_t en);
+
+// Dessert READYn signal
+inline void unitReady();
+
+// Return 1 if all units in the chain are ready, 0 otherwise
+uint8_t allUnitsReady();
+
+// Return 1 if vcap is looping back, 0 otherwise
+inline uint8_t vcapLoopBack();
+#endif
+
+// Enable/Disable Voltage/Current Sensing
 void meterSenseConfig(uint8_t type, uint8_t en);
+
+// Enable comparater interrupt
 void meterVoltageComparator(uint8_t en);
 
-void setINAGain(uint8_t gain);
+#ifndef VERSION9
+#define MAX_INA_GAIN_IDX 3
+#define MAX_INA_GAIN 10
+#define MIN_INA_GAIN 1
+void meterMUXConfig(uint8_t en);
+static const uint8_t inaGainArr[4] = {1, 2, 5, 10};
 uint8_t getINAGain();
 void increaseINAGain();
 void decreaseINAGain();
+#else
+#define MAX_INA_GAIN_IDX 5
+#define MIN_INA_GAIN_IDX 1
+static const uint8_t inaGainArr[6] = {1, 2, 3, 5, 9, 17};
+#endif
+void setINAGain(uint8_t gain);
+
 
 void disableSPI();
 void reenableSPI();
@@ -64,6 +87,9 @@ uint8_t externalVoltSel();
 uint8_t isButtonPressed();
 
 // Battery Pack functions
+#ifdef VERSION9
+inline void batteryPackVoltageEn(uint8_t en);
+#endif
 uint8_t batteryPackIsAttached();
 uint8_t batteryPackIsUSBAttached();
 void batteryPackInit();

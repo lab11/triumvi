@@ -2,9 +2,6 @@
 #ifndef _AD5274_H_
 #define _AD5274_H_
 
-// Define this if using AD5272
-#define AD5272
-
 // PIN ADDR
 // GND --> 0x2f
 // VDD --> 0x2c
@@ -40,6 +37,8 @@ uint16_t ad5274_rdac_read();
 void ad5274_shutdown(uint8_t shdn);
 
 void ad5274_nop();
+
+void ad5274_software_reset();
 
 // store RDAC setting to the latest TP location
 void ad5274_rdac_store();

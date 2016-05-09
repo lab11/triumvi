@@ -39,9 +39,12 @@ uint8_t rv3049_binary_to_bcd (uint8_t binary) {
 void
 rv3049_init()
 {
-  /* Set the HOLD_N and WP_N pins to outputs and high */
+  
+  // Triumvi V9 doesn't connect to this pin
+  #ifndef VERSION9
   GPIO_SET_INPUT(GPIO_PORT_TO_BASE(RV3049_INT_N_PORT_NUM),
                  GPIO_PIN_MASK(RV3049_INT_N_PIN));
+  #endif
 
   spi_cs_init(RV3049_CS_PORT_NUM, RV3049_CS_PIN);
   SPI_CS_CLR(RV3049_CS_PORT_NUM, RV3049_CS_PIN);

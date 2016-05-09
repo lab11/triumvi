@@ -4,12 +4,17 @@
 #include "ad5274.h"
 
 void ad5274_init(){
-	i2c_init(I2C_SDA_GPIO_NUM, I2C_SDA_GPIO_PIN, 
-	  I2C_SCL_GPIO_NUM, I2C_SCL_GPIO_PIN,I2C_SCL_NORMAL_BUS_SPEED); 
+	i2c_init(AD527X_SDA_GPIO_NUM, AD527X_SDA_GPIO_PIN, 
+	  AD527X_SCL_GPIO_NUM, AD527X_SCL_GPIO_PIN, I2C_SCL_NORMAL_BUS_SPEED); 
 }
 
 void ad5274_nop(){
     uint8_t i2cOutGoingData[2] = {AD5274_CMD_NOP<<2, 0x00};
+    i2c_burst_send(AD5274_CHIP_ADDR, i2cOutGoingData, 2);
+}
+
+void ad5274_software_reset(){
+    uint8_t i2cOutGoingData[2] = {AD5274_CMD_RDAC_RST<<2, 0x00};
     i2c_burst_send(AD5274_CHIP_ADDR, i2cOutGoingData, 2);
 }
 
