@@ -14,4 +14,4 @@ for a link to the best compiler to use for the CC2538
 Main Application
 ----------------
 
-Currently, `wirelessMeteringV8` is the primary application.
+Currently, `triumviV9` is the primary application.
