@@ -8,6 +8,7 @@
 #include "rv3049.h"
 #include "sx1509b.h"
 #include "triumvi.h"
+#include "ad5274.h"
 
 
 uint16_t getReadWritePtr(uint8_t ptrType){
@@ -235,8 +236,8 @@ void setINAGain(uint8_t gain){
 		break;
 	}
     #else
-    // AD5272, 1024 tabs
     #ifdef AD5272
+    // AD5272, 1024 tabs
     switch (gain){
         case 2:
             ad5274_rdac_write(1023);
@@ -256,6 +257,9 @@ void setINAGain(uint8_t gain){
 
         case 17:
             ad5274_rdac_write(64);
+        break;
+
+        default:
         break;
     }
     // AD5274, 256 tabs

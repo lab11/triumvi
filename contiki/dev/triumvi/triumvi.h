@@ -71,10 +71,6 @@ static const uint8_t inaGainArr[4] = {1, 2, 5, 10};
 uint8_t getINAGain();
 void increaseINAGain();
 void decreaseINAGain();
-#else
-#define MAX_INA_GAIN_IDX 5
-#define MIN_INA_GAIN_IDX 1
-static const uint8_t inaGainArr[6] = {1, 2, 3, 5, 9, 17};
 #endif
 void setINAGain(uint8_t gain);
 
