@@ -131,9 +131,9 @@ inline void triumviLEDToggle(){
 inline void meterSenseVREn(uint8_t en){
     // enable voltage regulator
     if (en==SENSE_ENABLE)
-        GPIO_SET_PIN(SENSE_VR_EN_GPIO_BASE , 0x1<<SENSE_VR_EN_GPIO_PIN );
+        GPIO_SET_PIN(SENSE_VR_EN_GPIO_BASE, 0x1<<SENSE_VR_EN_GPIO_PIN );
     else
-        GPIO_CLR_PIN(SENSE_VR_EN_GPIO_BASE , 0x1<<SENSE_VR_EN_GPIO_PIN );
+        GPIO_CLR_PIN(SENSE_VR_EN_GPIO_BASE, 0x1<<SENSE_VR_EN_GPIO_PIN );
 }
 
 inline void unitReady(){
@@ -351,22 +351,26 @@ uint8_t batteryPackIsAttached(){
 	GPIO_CLR_PIN(I2C_SCL_GPIO_BASE, 0x1<<I2C_SCL_GPIO_PIN);
 	return 0;
     #else
-    batteryPackVoltageEn(SENSE_ENABLE);
-	// enable pull down resistor for 10 us to discharge any chages on the pin
-	ioc_set_over(CONFIG_PWR_LOOPBAK_GPIO_NUM, CONFIG_PWR_LOOPBAK_GPIO_PIN, IOC_OVERRIDE_PDE);
-	clock_delay_usec(10);
+	GPIO_SET_INPUT(CONFIG_PWR_LOOPBAK_GPIO_BASE, 0x1<<CONFIG_PWR_LOOPBAK_GPIO_PIN);
 	// There is a 100k ohm resistor feedback, must disable pull down resistor (20k ohm).
 	ioc_set_over(CONFIG_PWR_LOOPBAK_GPIO_NUM, CONFIG_PWR_LOOPBAK_GPIO_PIN, IOC_OVERRIDE_DIS);
-	uint8_t tmp = GPIO_READ_PIN(CONFIG_PWR_LOOPBAK_GPIO_BASE, 0x1<<CONFIG_PWR_LOOPBAK_GPIO_PIN)>>CONFIG_PWR_LOOPBAK_GPIO_PIN;
+    batteryPackVoltageEn(SENSE_ENABLE);
+	clock_delay_usec(10);
+	uint8_t tmp = GPIO_READ_PIN(CONFIG_PWR_LOOPBAK_GPIO_BASE, 0x1<<CONFIG_PWR_LOOPBAK_GPIO_PIN);
     batteryPackVoltageEn(SENSE_DISABLE);
-    return tmp;
+    if (tmp > 0)
+        return 1;
+    else
+        return 0;
     #endif
 }
 
 void batteryPackInit(){
 	// I2C init
 	sx1509b_init();
+    #ifndef VERSION9
 	sx1509b_software_reset();
+    #endif
 	// Port A pin 0 is connected to VUSB directly
 	sx1509b_high_voltage_input_enable(SX1509B_PORTA, 0x1, SX1509B_HIGH_INPUT_ENABLE);
 	// Setup RGB led IOs
@@ -392,7 +396,11 @@ uint8_t batteryPackReadPanelID(){
 uint8_t batteryPackReadCircuitID(){
 	sx1509b_gpio_pullup_cfg(SX1509B_PORTB, 0xff, SX1509B_OUTPUT_RESISTOR_ENABLE);
 	uint8_t portBReg = sx1509b_gpio_read_port(SX1509B_PORTB);
+    #ifdef VERSION9
+	uint8_t circuitID = (15 - (portBReg>>4)) + (15 - (portBReg&0x0f))*10;
+    #else
 	uint8_t circuitID = (15 - (portBReg&0x0f)) + (15 - (portBReg>>4))*10;
+    #endif
 	sx1509b_gpio_pullup_cfg(SX1509B_PORTB, 0xff, SX1509B_OUTPUT_RESISTOR_DISABLE);
 	return circuitID;
 }

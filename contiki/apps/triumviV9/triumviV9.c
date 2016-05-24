@@ -40,7 +40,7 @@ volatile uint8_t backOffTime;
 volatile uint8_t backOffHistory;
 volatile uint8_t inaGainIdx;
 
-#define MAX_INA_GAIN_IDX 5
+#define MAX_INA_GAIN_IDX 4
 #define MIN_INA_GAIN_IDX 1
 const uint8_t inaGainArr[6] = {1, 2, 3, 5, 9, 17};
 
@@ -172,7 +172,7 @@ PROCESS_THREAD(triumviProcess, ev, data)
     disableAll();
 
     unitReady();
-    rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.4, 1, &rtimerEvent, NULL); //test
+    rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.1, 1, &rtimerEvent, NULL);
     myState = init;
 
     while(1){
@@ -294,11 +294,10 @@ PROCESS_THREAD(triumviProcess, ev, data)
                         }
                         rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.1, 1, &rtimerEvent, NULL);
                     }
-                    // improper gain setting, try after 4 s
                     else{
-                        rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*4, 1, &rtimerEvent, NULL);
+                        rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.1, 1, &rtimerEvent, NULL);
                         batteryPackVoltageEn(SENSE_DISABLE);
-                        myState = init;
+                        myState = triumviLEDBlink;
                     }
                 }
             break;
@@ -604,7 +603,6 @@ int sampleAndCalculate(uint8_t triumviStatusReg, int* avgPower, uint16_t* curren
 	uint8_t numOfBitShift = 4; // log2(numOfCycles)
 	uint16_t tempADCReading;
 	if (triumviStatusReg & EXTERNALVOLT_STATUSREG){
-		//GPIO_SET_PIN(I2C_SDA_GPIO_BASE, 1<<I2C_SDA_GPIO_PIN); // Test timing
 		#ifdef CALIBRATE
 		numOfCycles = 1;
 		numOfBitShift = 0; // log2(numOfCycles)
@@ -623,7 +621,6 @@ int sampleAndCalculate(uint8_t triumviStatusReg, int* avgPower, uint16_t* curren
 				tempPower2 += tempPower;
 		}
 		*avgPower = tempPower2>>numOfBitShift;
-		//GPIO_CLR_PIN(I2C_SDA_GPIO_BASE, 1<<I2C_SDA_GPIO_PIN); // Test timing
 		return 1;
 	}
 	else{

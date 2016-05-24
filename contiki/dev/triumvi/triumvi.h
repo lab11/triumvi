@@ -57,7 +57,7 @@ inline uint8_t vcapLoopBack();
 #endif
 
 // Enable/Disable Voltage/Current Sensing
-void meterSenseConfig(uint8_t type, uint8_t en);
+inline void meterSenseConfig(uint8_t type, uint8_t en);
 
 // Enable comparater interrupt
 void meterVoltageComparator(uint8_t en);
