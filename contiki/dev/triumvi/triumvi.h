@@ -44,20 +44,20 @@ void triumviLEDToggle();
 
 #ifdef VERSION9
 // Enable/Disable LDO on Sensing board
-inline void meterSenseVREn(uint8_t en);
+void meterSenseVREn(uint8_t en);
 
 // Dessert READYn signal
-inline void unitReady();
+void unitReady();
 
 // Return 1 if all units in the chain are ready, 0 otherwise
 uint8_t allUnitsReady();
 
 // Return 1 if vcap is looping back, 0 otherwise
-inline uint8_t vcapLoopBack();
+uint8_t vcapLoopBack();
 #endif
 
 // Enable/Disable Voltage/Current Sensing
-inline void meterSenseConfig(uint8_t type, uint8_t en);
+void meterSenseConfig(uint8_t type, uint8_t en);
 
 // Enable comparater interrupt
 void meterVoltageComparator(uint8_t en);
@@ -87,7 +87,7 @@ uint8_t isButtonPressed();
 
 // Battery Pack functions
 #ifdef VERSION9
-inline void batteryPackVoltageEn(uint8_t en);
+void batteryPackVoltageEn(uint8_t en);
 #endif
 uint8_t batteryPackIsAttached();
 uint8_t batteryPackIsUSBAttached();

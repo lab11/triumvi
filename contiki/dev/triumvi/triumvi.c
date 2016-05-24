@@ -128,7 +128,7 @@ inline void triumviLEDToggle(){
 }
 
 #ifdef VERSION9
-inline void meterSenseVREn(uint8_t en){
+void meterSenseVREn(uint8_t en){
     // enable voltage regulator
     if (en==SENSE_ENABLE)
         GPIO_SET_PIN(SENSE_VR_EN_GPIO_BASE, 0x1<<SENSE_VR_EN_GPIO_PIN );
@@ -136,7 +136,7 @@ inline void meterSenseVREn(uint8_t en){
         GPIO_CLR_PIN(SENSE_VR_EN_GPIO_BASE, 0x1<<SENSE_VR_EN_GPIO_PIN );
 }
 
-inline void unitReady(){
+void unitReady(){
     GPIO_CLR_PIN(TRIUMVI_READYn_OUT_GPIO_BASE, 0x1<<TRIUMVI_READYn_OUT_GPIO_PIN);
 }
 
@@ -148,12 +148,12 @@ uint8_t allUnitsReady(){
         return 1;
 }
 
-inline uint8_t vcapLoopBack(){
+uint8_t vcapLoopBack(){
     return GPIO_READ_PIN(CONFIG_VCAP_LOOPBACK_GPIO_BASE, 0x1<<CONFIG_VCAP_LOOPBACK_GPIO_PIN)>>CONFIG_VCAP_LOOPBACK_GPIO_PIN;
 }
 #endif
 
-inline void meterSenseConfig(uint8_t type, uint8_t en){
+void meterSenseConfig(uint8_t type, uint8_t en){
 	if (type==VOLTAGE){
 		if (en==SENSE_ENABLE)
 			GPIO_SET_PIN(V_MEAS_EN_GPIO_BASE, 0x1<<V_MEAS_EN_GPIO_PIN);
@@ -321,7 +321,7 @@ inline uint8_t isButtonPressed(){
 }
 
 #ifdef VERSION9
-inline void batteryPackVoltageEn(uint8_t en){
+void batteryPackVoltageEn(uint8_t en){
     if (en==SENSE_ENABLE)
         GPIO_SET_PIN(CONFIG_PWR_SW_GPIO_BASE , 0x1<<CONFIG_PWR_SW_GPIO_PIN);
     else
