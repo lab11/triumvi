@@ -78,6 +78,9 @@ void setINAGain(uint8_t gain);
 void disableSPI();
 void reenableSPI();
 
+// unregister i2c gpio
+void disableI2C();
+
 
 uint8_t externalVoltSel();
 uint8_t isButtonPressed();

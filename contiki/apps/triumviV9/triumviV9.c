@@ -286,7 +286,10 @@ PROCESS_THREAD(triumviProcess, ev, data)
                             myState = batteryPackLEDBlink;
                         }
                         else{
-                            batteryPackVoltageEn(SENSE_DISABLE);
+                            if (triumviStatusReg & BATTERYPACK_STATUSREG){
+                                batteryPackVoltageEn(SENSE_DISABLE);
+                                disableI2C();
+                            }
                             #ifndef CALIBRATE
                             triumviLEDON();
                             #endif
@@ -295,8 +298,11 @@ PROCESS_THREAD(triumviProcess, ev, data)
                         rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.1, 1, &rtimerEvent, NULL);
                     }
                     else{
+                        if (triumviStatusReg & BATTERYPACK_STATUSREG){
+                            batteryPackVoltageEn(SENSE_DISABLE);
+                            disableI2C();
+                        }
                         rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.1, 1, &rtimerEvent, NULL);
-                        batteryPackVoltageEn(SENSE_DISABLE);
                         myState = triumviLEDBlink;
                     }
                 }
