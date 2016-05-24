@@ -17,7 +17,7 @@ Compile
 
 You must point to the correct calibration file:
 
-    make calFile=calibrate/V8node12SineTable.txt
+    make calFile=calibrate/V8node12SineTable.txt threephaseID=1
     
 To flash the device:
 
