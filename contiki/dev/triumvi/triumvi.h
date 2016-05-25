@@ -44,16 +44,16 @@ void triumviLEDToggle();
 
 #ifdef VERSION9
 // Enable/Disable LDO on Sensing board
-inline void meterSenseVREn(uint8_t en);
+void meterSenseVREn(uint8_t en);
 
 // Dessert READYn signal
-inline void unitReady();
+void unitReady();
 
 // Return 1 if all units in the chain are ready, 0 otherwise
 uint8_t allUnitsReady();
 
 // Return 1 if vcap is looping back, 0 otherwise
-inline uint8_t vcapLoopBack();
+uint8_t vcapLoopBack();
 #endif
 
 // Enable/Disable Voltage/Current Sensing
@@ -71,10 +71,6 @@ static const uint8_t inaGainArr[4] = {1, 2, 5, 10};
 uint8_t getINAGain();
 void increaseINAGain();
 void decreaseINAGain();
-#else
-#define MAX_INA_GAIN_IDX 5
-#define MIN_INA_GAIN_IDX 1
-static const uint8_t inaGainArr[6] = {1, 2, 3, 5, 9, 17};
 #endif
 void setINAGain(uint8_t gain);
 
@@ -82,13 +78,16 @@ void setINAGain(uint8_t gain);
 void disableSPI();
 void reenableSPI();
 
+// unregister i2c gpio
+void disableI2C();
+
 
 uint8_t externalVoltSel();
 uint8_t isButtonPressed();
 
 // Battery Pack functions
 #ifdef VERSION9
-inline void batteryPackVoltageEn(uint8_t en);
+void batteryPackVoltageEn(uint8_t en);
 #endif
 uint8_t batteryPackIsAttached();
 uint8_t batteryPackIsUSBAttached();

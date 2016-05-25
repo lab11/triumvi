@@ -8,6 +8,7 @@
 #include "rv3049.h"
 #include "sx1509b.h"
 #include "triumvi.h"
+#include "ad5274.h"
 
 
 uint16_t getReadWritePtr(uint8_t ptrType){
@@ -127,15 +128,15 @@ inline void triumviLEDToggle(){
 }
 
 #ifdef VERSION9
-inline void meterSenseVREn(uint8_t en){
+void meterSenseVREn(uint8_t en){
     // enable voltage regulator
     if (en==SENSE_ENABLE)
-        GPIO_SET_PIN(SENSE_VR_EN_GPIO_BASE , 0x1<<SENSE_VR_EN_GPIO_PIN );
+        GPIO_SET_PIN(SENSE_VR_EN_GPIO_BASE, 0x1<<SENSE_VR_EN_GPIO_PIN );
     else
-        GPIO_CLR_PIN(SENSE_VR_EN_GPIO_BASE , 0x1<<SENSE_VR_EN_GPIO_PIN );
+        GPIO_CLR_PIN(SENSE_VR_EN_GPIO_BASE, 0x1<<SENSE_VR_EN_GPIO_PIN );
 }
 
-inline void unitReady(){
+void unitReady(){
     GPIO_CLR_PIN(TRIUMVI_READYn_OUT_GPIO_BASE, 0x1<<TRIUMVI_READYn_OUT_GPIO_PIN);
 }
 
@@ -147,12 +148,12 @@ uint8_t allUnitsReady(){
         return 1;
 }
 
-inline uint8_t vcapLoopBack(){
+uint8_t vcapLoopBack(){
     return GPIO_READ_PIN(CONFIG_VCAP_LOOPBACK_GPIO_BASE, 0x1<<CONFIG_VCAP_LOOPBACK_GPIO_PIN)>>CONFIG_VCAP_LOOPBACK_GPIO_PIN;
 }
 #endif
 
-inline void meterSenseConfig(uint8_t type, uint8_t en){
+void meterSenseConfig(uint8_t type, uint8_t en){
 	if (type==VOLTAGE){
 		if (en==SENSE_ENABLE)
 			GPIO_SET_PIN(V_MEAS_EN_GPIO_BASE, 0x1<<V_MEAS_EN_GPIO_PIN);
@@ -235,8 +236,8 @@ void setINAGain(uint8_t gain){
 		break;
 	}
     #else
-    // AD5272, 1024 tabs
     #ifdef AD5272
+    // AD5272, 1024 tabs
     switch (gain){
         case 2:
             ad5274_rdac_write(1023);
@@ -256,6 +257,9 @@ void setINAGain(uint8_t gain){
 
         case 17:
             ad5274_rdac_write(64);
+        break;
+
+        default:
         break;
     }
     // AD5274, 256 tabs
@@ -317,7 +321,7 @@ inline uint8_t isButtonPressed(){
 }
 
 #ifdef VERSION9
-inline void batteryPackVoltageEn(uint8_t en){
+void batteryPackVoltageEn(uint8_t en){
     if (en==SENSE_ENABLE)
         GPIO_SET_PIN(CONFIG_PWR_SW_GPIO_BASE , 0x1<<CONFIG_PWR_SW_GPIO_PIN);
     else
@@ -347,22 +351,26 @@ uint8_t batteryPackIsAttached(){
 	GPIO_CLR_PIN(I2C_SCL_GPIO_BASE, 0x1<<I2C_SCL_GPIO_PIN);
 	return 0;
     #else
-    batteryPackVoltageEn(SENSE_ENABLE);
-	// enable pull down resistor for 10 us to discharge any chages on the pin
-	ioc_set_over(CONFIG_PWR_LOOPBAK_GPIO_NUM, CONFIG_PWR_LOOPBAK_GPIO_PIN, IOC_OVERRIDE_PDE);
-	clock_delay_usec(10);
+	GPIO_SET_INPUT(CONFIG_PWR_LOOPBAK_GPIO_BASE, 0x1<<CONFIG_PWR_LOOPBAK_GPIO_PIN);
 	// There is a 100k ohm resistor feedback, must disable pull down resistor (20k ohm).
 	ioc_set_over(CONFIG_PWR_LOOPBAK_GPIO_NUM, CONFIG_PWR_LOOPBAK_GPIO_PIN, IOC_OVERRIDE_DIS);
-	uint8_t tmp = GPIO_READ_PIN(CONFIG_PWR_LOOPBAK_GPIO_BASE, 0x1<<CONFIG_PWR_LOOPBAK_GPIO_PIN)>>CONFIG_PWR_LOOPBAK_GPIO_PIN;
+    batteryPackVoltageEn(SENSE_ENABLE);
+	clock_delay_usec(10);
+	uint8_t tmp = GPIO_READ_PIN(CONFIG_PWR_LOOPBAK_GPIO_BASE, 0x1<<CONFIG_PWR_LOOPBAK_GPIO_PIN);
     batteryPackVoltageEn(SENSE_DISABLE);
-    return tmp;
+    if (tmp > 0)
+        return 1;
+    else
+        return 0;
     #endif
 }
 
 void batteryPackInit(){
 	// I2C init
 	sx1509b_init();
+    #ifndef VERSION9
 	sx1509b_software_reset();
+    #endif
 	// Port A pin 0 is connected to VUSB directly
 	sx1509b_high_voltage_input_enable(SX1509B_PORTA, 0x1, SX1509B_HIGH_INPUT_ENABLE);
 	// Setup RGB led IOs
@@ -377,6 +385,18 @@ void batteryPackInit(){
 	sx1509b_gpio_pulldown_cfg(SX1509B_PORTB, 0xff, SX1509B_OUTPUT_RESISTOR_DISABLE);
 }
 
+// unregister i2c gpio
+void disableI2C(){
+    GPIO_SOFTWARE_CONTROL(I2C_SDA_GPIO_BASE, 0x1<<I2C_SDA_GPIO_PIN);
+    GPIO_SOFTWARE_CONTROL(I2C_SCL_GPIO_BASE, 0x1<<I2C_SCL_GPIO_PIN);
+    GPIO_SET_OUTPUT(I2C_SDA_GPIO_BASE, 0x1<<I2C_SDA_GPIO_PIN);
+    GPIO_SET_OUTPUT(I2C_SCL_GPIO_BASE, 0x1<<I2C_SCL_GPIO_PIN);
+    GPIO_SET_PIN(I2C_SDA_GPIO_BASE, 0x1<<I2C_SDA_GPIO_PIN);
+    GPIO_SET_PIN(I2C_SCL_GPIO_BASE, 0x1<<I2C_SCL_GPIO_PIN);
+    ioc_set_sel(I2C_SDA_GPIO_NUM, I2C_SDA_GPIO_PIN, 0x0);
+    ioc_set_sel(I2C_SCL_GPIO_NUM, I2C_SCL_GPIO_PIN, 0x0);
+}
+
 uint8_t batteryPackReadPanelID(){
 	// enable pull-up resistor before read IO state
 	sx1509b_gpio_pullup_cfg(SX1509B_PORTA, 0xf0, SX1509B_OUTPUT_RESISTOR_ENABLE);
@@ -388,7 +408,11 @@ uint8_t batteryPackReadPanelID(){
 uint8_t batteryPackReadCircuitID(){
 	sx1509b_gpio_pullup_cfg(SX1509B_PORTB, 0xff, SX1509B_OUTPUT_RESISTOR_ENABLE);
 	uint8_t portBReg = sx1509b_gpio_read_port(SX1509B_PORTB);
+    #ifdef VERSION9
+	uint8_t circuitID = (15 - (portBReg>>4)) + (15 - (portBReg&0x0f))*10;
+    #else
 	uint8_t circuitID = (15 - (portBReg&0x0f)) + (15 - (portBReg>>4))*10;
+    #endif
 	sx1509b_gpio_pullup_cfg(SX1509B_PORTB, 0xff, SX1509B_OUTPUT_RESISTOR_DISABLE);
 	return circuitID;
 }

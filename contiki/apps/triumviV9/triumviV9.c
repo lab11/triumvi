@@ -39,6 +39,11 @@ volatile uint8_t referenceInt;
 volatile uint8_t backOffTime;
 volatile uint8_t backOffHistory;
 volatile uint8_t inaGainIdx;
+
+#define MAX_INA_GAIN_IDX 4
+#define MIN_INA_GAIN_IDX 1
+const uint8_t inaGainArr[6] = {1, 2, 3, 5, 9, 17};
+
 rv3049_time_t rtctime;
 #ifdef CALIBRATE
 static uint8_t calibrate_cnt = 0;
@@ -69,7 +74,12 @@ Ip = 48.34468 / G(INA) unit is mA
 */
 
 #define I_TRANSFORM 48.34468
-#define P_TRANSFORM 0.402872
+#define I_TRANSFORM_WO_CT 0.016115
+
+#define POLYFIT_NEG_COEF1 3122
+#define POLYFIT_NEG_COEF0 (-27)
+#define POLYFIT_POS_COEF1 3032
+#define POLYFIT_POS_COEF0 74
 
 #define FIRSTSAMPLE_STATUSREG  0x0100
 #define EXTERNALVOLT_STATUSREG 0x0080
@@ -115,6 +125,7 @@ typedef enum state{
 	waitingVoltageStable,
 	waitingComparatorStable,
 	batteryPackLEDBlink,
+    triumviLEDBlink
 } state_t;
 
 volatile static state_t myState;
@@ -161,7 +172,7 @@ PROCESS_THREAD(triumviProcess, ev, data)
     disableAll();
 
     unitReady();
-    rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.4, 1, &rtimerEvent, NULL);
+    rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.1, 1, &rtimerEvent, NULL);
     myState = init;
 
     while(1){
@@ -171,7 +182,6 @@ PROCESS_THREAD(triumviProcess, ev, data)
             case init:
                 if (rTimerExpired==1){
                     rTimerExpired = 0;
-                    triumviLEDOFF();
                 }
                 if (allUnitsReady()){
                     meterSenseVREn(SENSE_ENABLE);
@@ -229,9 +239,10 @@ PROCESS_THREAD(triumviProcess, ev, data)
 
                     // Enable digital pot
                     ad5274_init();
+                    ad5274_ctrl_reg_write(AD5274_REG_RDAC_RP);
                     setINAGain(inaGainArr[inaGainIdx]);
 
-                    // Enable comparator interrupt
+                    //// Enable comparator interrupt
                     GPIO_DETECT_RISING(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
                     meterVoltageComparator(SENSE_ENABLE);
                     ungate_gpt(GPTIMER_1);
@@ -240,7 +251,13 @@ PROCESS_THREAD(triumviProcess, ev, data)
                     // Interrupted
                     while (referenceInt==0){}
 
+                    // voltage sensing and comparator interrupt can be disabled first (disableALL())
                     powerValid = sampleAndCalculate(triumviStatusReg, &avgPower, &currentRef, &voltRef);
+
+                    // current sensing can be disabled after adjusting the digital POT
+                    meterSenseConfig(CURRENT, SENSE_DISABLE);
+                    meterSenseVREn(SENSE_DISABLE);
+
                     sampleCount++;
                     referenceInt = 0;
 
@@ -267,20 +284,26 @@ PROCESS_THREAD(triumviProcess, ev, data)
                             batteryPackLEDDriverInit();
                             batteryPackLEDOn(BATTERY_PACK_LED_BLUE);
                             myState = batteryPackLEDBlink;
-                            rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.1, 1, &rtimerEvent, NULL);
                         }
                         else{
-                            batteryPackVoltageEn(SENSE_DISABLE);
+                            if (triumviStatusReg & BATTERYPACK_STATUSREG){
+                                batteryPackVoltageEn(SENSE_DISABLE);
+                                disableI2C();
+                            }
+                            #ifndef CALIBRATE
                             triumviLEDON();
-                            myState = init;
-                            rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*backOffTime, 1, &rtimerEvent, NULL);
+                            #endif
+                            myState = triumviLEDBlink;
                         }
+                        rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.1, 1, &rtimerEvent, NULL);
                     }
-                    // improper gain setting, try after 4 s
                     else{
-                        rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*4, 1, &rtimerEvent, NULL);
-                        batteryPackVoltageEn(SENSE_DISABLE);
-                        myState = init;
+                        if (triumviStatusReg & BATTERYPACK_STATUSREG){
+                            batteryPackVoltageEn(SENSE_DISABLE);
+                            disableI2C();
+                        }
+                        rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.1, 1, &rtimerEvent, NULL);
+                        myState = triumviLEDBlink;
                     }
                 }
             break;
@@ -293,6 +316,15 @@ PROCESS_THREAD(triumviProcess, ev, data)
                     batteryPackLEDDriverDisable();
                     rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*backOffTime, 1, &rtimerEvent, NULL);
                     batteryPackVoltageEn(SENSE_DISABLE);
+                    myState = init;
+                }
+            break;
+
+            case triumviLEDBlink:
+                if (rTimerExpired==1){
+                    rTimerExpired = 0;
+                    triumviLEDOFF();
+                    rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*backOffTime, 1, &rtimerEvent, NULL);
                     myState = init;
                 }
             break;
@@ -351,8 +383,6 @@ static void rtimerEvent(struct rtimer *t, void *ptr){
 
 void disableAll(){
 	REG(SYSTICK_STCTRL) |= SYSTICK_STCTRL_INTEN;
-    meterSenseVREn(SENSE_DISABLE);
-	meterSenseConfig(CURRENT, SENSE_DISABLE);
 	meterSenseConfig(VOLTAGE, SENSE_DISABLE);
 	meterVoltageComparator(SENSE_DISABLE);
 	gate_gpt(GPTIMER_1);
@@ -361,29 +391,35 @@ void disableAll(){
 void meterInit(){
 
     // GPIO default Input
-	// Set all un-used pins to output and clear output
-	#ifndef CALIBRATE
-    // Port A
-	GPIO_SET_OUTPUT(GPIO_A_BASE, 0x47);
-	GPIO_CLR_PIN(GPIO_A_BASE, 0x07);
+    // Set all un-used pins to output and clear output
+    #ifdef CALIBRATE
+    GPIO_SET_OUTPUT(GPIO_A_BASE, 0x40);
+    GPIO_CLR_PIN(GPIO_A_BASE, 0x00);
     GPIO_SET_PIN(TRIUMVI_READYn_OUT_GPIO_BASE, 0x1<<TRIUMVI_READYn_OUT_GPIO_PIN); // not ready yet
+    #else
+    // Port A
+    GPIO_SET_OUTPUT(GPIO_A_BASE, 0x47);
+    GPIO_CLR_PIN(GPIO_A_BASE, 0x07);
+    GPIO_SET_PIN(TRIUMVI_READYn_OUT_GPIO_BASE, 0x1<<TRIUMVI_READYn_OUT_GPIO_PIN); // not ready yet
+    #endif
 
     // Port B
-	GPIO_SET_OUTPUT(GPIO_B_BASE, 0x06);
-	GPIO_CLR_PIN(GPIO_B_BASE, 0x06);
+    GPIO_SET_OUTPUT(GPIO_B_BASE, 0x06);
+    GPIO_CLR_PIN(GPIO_B_BASE, 0x06);
 
     // Port C
-	GPIO_SET_OUTPUT(GPIO_C_BASE, 0xeb);
-	GPIO_CLR_PIN(GPIO_C_BASE, 0xeb);
+    GPIO_SET_OUTPUT(GPIO_C_BASE, 0xeb);
+    GPIO_CLR_PIN(GPIO_C_BASE, 0xeb);
 
     // Port D
-	GPIO_SET_OUTPUT(GPIO_D_BASE, 0x1f);
-	GPIO_SET_PIN(GPIO_D_BASE, 0x0f);
-	GPIO_CLR_PIN(GPIO_D_BASE, 0x10);
+    GPIO_SET_OUTPUT(GPIO_D_BASE, 0x1f);
+    GPIO_SET_PIN(GPIO_D_BASE, 0x0f);
+    GPIO_CLR_PIN(GPIO_D_BASE, 0x10);
+    #ifndef CALIBRATE
+    // disable all pull-up resistors
+    disable_all_ioc_override();
+    #endif
 
-	// disable all pull-up resistors
-	disable_all_ioc_override();
-	#endif
 
 	// ADC for current sense
 	adc_init();
@@ -507,16 +543,21 @@ int voltDataTransform(uint16_t voltReading, uint16_t voltReference){
 
 int currentDataTransform(int currentReading, uint8_t externalVolt){
     uint8_t inaGain = inaGainArr[inaGainIdx];
-	// 10-bit ADC
-	if (externalVolt){
-        float tmp = currentReading*I_TRANSFORM*2/inaGain;
+    float tmp;
+    // 10-bit ADC
+    if (externalVolt){
+        tmp = currentReading*I_TRANSFORM*2/inaGain;
         return (int)tmp;
-	}
-	// 11-Bit ADC
-	else{
-        float tmp = currentReading*I_TRANSFORM/inaGain;
+    }
+    // 11-Bit ADC
+    else{
+        if (currentReading < 0)
+            tmp = (currentReading*POLYFIT_NEG_COEF1 + POLYFIT_NEG_COEF0)*I_TRANSFORM_WO_CT/inaGain;
+        else
+            tmp = (currentReading*POLYFIT_POS_COEF1 + POLYFIT_POS_COEF0)*I_TRANSFORM_WO_CT/inaGain;
+        //float tmp = currentReading*I_TRANSFORM/inaGain;
         return (int)tmp;
-	}
+    }
 }
 
 void encryptAndTransmit(uint8_t triumviStatusReg, int avgPower, uint8_t* myNonce, uint32_t nonceCounter){
@@ -568,7 +609,6 @@ int sampleAndCalculate(uint8_t triumviStatusReg, int* avgPower, uint16_t* curren
 	uint8_t numOfBitShift = 4; // log2(numOfCycles)
 	uint16_t tempADCReading;
 	if (triumviStatusReg & EXTERNALVOLT_STATUSREG){
-		//GPIO_SET_PIN(I2C_SDA_GPIO_BASE, 1<<I2C_SDA_GPIO_PIN); // Test timing
 		#ifdef CALIBRATE
 		numOfCycles = 1;
 		numOfBitShift = 0; // log2(numOfCycles)
@@ -587,7 +627,6 @@ int sampleAndCalculate(uint8_t triumviStatusReg, int* avgPower, uint16_t* curren
 				tempPower2 += tempPower;
 		}
 		*avgPower = tempPower2>>numOfBitShift;
-		//GPIO_CLR_PIN(I2C_SDA_GPIO_BASE, 1<<I2C_SDA_GPIO_PIN); // Test timing
 		return 1;
 	}
 	else{
@@ -633,7 +672,7 @@ void printCalibrationValuse(uint8_t triumviStatusReg, uint16_t currentRef, uint1
 	if (triumviStatusReg & EXTERNALVOLT_STATUSREG){
 		for (i=0; i<BUF_SIZE2; i+=1){
 			printf("Current reading: %d (mA) Voltage Reading: %d (V)\r\n",
-			currentDataTransform(currentADCVal[i]-currentRef, inaGain, 0x1), voltDataTransform(voltADCVal[i+2], voltRef));
+			currentDataTransform(currentADCVal[i]-currentRef, 0x1), voltDataTransform(voltADCVal[i+2], voltRef));
 			//currentADCVal[i]-currentRef, voltDataTransform(voltADCVal[i], voltRef));
 		}
 		//printf("Calculated Power: %d\r\n", avgPower);
