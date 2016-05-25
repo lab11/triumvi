@@ -17,6 +17,7 @@
 #include "ioc.h"
 #include "nvic.h"
 #include "systick.h"
+#include "i2c.h"
 #include "cc2538-rf.h"
 #include "fm25v02.h"
 #include "triumvi.h"
@@ -257,6 +258,8 @@ PROCESS_THREAD(triumviProcess, ev, data)
                     // current sensing can be disabled after adjusting the digital POT
                     meterSenseConfig(CURRENT, SENSE_DISABLE);
                     meterSenseVREn(SENSE_DISABLE);
+                    i2c_disable(AD527X_SDA_GPIO_NUM, AD527X_SDA_GPIO_PIN, 
+                                AD527X_SCL_GPIO_NUM, AD527X_SCL_GPIO_PIN); 
 
                     sampleCount++;
                     referenceInt = 0;
@@ -273,23 +276,21 @@ PROCESS_THREAD(triumviProcess, ev, data)
                         // Battery pack attached, turn it on ans samples switches
                         if (triumviStatusReg & BATTERYPACK_STATUSREG){
                             batteryPackVoltageEn(SENSE_ENABLE);
-                            batteryPackInit();
+                            sx1509b_init();
+                            sx1509b_high_voltage_input_enable(SX1509B_PORTA, 0x1, SX1509B_HIGH_INPUT_ENABLE);
                         }
                         encryptAndTransmit(triumviStatusReg, avgPower, myNonce, nonceCounter);
                         #endif // End of CALIBRATE
                         // First sample, blinks battery pack blue LED
-                        if ((triumviStatusReg & BATTERYPACK_STATUSREG) &&
-                            (triumviStatusReg & FIRSTSAMPLE_STATUSREG) && 
-                            (batteryPackIsUSBAttached())){
+                        if (batteryPackIsUSBAttached() &&
+                            (triumviStatusReg & FIRSTSAMPLE_STATUSREG)){
+                            batteryPackVoltageEn(SENSE_ENABLE);
+                            batteryPackInit();
                             batteryPackLEDDriverInit();
                             batteryPackLEDOn(BATTERY_PACK_LED_BLUE);
                             myState = batteryPackLEDBlink;
                         }
                         else{
-                            if (triumviStatusReg & BATTERYPACK_STATUSREG){
-                                batteryPackVoltageEn(SENSE_DISABLE);
-                                disableI2C();
-                            }
                             #ifndef CALIBRATE
                             triumviLEDON();
                             #endif
@@ -300,7 +301,8 @@ PROCESS_THREAD(triumviProcess, ev, data)
                     else{
                         if (triumviStatusReg & BATTERYPACK_STATUSREG){
                             batteryPackVoltageEn(SENSE_DISABLE);
-                            disableI2C();
+                            i2c_disable(I2C_SDA_GPIO_NUM, I2C_SDA_GPIO_PIN, 
+                                        I2C_SCL_GPIO_NUM, I2C_SCL_GPIO_PIN); 
                         }
                         rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.1, 1, &rtimerEvent, NULL);
                         myState = triumviLEDBlink;
@@ -311,11 +313,10 @@ PROCESS_THREAD(triumviProcess, ev, data)
             case batteryPackLEDBlink:
                 if (rTimerExpired==1){
                     rTimerExpired = 0;
-                    sx1509b_init();
-                    batteryPackLEDOff(BATTERY_PACK_LED_BLUE);
-                    batteryPackLEDDriverDisable();
-                    rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*backOffTime, 1, &rtimerEvent, NULL);
                     batteryPackVoltageEn(SENSE_DISABLE);
+                    i2c_disable(I2C_SDA_GPIO_NUM, I2C_SDA_GPIO_PIN, 
+                                I2C_SCL_GPIO_NUM, I2C_SCL_GPIO_PIN); 
+                    rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*backOffTime, 1, &rtimerEvent, NULL);
                     myState = init;
                 }
             break;
@@ -578,6 +579,9 @@ void encryptAndTransmit(uint8_t triumviStatusReg, int avgPower, uint8_t* myNonce
 		readingBuf[PDATA_LEN+1] = batteryPackReadCircuitID();
 		myPDATA_LEN += 2;
 		packetLen += 2;
+        batteryPackVoltageEn(SENSE_DISABLE);
+        i2c_disable(I2C_SDA_GPIO_NUM, I2C_SDA_GPIO_PIN, 
+                    I2C_SCL_GPIO_NUM, I2C_SCL_GPIO_PIN); 
 	}
 	readingBuf[4] = triumviStatusReg;
 	packData(&packetData[1], nonceCounter);
