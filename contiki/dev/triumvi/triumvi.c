@@ -385,18 +385,6 @@ void batteryPackInit(){
 	sx1509b_gpio_pulldown_cfg(SX1509B_PORTB, 0xff, SX1509B_OUTPUT_RESISTOR_DISABLE);
 }
 
-// unregister i2c gpio
-void disableI2C(){
-    GPIO_SOFTWARE_CONTROL(I2C_SDA_GPIO_BASE, 0x1<<I2C_SDA_GPIO_PIN);
-    GPIO_SOFTWARE_CONTROL(I2C_SCL_GPIO_BASE, 0x1<<I2C_SCL_GPIO_PIN);
-    GPIO_SET_OUTPUT(I2C_SDA_GPIO_BASE, 0x1<<I2C_SDA_GPIO_PIN);
-    GPIO_SET_OUTPUT(I2C_SCL_GPIO_BASE, 0x1<<I2C_SCL_GPIO_PIN);
-    GPIO_SET_PIN(I2C_SDA_GPIO_BASE, 0x1<<I2C_SDA_GPIO_PIN);
-    GPIO_SET_PIN(I2C_SCL_GPIO_BASE, 0x1<<I2C_SCL_GPIO_PIN);
-    ioc_set_sel(I2C_SDA_GPIO_NUM, I2C_SDA_GPIO_PIN, 0x0);
-    ioc_set_sel(I2C_SCL_GPIO_NUM, I2C_SCL_GPIO_PIN, 0x0);
-}
-
 uint8_t batteryPackReadPanelID(){
 	// enable pull-up resistor before read IO state
 	sx1509b_gpio_pullup_cfg(SX1509B_PORTA, 0xf0, SX1509B_OUTPUT_RESISTOR_ENABLE);
