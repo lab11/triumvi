@@ -173,7 +173,7 @@ PROCESS_THREAD(triumviProcess, ev, data)
     disableAll();
 
     unitReady();
-    rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.1, 1, &rtimerEvent, NULL);
+    rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND, 1, &rtimerEvent, NULL);
     myState = init;
 
     while(1){
@@ -207,7 +207,7 @@ PROCESS_THREAD(triumviProcess, ev, data)
                 if (rTimerExpired==1){
                     rTimerExpired = 0;
                     meterSenseConfig(CURRENT, SENSE_ENABLE);
-                    rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.04, 1, &rtimerEvent, NULL);
+                    rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.02, 1, &rtimerEvent, NULL);
                     myState = waitingComparatorStable;
                 }
             break;
@@ -518,6 +518,12 @@ int currentVoltProcess(uint16_t *currentData, uint16_t* voltData,
 		// Fix phase oppsite down
 		if (avgPower < 0)
 			avgPower = -1*avgPower;
+        // Manually adjust
+        if (avgPower > 200)
+            avgPower *= 0.97;
+        if (avgPower > 500)
+            avgPower *= 0.97;
+
 		*power = (int)avgPower;
 		return 1;
 	}
@@ -602,6 +608,7 @@ void encryptAndTransmit(uint8_t triumviStatusReg, int avgPower, uint8_t* myNonce
 	clock_delay_usec(randBackOff);
 	clock_delay_usec(randBackOff);
 
+    REG(RFCORE_XREG_TXPOWER) = 0xb6;    // set TX power to 0 dBm
 	cc2538_on_and_transmit();
 	CC2538_RF_CSP_ISRFOFF();
 }
