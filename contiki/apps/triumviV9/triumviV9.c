@@ -103,7 +103,7 @@ int currentVoltProcess(uint16_t *currentData, uint16_t* voltData,
 						uint16_t currentRef, uint16_t voltRef,
 						int *power, uint8_t externalVolt);
 void packData(uint8_t* dest, int reading);
-uint16_t voltDataAverge(uint16_t* voltData);
+uint16_t getAverage(uint16_t* data, uint8_t length);
 int voltDataTransform(uint16_t voltReading, uint16_t voltReference);
 int currentDataTransform(int currentReading, uint8_t externalVolt);
 int sampleAndCalculate(uint8_t triumviStatusReg, int* avgPower, uint16_t* currentRef, uint16_t* voltRef);
@@ -518,6 +518,7 @@ int currentVoltProcess(uint16_t *currentData, uint16_t* voltData,
 		// Fix phase oppsite down
 		if (avgPower < 0)
 			avgPower = -1*avgPower;
+		*power = (int)avgPower;
 		return 1;
 	}
 }
@@ -529,12 +530,12 @@ void packData(uint8_t* dest, int reading){
 	}
 }
 
-uint16_t voltDataAverge(uint16_t* voltData){
-	uint32_t sum = 0;
-	uint8_t i;
-	for (i=0; i<BUF_SIZE2; i++)
-		sum += voltData[i];
-	return (uint16_t)(sum/BUF_SIZE2);
+uint16_t getAverage(uint16_t* data, uint8_t length){
+    uint8_t i;
+    uint32_t sum = 0;
+    for (i=0; i<length; i++)
+        sum += data[i];
+    return (uint16_t)(sum/length);
 }
 
 int voltDataTransform(uint16_t voltReading, uint16_t voltReference){
@@ -552,11 +553,11 @@ int currentDataTransform(int currentReading, uint8_t externalVolt){
     }
     // 11-Bit ADC
     else{
-        if (currentReading < 0)
-            tmp = (currentReading*POLYFIT_NEG_COEF1 + POLYFIT_NEG_COEF0)*I_TRANSFORM_WO_CT/inaGain;
-        else
-            tmp = (currentReading*POLYFIT_POS_COEF1 + POLYFIT_POS_COEF0)*I_TRANSFORM_WO_CT/inaGain;
-        //float tmp = currentReading*I_TRANSFORM/inaGain;
+        //if (currentReading < 0)
+        //    tmp = (currentReading*POLYFIT_NEG_COEF1 + POLYFIT_NEG_COEF0)*I_TRANSFORM_WO_CT/inaGain;
+        //else
+        //    tmp = (currentReading*POLYFIT_POS_COEF1 + POLYFIT_POS_COEF0)*I_TRANSFORM_WO_CT/inaGain;
+        tmp = currentReading*I_TRANSFORM/inaGain; // ideal, completely linear
         return (int)tmp;
     }
 }
@@ -611,7 +612,7 @@ int sampleAndCalculate(uint8_t triumviStatusReg, int* avgPower, uint16_t* curren
 	uint8_t i;
 	uint8_t numOfCycles = 16;
 	uint8_t numOfBitShift = 4; // log2(numOfCycles)
-	uint16_t tempADCReading;
+	//uint16_t tempADCReading;
 	if (triumviStatusReg & EXTERNALVOLT_STATUSREG){
 		#ifdef CALIBRATE
 		numOfCycles = 1;
@@ -619,9 +620,10 @@ int sampleAndCalculate(uint8_t triumviStatusReg, int* avgPower, uint16_t* curren
 		#endif
 		for (i=0; i<numOfCycles; i++){
 			sampleCurrentVoltageWaveform();
-			tempADCReading = adc_get(V_REF_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_256);
-			*currentRef = ((tempADCReading>>5)>1023)? 0 : (tempADCReading>>5);
-			*voltRef = voltDataAverge(voltADCVal);
+			//tempADCReading = adc_get(V_REF_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_256);
+			//*currentRef = ((tempADCReading>>5)>1023)? 0 : (tempADCReading>>5);
+            *currentRef = getAverage(currentADCVal, BUF_SIZE2);
+			*voltRef = getAverage(voltADCVal, BUF_SIZE2);
 			// shift two samples
 			voltADCVal[BUF_SIZE2] = voltADCVal[0];
 			voltADCVal[BUF_SIZE2+1] = voltADCVal[1];
@@ -635,9 +637,10 @@ int sampleAndCalculate(uint8_t triumviStatusReg, int* avgPower, uint16_t* curren
 	}
 	else{
 		sampleCurrentWaveform();
-		tempADCReading = adc_get(V_REF_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_512);
-		*currentRef = ((tempADCReading>>4)>2047)? 0 : (tempADCReading>>4);
+		//tempADCReading = adc_get(V_REF_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_512);
+		//*currentRef = ((tempADCReading>>4)>2047)? 0 : (tempADCReading>>4);
 		disableAll();
+        *currentRef = getAverage(currentADCVal, BUF_SIZE);
 		return currentVoltProcess(currentADCVal, NULL, *currentRef, 0, avgPower, 0x00);
 	}
 }
