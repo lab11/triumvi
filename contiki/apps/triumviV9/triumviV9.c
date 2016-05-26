@@ -518,12 +518,8 @@ int currentVoltProcess(uint16_t *currentData, uint16_t* voltData,
 		// Fix phase oppsite down
 		if (avgPower < 0)
 			avgPower = -1*avgPower;
-        // Manually adjust
-        if (avgPower > 200)
-            avgPower *= 0.97;
-        if (avgPower > 500)
-            avgPower *= 0.97;
-
+        
+        //avgPower *= 1.03;
 		*power = (int)avgPower;
 		return 1;
 	}
