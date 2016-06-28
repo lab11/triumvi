@@ -460,7 +460,8 @@ void meterInit(){
 
 	rTimerExpired = 0;
 	referenceInt = 0;
-    inaGainIdx = MAX_INA_GAIN_IDX;
+    //inaGainIdx = MAX_INA_GAIN_IDX;
+    inaGainIdx = 3; // use larger gain setting
 
 	#ifdef CALIBRATE
 	backOffTime = 1;
@@ -518,8 +519,6 @@ int currentVoltProcess(uint16_t *currentData, uint16_t* voltData,
 		// Fix phase oppsite down
 		if (avgPower < 0)
 			avgPower = -1*avgPower;
-        
-        //avgPower *= 1.03;
 		*power = (int)avgPower;
 		return 1;
 	}
@@ -615,7 +614,9 @@ int sampleAndCalculate(uint8_t triumviStatusReg, int* avgPower, uint16_t* curren
 	uint8_t i;
 	uint8_t numOfCycles = 16;
 	uint8_t numOfBitShift = 4; // log2(numOfCycles)
-	//uint16_t tempADCReading;
+    #ifndef AVG_V_REF
+	uint16_t tempADCReading;
+    #endif
 	if (triumviStatusReg & EXTERNALVOLT_STATUSREG){
 		#ifdef CALIBRATE
 		numOfCycles = 1;
@@ -623,10 +624,13 @@ int sampleAndCalculate(uint8_t triumviStatusReg, int* avgPower, uint16_t* curren
 		#endif
 		for (i=0; i<numOfCycles; i++){
 			sampleCurrentVoltageWaveform();
-			//tempADCReading = adc_get(V_REF_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_256);
-			//*currentRef = ((tempADCReading>>5)>1023)? 0 : (tempADCReading>>5);
+            #ifdef AVG_V_REF
             *currentRef = getAverage(currentADCVal, BUF_SIZE2);
 			*voltRef = getAverage(voltADCVal, BUF_SIZE2);
+            #else
+			tempADCReading = adc_get(V_REF_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_256);
+			*currentRef = ((tempADCReading>>5)>1023)? 0 : (tempADCReading>>5);
+            #endif
 			// shift two samples
 			voltADCVal[BUF_SIZE2] = voltADCVal[0];
 			voltADCVal[BUF_SIZE2+1] = voltADCVal[1];
@@ -640,10 +644,13 @@ int sampleAndCalculate(uint8_t triumviStatusReg, int* avgPower, uint16_t* curren
 	}
 	else{
 		sampleCurrentWaveform();
-		//tempADCReading = adc_get(V_REF_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_512);
-		//*currentRef = ((tempADCReading>>4)>2047)? 0 : (tempADCReading>>4);
-		disableAll();
+        #ifdef AVG_V_REF
         *currentRef = getAverage(currentADCVal, BUF_SIZE);
+        #else
+		tempADCReading = adc_get(V_REF_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_512);
+		*currentRef = ((tempADCReading>>4)>2047)? 0 : (tempADCReading>>4);
+        #endif
+		disableAll();
 		return currentVoltProcess(currentADCVal, NULL, *currentRef, 0, avgPower, 0x00);
 	}
 }
