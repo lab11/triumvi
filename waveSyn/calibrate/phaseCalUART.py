@@ -35,13 +35,17 @@ def main():
 	sampleTimeStep = 0
 	lineNum = 1
 	phaseCalculated = []
+	referenceData = []
 	for line in myFile:
 		temp = line.split()
 		lineNum += 1
 		if len(temp): # non empty line
 			if temp[1]=='reference:':
-				reference = int(temp[2])
+				#reference = int(temp[2])
 				if len(packetData) == SAMPLE_PER_CYCLE:
+					reference = sum(packetData)/SAMPLE_PER_CYCLE
+					referenceData.append(reference)
+					packetData = [i - reference for i in packetData]
 					myData.append(packetData)
 					phaseCalculated.append(phaseMatch(packetData, sampleTimeStep))
 				packetData = []
@@ -50,11 +54,14 @@ def main():
 			elif temp[1]=='reading:':
 				#print lineNum
 				if len(temp) == 3:
-					packetData.append(int(temp[2]) - reference)
+					#packetData.append(int(temp[2]) - reference)
+					packetData.append(int(temp[2]))
 	myFile.close()
+	reference_avg = sum(referenceData)/len(referenceData)
 	print("Max phase offset: {0}".format(max(phaseCalculated)))
 	print("Min phase offset: {0}".format(min(phaseCalculated)))
 	print("average phase offset: {0}".format(float(sum(phaseCalculated))/len(phaseCalculated)))
+	print("average mean: {0}".format(reference_avg))
 
 	phaseOffset = float(sum(phaseCalculated))/len(phaseCalculated)
 	print("using phase offset: {0}".format(phaseOffset))
@@ -64,6 +71,7 @@ def main():
 	xaxis = [x for x in range(len(myData[0]))]
 
 	myOutFile = open(sys.argv[1][:sys.argv[1].find('Cal')] + 'SineTable.txt', 'w')
+	myOutFile.write("#define HARD_VREF {:}\r\n".format(reference_avg))
 	myOutFile.write("int sineTable[BUF_SIZE] = {\r\n")
 	for i in range(SAMPLE_PER_CYCLE):
 		if i == SAMPLE_PER_CYCLE-1:
