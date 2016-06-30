@@ -149,12 +149,14 @@ PROCESS_THREAD(triumviProcess, ev, data)
 	static uint8_t extAddr[8];
     NETSTACK_RADIO.get_object(RADIO_PARAM_64BIT_ADDR, extAddr, 8);
 
+    #ifndef CALIBRATE
 	// AES Preprocessing
 	static uint8_t aesKey[] = AES_KEY;
 	static uint8_t myNonce[13] = {0};
 	memcpy(myNonce, extAddr, 8);
 	static uint32_t nonceCounter = 0;
 	aes_load_keys(aesKey, AES_KEY_STORE_SIZE_KEY_SIZE_128, 1, 0);
+    #endif
 
 	static int avgPower;
 	static int powerValid;
@@ -614,7 +616,7 @@ int sampleAndCalculate(uint8_t triumviStatusReg, int* avgPower, uint16_t* curren
 	uint8_t i;
 	uint8_t numOfCycles = 16;
 	uint8_t numOfBitShift = 4; // log2(numOfCycles)
-    #ifndef AVG_V_REF
+    #if defined(ADC_VREF) || defined(CALIBRATE)
 	uint16_t tempADCReading;
     #endif
 	if (triumviStatusReg & EXTERNALVOLT_STATUSREG){
@@ -624,13 +626,15 @@ int sampleAndCalculate(uint8_t triumviStatusReg, int* avgPower, uint16_t* curren
 		#endif
 		for (i=0; i<numOfCycles; i++){
 			sampleCurrentVoltageWaveform();
-            #ifdef AVG_V_REF
-            *currentRef = getAverage(currentADCVal, BUF_SIZE2);
-			*voltRef = getAverage(voltADCVal, BUF_SIZE2);
-            #else
+            #if defined(CALIBRATE) || defined(ADC_REF)
 			tempADCReading = adc_get(V_REF_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_256);
 			*currentRef = ((tempADCReading>>5)>1023)? 0 : (tempADCReading>>5);
+            #elif defined(AVG_VREF)
+            *currentRef = getAverage(currentADCVal, BUF_SIZE2);
+            #elif defined(HARDCODE_VREF) // use hardcoded reference
+            *currentRef = (HARD_VREF>>1);
             #endif
+			*voltRef = getAverage(voltADCVal, BUF_SIZE2);
 			// shift two samples
 			voltADCVal[BUF_SIZE2] = voltADCVal[0];
 			voltADCVal[BUF_SIZE2+1] = voltADCVal[1];
@@ -644,11 +648,13 @@ int sampleAndCalculate(uint8_t triumviStatusReg, int* avgPower, uint16_t* curren
 	}
 	else{
 		sampleCurrentWaveform();
-        #ifdef AVG_V_REF
-        *currentRef = getAverage(currentADCVal, BUF_SIZE);
-        #else
+        #if defined(CALIBRATE) || defined(ADC_REF)
 		tempADCReading = adc_get(V_REF_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_512);
 		*currentRef = ((tempADCReading>>4)>2047)? 0 : (tempADCReading>>4);
+        #elif defined(AVG_VREF)
+        *currentRef = getAverage(currentADCVal, BUF_SIZE);
+        #elif defined(HARDCODE_VREF) // use hardcoded reference
+		*currentRef = HARD_VREF;
         #endif
 		disableAll();
 		return currentVoltProcess(currentADCVal, NULL, *currentRef, 0, avgPower, 0x00);

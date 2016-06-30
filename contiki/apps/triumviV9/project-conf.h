@@ -8,10 +8,16 @@
 // No need for UART
 #define STARTUP_CONF_VERBOSE 0
 
-//#define CALIBRATE
 //#ifdef ERASE_FRAM
 //#define RTC_SET
 //#define FRAM_WRITE
+
+#define CALIBRATE
+
+// Define one of the following three option
+//#define AVG_VREF      // calculate the reference by averaging a cycle
+//#define ADC_VREF      // use the sampled value as reference
+#define HARDCODE_VREF   // use hardcoded value as reference (from calibration process)
 
 #ifdef CALIBRATE
 #define UART_CONF_ENABLE 1
