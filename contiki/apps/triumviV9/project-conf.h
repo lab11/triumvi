@@ -12,7 +12,7 @@
 //#define RTC_SET
 //#define FRAM_WRITE
 
-#define CALIBRATE
+//#define CALIBRATE
 
 // Define one of the following three option
 //#define AVG_VREF      // calculate the reference by averaging a cycle
