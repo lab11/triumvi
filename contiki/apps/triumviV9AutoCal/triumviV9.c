@@ -42,9 +42,6 @@
 #define BUF_SIZE 120    // sample current only, 11-bit resolution
 #define BUF_SIZE2 113   // sample both current and voltage, 10-bit resolution
 
-#define CALIBRATION_CYCLES 500
-
-
 typedef enum {
     MODE_CALIBRATION,
     MODE_NORMAL
@@ -61,6 +58,8 @@ typedef enum {
 volatile uint32_t flash_calibration = FLASH_BASE - 2*FLASH_ERASE_SIZE + FLASH_SIZE;
 volatile uint32_t flash_data;
 
+uint32_t timerVal[BUF_SIZE];
+uint16_t currentADCVal[BUF_SIZE];
 int adjustedADCSamples[BUF_SIZE];
 //uint16_t adcSamples[BUF_SIZE];
 
@@ -129,15 +128,70 @@ PROCESS_THREAD(calibrationProcess, ev, data) {
     rom_util_page_erase(flash_calibration, FLASH_ERASE_SIZE);
     triumviLEDON();
     etimer_set(&calibration_timer, CLOCK_SECOND*10);
-    static uint32_t tmp = 0;
-    static uint16_t currentRef;
-    static uint16_t calibratePhaseOffsets[CALIBRATION_CYCLES];
-    static uint16_t calibrateDCOffsets[CALIBRATION_CYCLES];
-    uint16_t cycleCnt = 0;
+
+    meterSenseVREn(SENSE_ENABLE);
+    meterSenseConfig(VOLTAGE, SENSE_ENABLE);
+    meterSenseConfig(CURRENT, SENSE_ENABLE);
+
+    uint32_t tmp = 0;
+    uint16_t currentRef;
+    static uint16_t phaseOffset_array[CALIBRATION_CYCLES];
+    static uint32_t dcOffset_accum = 0;
+    static uint16_t cycleCnt = 0;
+    static uint32_t phaseOffset_accum = 0;
+    uint16_t i;
+    uint16_t calculatedPhase;
 
 
     while (1){
         PROCESS_YIELD();
+        if (etimer_expired(&calibration_timer)){
+            triumviLEDON();
+            // Enable comparator interrupt
+            GPIO_DETECT_RISING(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
+            meterVoltageComparator(SENSE_ENABLE);
+            ungate_gpt(GPTIMER_1);
+            REG(SYSTICK_STCTRL) &= (~SYSTICK_STCTRL_INTEN);
+
+            // Captured Interrupted
+            while (referenceInt==0){}
+            sampleCurrentWaveform();
+
+            // resume systick
+            REG(SYSTICK_STCTRL) |= SYSTICK_STCTRL_INTEN;
+            gate_gpt(GPTIMER_1);
+
+            // perform phase, dc offset calculation
+            calculatedPhase = phaseMatchFilter(adcSamples, &currentRef);
+            phaseOffset_accum += calculatedPhase;
+            phaseOffset_array[cycleCnt] = calculatedPhase;
+            dcOffset_accum += currentRef;
+            cycleCnt += 1;
+            
+            if (cycleCnt < CALIBRATION_CYCLES){
+                etimer_set(&calibration_timer, CLOCK_SECOND*0.1);
+            }
+            else{
+                meterSenseVREn(SENSE_DISABLE);
+                meterSenseConfig(VOLTAGE, SENSE_DISABLE);
+                meterSenseConfig(CURRENT, SENSE_DISABLE);
+
+                phaseOffset = phaseOffset_accum/CALIBRATION_CYCLES;
+                dcOffset = (dcOffset_accum/CALIBRATION_CYCLES);
+                
+                // calculate variance of phase offset array 
+                for (i=0; i<CALIBRATION_CYCLES; i++){
+                }
+
+                // write to flash
+                rom_util_program_flash(&tmp, flash_calibration, 4);
+                process_start(&triumviProcess, NULL);
+                triumviLEDOFF();
+                break;
+            }
+            triumviLEDOFF();
+        }
+        /*
         if (etimer_expired(&calibration_timer)){
             triumviLEDOFF();
             phaseOffset = phaseMatchFilter(adcSamples, &currentRef);
@@ -147,6 +201,7 @@ PROCESS_THREAD(calibrationProcess, ev, data) {
             triumviLEDON();
             break;
         }
+        */
     }
 
     PROCESS_END();
@@ -230,6 +285,24 @@ uint16_t getAverage(uint16_t* data, uint8_t length){
     for (i=0; i<length; i++)
         sum += data[i];
     return (uint16_t)(sum/length);
+}
+
+// Don't add/remove any lines in this subroutine
+void sampleCurrentWaveform(){
+	uint16_t sampleCnt = 0;
+	uint16_t temp;
+	while (sampleCnt < BUF_SIZE){
+		timerVal[sampleCnt] = get_event_time(GPTIMER_1, GPTIMER_SUBTIMER_A);
+		temp = adc_get(I_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_512);
+		currentADCVal[sampleCnt] = ((temp>>4)>2047)? 0 : (temp>>4);
+		sampleCnt++;
+	}
+}
+
+static void referenceIntCallBack(uint8_t port, uint8_t pin){
+	meterVoltageComparator(SENSE_DISABLE);
+	referenceInt = 1;
+	//process_poll(&triumviProcess); // this should be unnecessary
 }
 
 /*
