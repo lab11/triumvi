@@ -52,7 +52,7 @@
 #define MAX_INA_GAIN_IDX 4
 #define MIN_INA_GAIN_IDX 1
 
-#define DATADUMP
+//#define DATADUMP
 
 const uint8_t inaGainArr[6] = {1, 2, 3, 5, 9, 17};
 
@@ -115,7 +115,11 @@ int cycleProduct(uint16_t* adcSamples, uint16_t offset, uint16_t currentRef);
 uint16_t phaseMatchFilter(uint16_t* adcSamples, uint16_t* currentAVG);
 gainSetting_t gainCtrl(uint16_t* adcSamples, uint8_t externalVolt);
 void meterInit();
+void sampleCurrentWaveform();
+// functions do not use in data dump mode
+#ifndef DATADUMP
 static void disable_all_ioc_override();
+#endif
 
 // ISRs
 static void rtimerEvent(struct rtimer *t, void *ptr);
@@ -191,7 +195,7 @@ PROCESS_THREAD(calibrationProcess, ev, data) {
     static uint16_t phaseOffset_array[CALIBRATION_CYCLES];
     static uint32_t dcOffset_accum = 0;
     int sqr;
-    uint32_t variance = 0;
+    static uint32_t variance = 0;
     uint32_t tmp = 0;
     #endif
 
@@ -278,7 +282,6 @@ PROCESS_THREAD(calibrationProcess, ev, data) {
                             variance += (sqr*sqr);
                         }
                         variance /= CALIBRATION_CYCLES;
-                        printf("")
 
                         // cannot lock phase
                         if (variance > PHASE_VARIANCE_THRESHOLD){
@@ -327,8 +330,8 @@ PROCESS_THREAD(triumviProcess, ev, data) {
             rTimerExpired = 0;
             triumviLEDToggle();
             rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND, 1, &rtimerEvent, NULL);
-            printf("calculated phase offset: %u\r\n", phaseOffset);
-            printf("calculated DC level: %u\r\n", dcOffset);
+            //printf("calculated phase offset: %u\r\n", phaseOffset);
+            //printf("calculated DC level: %u\r\n", dcOffset);
         }
     }
     PROCESS_END();
@@ -507,13 +510,13 @@ gainSetting_t gainCtrl(uint16_t* adcSamples, uint8_t externalVolt){
     // using hardcoded value as reference
     else{
         if (externalVolt){
-            currentRef = (HARD_REF>>1);
+            currentRef = (dcOffset>>1);
             upperThreshold = (UPPERTHRESHOLD>>1);
             lowerThreshold= (LOWERTHRESHOLD>>1);
             length = BUF_SIZE2;
         }
         else{
-            currentRef = HARD_REF;
+            currentRef = dcOffset;
         }
     }
 
@@ -525,7 +528,7 @@ gainSetting_t gainCtrl(uint16_t* adcSamples, uint8_t externalVolt){
             return res;
         }
         if (currentCal > maxVal){
-            maxVal = currentcal;
+            maxVal = currentCal;
         }
         adjustedADCSamples[i] = currentCal;
     }
@@ -538,6 +541,7 @@ gainSetting_t gainCtrl(uint16_t* adcSamples, uint8_t externalVolt){
 }
 
 
+#ifndef DATADUMP
 static void disable_all_ioc_override() {
 	uint8_t portnum = 0;
 	uint8_t pinnum = 0;
@@ -547,6 +551,7 @@ static void disable_all_ioc_override() {
 		}
 	}
 }
+#endif
 
 // interrupt when all units are ready
 static void unitReadyCallBack(uint8_t port, uint8_t pin){
