@@ -214,28 +214,7 @@ inline uint8_t getINAGain(){
 #endif
 
 void setINAGain(uint8_t gain){
-    #ifndef VERSION9 
-	switch (gain){
-		case 1: // Select S1
-			GPIO_CLR_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A0_GPIO_PIN);
-			GPIO_CLR_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A1_GPIO_PIN);
-		break;
-		case 2: // Select S2
-			GPIO_SET_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A0_GPIO_PIN);
-			GPIO_CLR_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A1_GPIO_PIN);
-		break;
-		case 5: // Select S3
-			GPIO_CLR_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A0_GPIO_PIN);
-			GPIO_SET_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A1_GPIO_PIN);
-		break;
-		case 10: // Select S4
-			GPIO_SET_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A0_GPIO_PIN);
-			GPIO_SET_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A1_GPIO_PIN);
-		break;
-		default:
-		break;
-	}
-    #else
+    #if defined(VERSION9)
     #ifdef AD5272
     // AD5272, 1024 tabs
     switch (gain){
@@ -262,8 +241,8 @@ void setINAGain(uint8_t gain){
         default:
         break;
     }
-    // AD5274, 256 tabs
     #else
+    // AD5274, 256 tabs
     switch (gain){
         case 2:
             ad5274_rdac_write(255);
@@ -286,6 +265,27 @@ void setINAGain(uint8_t gain){
         break;
     }
     #endif
+    #else
+	switch (gain){
+		case 1: // Select S1
+			GPIO_CLR_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A0_GPIO_PIN);
+			GPIO_CLR_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A1_GPIO_PIN);
+		break;
+		case 2: // Select S2
+			GPIO_SET_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A0_GPIO_PIN);
+			GPIO_CLR_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A1_GPIO_PIN);
+		break;
+		case 5: // Select S3
+			GPIO_CLR_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A0_GPIO_PIN);
+			GPIO_SET_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A1_GPIO_PIN);
+		break;
+		case 10: // Select S4
+			GPIO_SET_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A0_GPIO_PIN);
+			GPIO_SET_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A1_GPIO_PIN);
+		break;
+		default:
+		break;
+	}
     #endif
 }
 
