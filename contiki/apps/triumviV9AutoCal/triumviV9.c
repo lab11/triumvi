@@ -106,6 +106,7 @@ volatile uint8_t referenceInt;
 volatile uint8_t backOffTime;
 volatile uint8_t backOffHistory;
 volatile uint8_t inaGainIdx;
+volatile uint8_t allInitsAreReadyInt;
 
 
 /* End of global variables */
@@ -119,9 +120,11 @@ volatile uint8_t inaGainIdx;
 int cycleProduct(uint16_t* adcSamples, uint16_t offset, uint16_t currentRef);
 // return the phase has maximum correlation
 uint16_t phaseMatchFilter(uint16_t* adcSamples, uint16_t* currentAVG);
+// return variance of phase offsets 
+uint16_t getVariance(uint16_t* data, uint16_t length);
 
 // return mean(data)
-uint16_t getAverage(uint16_t* data, uint8_t length);
+uint16_t getAverage(uint16_t* data, uint16_t length);
 // gain control, adjust gain if necessary
 gainSetting_t gainCtrl(uint16_t* adcSamples, uint8_t externalVolt);
 // initialize GPIO, peripherals
@@ -183,9 +186,9 @@ PROCESS_THREAD(startupProcess, ev, data) {
     }
     
     // Disable sensing frontend
+    disablePOT();
     meterSenseConfig(VOLTAGE, SENSE_DISABLE);
     meterVoltageComparator(SENSE_DISABLE);
-    disablePOT();
 
     // read internal flash
     flash_data = REG(flash_addr);
@@ -216,10 +219,8 @@ PROCESS_THREAD(calibrationProcess, ev, data) {
     #else
     uint16_t currentRef;
     uint16_t calculatedPhase;
-    static uint32_t phaseOffset_accum = 0;
     static uint16_t phaseOffset_array[CALIBRATION_CYCLES];
     static uint32_t dcOffset_accum = 0;
-    int sqr;
     static uint32_t variance = 0;
     uint32_t tmp = 0;
     #endif
@@ -274,34 +275,38 @@ PROCESS_THREAD(calibrationProcess, ev, data) {
                 #else
                 // perform phase, dc offset calculation
                 calculatedPhase = phaseMatchFilter(currentADCVal, &currentRef);
-                phaseOffset_accum += calculatedPhase;
                 phaseOffset_array[cycleCnt] = calculatedPhase;
                 dcOffset_accum += currentRef;
                 #endif
                 cycleCnt += 1;
                 
                 if (cycleCnt < CALIBRATION_CYCLES){
-                    etimer_set(&calibration_timer, CLOCK_SECOND*0.1);
+                    etimer_set(&calibration_timer, CLOCK_SECOND*0.5);
                 }
                 else{
                     #ifdef DATADUMP
-                    triumviLEDToggle();
                     etimer_set(&calibration_timer, CLOCK_SECOND*0.1);
                     #else
                     meterSenseVREn(SENSE_DISABLE);
                     meterSenseConfig(VOLTAGE, SENSE_DISABLE);
                     meterSenseConfig(CURRENT, SENSE_DISABLE);
 
-                    phaseOffset = (phaseOffset_accum/CALIBRATION_CYCLES);
+                    variance = getVariance(phaseOffset_array, CALIBRATION_CYCLES);
+                    // cannot lock phase, check if the phase across 360
+                    if (variance > PHASE_VARIANCE_THRESHOLD){
+                        for (i=0; i<CALIBRATION_CYCLES; i++){
+                            if (phaseOffset_array[i] < 180)
+                                phaseOffset_array[i] += 360;
+                        }
+                        variance = getVariance(phaseOffset_array, CALIBRATION_CYCLES);
+                        if (variance > PHASE_VARIANCE_THRESHOLD)
+                            while(1){}
+                    }
+                    phaseOffset = getAverage(phaseOffset_array, CALIBRATION_CYCLES);
+                    if (phaseOffset >= 360)
+                        phaseOffset -= 360;
                     dcOffset = (dcOffset_accum/CALIBRATION_CYCLES);
                     
-                    // calculate variance of phase offset array 
-                    for (i=0; i<CALIBRATION_CYCLES; i++){
-                        sqr = phaseOffset_array[i] - phaseOffset;
-                        variance += (sqr*sqr);
-                    }
-                    variance /= CALIBRATION_CYCLES;
-
                     #ifdef DEBUG_ON
                     printf("phase offset: %u\r\n", phaseOffset);
                     printf("dc offset: %u\r\n", dcOffset);
@@ -310,11 +315,6 @@ PROCESS_THREAD(calibrationProcess, ev, data) {
                         printf("phase Offset %u: %u\r\n", i, phaseOffset_array[i]);
                     }
                     #endif
-
-                    // cannot lock phase
-                    if (variance > PHASE_VARIANCE_THRESHOLD){
-                        while(1){}
-                    }
 
                     // write to flash
                     tmp = (dcOffset<<16) | phaseOffset;
@@ -330,7 +330,12 @@ PROCESS_THREAD(calibrationProcess, ev, data) {
             else{
                 etimer_set(&calibration_timer, CLOCK_SECOND*0.5);
             }
+            #ifdef DATADUMP
+            if (cycleCnt < CALIBRATION_CYCLES)
+                triumviLEDOFF();
+            #else
             triumviLEDOFF();
+            #endif
         }
     }
 
@@ -351,6 +356,7 @@ PROCESS_THREAD(triumviProcess, ev, data) {
     aes_load_keys(aesKey, AES_KEY_STORE_SIZE_KEY_SIZE_128, 1, 0);
 
 	static int avgPower;
+    uint8_t rdy;
 
     uint16_t triumviStatusReg;
 
@@ -368,10 +374,23 @@ PROCESS_THREAD(triumviProcess, ev, data) {
         switch (myState){
             // initialization state, check READYn is low before moving forward
             case STATE_INIT:
+                rdy = 0;
                 if (rTimerExpired==1){
                     rTimerExpired = 0;
+                    if (allUnitsReady())
+                        rdy = 1;
+                    // not all units are ready, go back to sleep
+                    else{
+                        GPIO_DETECT_FALLING(TRIUMVI_RDYn_IN_GPIO_BASE, 0x1<<TRIUMVI_RDYn_IN_GPIO_PIN);
+                        GPIO_ENABLE_INTERRUPT(TRIUMVI_RDYn_IN_GPIO_BASE, 0x1<<TRIUMVI_RDYn_IN_GPIO_PIN);
+                        nvic_interrupt_enable(TRIUMVI_RDYn_IN_INT_NVIC_PORT);
+                    }
                 }
-                if (allUnitsReady()){
+                else if (allInitsAreReadyInt==1){
+                    allInitsAreReadyInt = 0;
+                    rdy = 1;
+                }
+                if (rdy==1){
                     meterSenseVREn(SENSE_ENABLE);
                     meterSenseConfig(VOLTAGE, SENSE_ENABLE);
                     rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.4, 1, &rtimerEvent, NULL);
@@ -381,12 +400,6 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                         backOffTime = (backOffTime>>1);
                     backOffHistory = (backOffHistory<<1) | 0x01;
                 }
-                // not all units are ready, go back to sleep
-                else{
-                    GPIO_DETECT_FALLING(TRIUMVI_RDYn_IN_GPIO_BASE, 0x1<<TRIUMVI_RDYn_IN_GPIO_PIN);
-                    GPIO_ENABLE_INTERRUPT(TRIUMVI_RDYn_IN_GPIO_BASE, 0x1<<TRIUMVI_RDYn_IN_GPIO_PIN);
-                    nvic_interrupt_enable(TRIUMVI_RDYn_IN_INT_NVIC_PORT);
-                }
             break;
 
             // voltage is sattled, enable current measurement
@@ -394,7 +407,7 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                 if (rTimerExpired==1){
                     rTimerExpired = 0;
                     meterSenseConfig(CURRENT, SENSE_ENABLE);
-                    rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.02, 1, &rtimerEvent, NULL);
+                    rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.3, 1, &rtimerEvent, NULL);
                     myState = STATE_WAITING_COMPARATOR_STABLE;
                 }
             break;
@@ -568,12 +581,26 @@ int cycleProduct(uint16_t* adcSamples, uint16_t offset, uint16_t currentRef){
 }
 
 // return average value
-uint16_t getAverage(uint16_t* data, uint8_t length){
-    uint8_t i;
+uint16_t getAverage(uint16_t* data, uint16_t length){
+    uint16_t i;
     uint32_t sum = 0;
     for (i=0; i<length; i++)
         sum += data[i];
     return (uint16_t)(sum/length);
+}
+
+// calculate variance of phase offset array 
+uint16_t getVariance(uint16_t* data, uint16_t length){
+    uint16_t i;
+    uint16_t avg = getAverage(data, length);
+    int sqr;
+    uint16_t variance = 0;
+    for (i=0; i<length; i++){
+        sqr = data[i] - avg;
+        variance += (sqr*sqr);
+    }
+    variance /= length;
+    return variance;
 }
 
 // Don't add/remove any lines in this subroutine
@@ -659,6 +686,7 @@ void meterInit(){
 
 	rTimerExpired = 0;
 	referenceInt = 0;
+    allInitsAreReadyInt = 0;
     //inaGainIdx = MAX_INA_GAIN_IDX;
     inaGainIdx = 3; // use larger gain setting
 
@@ -686,13 +714,21 @@ gainSetting_t gainCtrl(uint16_t* adcSamples, uint8_t externalVolt){
     // using hardcoded value as reference
     else{
         if (externalVolt){
+            #ifdef AVG_VREF
+            currentRef = getAverage(adcSamples, BUF_SIZE2);
+            #else
             currentRef = (dcOffset>>1);
+            #endif
             upperThreshold = (UPPERTHRESHOLD>>1);
             lowerThreshold= (LOWERTHRESHOLD>>1);
             length = BUF_SIZE2;
         }
         else{
+            #ifdef AVG_VREF
+            currentRef = getAverage(adcSamples, BUF_SIZE);
+            #else
             currentRef = dcOffset;
+            #endif
         }
     }
 
@@ -894,6 +930,7 @@ static void unitReadyCallBack(uint8_t port, uint8_t pin){
 	GPIO_DISABLE_INTERRUPT(TRIUMVI_RDYn_IN_GPIO_BASE, 0x1<<TRIUMVI_RDYn_IN_GPIO_PIN);
 	nvic_interrupt_disable(TRIUMVI_RDYn_IN_INT_NVIC_PORT);
 	process_poll(&triumviProcess);
+    allInitsAreReadyInt = 1;
 }
 
 static void referenceIntCallBack(uint8_t port, uint8_t pin){
