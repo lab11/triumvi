@@ -40,6 +40,7 @@ volatile uint8_t referenceInt;
 volatile uint8_t backOffTime;
 volatile uint8_t backOffHistory;
 volatile uint8_t inaGainIdx;
+volatile uint8_t allInitsAreReadyInt;
 
 #define MAX_INA_GAIN_IDX 4
 #define MIN_INA_GAIN_IDX 1
@@ -161,6 +162,7 @@ PROCESS_THREAD(triumviProcess, ev, data)
 	static int avgPower;
 	static int powerValid;
 	static uint16_t currentRef, voltRef;
+    uint8_t rdy;
 
 	// Keep a counter of the number of samples we have taken
 	// since we have been on. This will obviously get reset if we lose power.
@@ -183,10 +185,23 @@ PROCESS_THREAD(triumviProcess, ev, data)
         switch (myState){
             // initialization state, check READYn is low before moving forward
             case init:
+                rdy = 0;
                 if (rTimerExpired==1){
                     rTimerExpired = 0;
+                    if (allUnitsReady())
+                        rdy = 1;
+                    // not all units are ready, go back to sleep
+                    else{
+                        GPIO_DETECT_FALLING(TRIUMVI_RDYn_IN_GPIO_BASE, 0x1<<TRIUMVI_RDYn_IN_GPIO_PIN);
+                        GPIO_ENABLE_INTERRUPT(TRIUMVI_RDYn_IN_GPIO_BASE, 0x1<<TRIUMVI_RDYn_IN_GPIO_PIN);
+                        nvic_interrupt_enable(TRIUMVI_RDYn_IN_INT_NVIC_PORT);
+                    }
                 }
-                if (allUnitsReady()){
+                else if (allInitsAreReadyInt==1){
+                    allInitsAreReadyInt = 0;
+                    rdy = 1;
+                }
+                if (rdy==1){
                     meterSenseVREn(SENSE_ENABLE);
                     meterSenseConfig(VOLTAGE, SENSE_ENABLE);
                     rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.4, 1, &rtimerEvent, NULL);
@@ -195,12 +210,6 @@ PROCESS_THREAD(triumviProcess, ev, data)
                     if (((backOffHistory&0x0f)==0x0f)&&(backOffTime>2))
                         backOffTime = (backOffTime>>1);
                     backOffHistory = (backOffHistory<<1) | 0x01;
-                }
-                // not all units are ready, go back to sleep
-                else{
-                    GPIO_DETECT_FALLING(TRIUMVI_RDYn_IN_GPIO_BASE, 0x1<<TRIUMVI_RDYn_IN_GPIO_PIN);
-                    GPIO_ENABLE_INTERRUPT(TRIUMVI_RDYn_IN_GPIO_BASE, 0x1<<TRIUMVI_RDYn_IN_GPIO_PIN);
-                    nvic_interrupt_enable(TRIUMVI_RDYn_IN_INT_NVIC_PORT);
                 }
             break;
 
@@ -351,6 +360,7 @@ static void unitReadyCallBack(uint8_t port, uint8_t pin){
 	GPIO_DISABLE_INTERRUPT(TRIUMVI_RDYn_IN_GPIO_BASE, 0x1<<TRIUMVI_RDYn_IN_GPIO_PIN);
 	nvic_interrupt_disable(TRIUMVI_RDYn_IN_INT_NVIC_PORT);
 	process_poll(&triumviProcess);
+    allInitsAreReadyInt = 1;
 }
 
 // Don't add/remove any lines in this subroutine
@@ -462,6 +472,7 @@ void meterInit(){
 
 	rTimerExpired = 0;
 	referenceInt = 0;
+    allInitsAreReadyInt = 0;
     //inaGainIdx = MAX_INA_GAIN_IDX;
     inaGainIdx = 3; // use larger gain setting
 

@@ -281,7 +281,7 @@ PROCESS_THREAD(calibrationProcess, ev, data) {
                 cycleCnt += 1;
                 
                 if (cycleCnt < CALIBRATION_CYCLES){
-                    etimer_set(&calibration_timer, CLOCK_SECOND*0.5);
+                    etimer_set(&calibration_timer, CLOCK_SECOND*0.1);
                 }
                 else{
                     #ifdef DATADUMP
@@ -294,11 +294,20 @@ PROCESS_THREAD(calibrationProcess, ev, data) {
                     variance = getVariance(phaseOffset_array, CALIBRATION_CYCLES);
                     // cannot lock phase, check if the phase across 360
                     if (variance > PHASE_VARIANCE_THRESHOLD){
+                        #ifdef DEBUG_ON
+                        for (i=0; i<CALIBRATION_CYCLES; i++){
+                            printf("phase samples: %u\r\n", phaseOffset_array[i]);
+                        }
+                        printf("variance: %u\r\n", variance);
+                        #endif
                         for (i=0; i<CALIBRATION_CYCLES; i++){
                             if (phaseOffset_array[i] < 180)
                                 phaseOffset_array[i] += 360;
                         }
                         variance = getVariance(phaseOffset_array, CALIBRATION_CYCLES);
+                        #ifdef DEBUG_ON
+                        printf("new variance: %u\r\n", variance);
+                        #endif
                         if (variance > PHASE_VARIANCE_THRESHOLD)
                             while(1){}
                     }
@@ -311,9 +320,9 @@ PROCESS_THREAD(calibrationProcess, ev, data) {
                     printf("phase offset: %u\r\n", phaseOffset);
                     printf("dc offset: %u\r\n", dcOffset);
                     printf("variance: %u\r\n", variance);
-                    for (i=0; i<CALIBRATION_CYCLES; i++){
-                        printf("phase Offset %u: %u\r\n", i, phaseOffset_array[i]);
-                    }
+                    //for (i=0; i<CALIBRATION_CYCLES; i++){
+                    //    printf("phase Offset %u: %u\r\n", i, phaseOffset_array[i]);
+                    //}
                     #endif
 
                     // write to flash
@@ -328,7 +337,7 @@ PROCESS_THREAD(calibrationProcess, ev, data) {
                 }
             }
             else{
-                etimer_set(&calibration_timer, CLOCK_SECOND*0.5);
+                etimer_set(&calibration_timer, CLOCK_SECOND*1);
             }
             #ifdef DATADUMP
             if (cycleCnt < CALIBRATION_CYCLES)
