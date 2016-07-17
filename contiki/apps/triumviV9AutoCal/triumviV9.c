@@ -243,6 +243,7 @@ PROCESS_THREAD(calibrationProcess, ev, data) {
             ad5274_init();
             ad5274_ctrl_reg_write(AD5274_REG_RDAC_RP);
             setINAGain(inaGainArr[inaGainIdx]);
+            i2c_disable(I2C_SDA_GPIO_NUM, I2C_SDA_GPIO_PIN, I2C_SCL_GPIO_NUM, I2C_SCL_GPIO_PIN); 
 
             // Enable comparator interrupt
             GPIO_DETECT_RISING(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
@@ -281,11 +282,12 @@ PROCESS_THREAD(calibrationProcess, ev, data) {
                 cycleCnt += 1;
                 
                 if (cycleCnt < CALIBRATION_CYCLES){
+                    triumviLEDOFF();
                     etimer_set(&calibration_timer, CLOCK_SECOND*0.1);
                 }
                 else{
                     #ifdef DATADUMP
-                    etimer_set(&calibration_timer, CLOCK_SECOND*0.1);
+                    etimer_set(&calibration_timer, CLOCK_SECOND*1);
                     #else
                     meterSenseVREn(SENSE_DISABLE);
                     meterSenseConfig(VOLTAGE, SENSE_DISABLE);
@@ -339,12 +341,6 @@ PROCESS_THREAD(calibrationProcess, ev, data) {
             else{
                 etimer_set(&calibration_timer, CLOCK_SECOND*1);
             }
-            #ifdef DATADUMP
-            if (cycleCnt < CALIBRATION_CYCLES)
-                triumviLEDOFF();
-            #else
-            triumviLEDOFF();
-            #endif
         }
     }
 
