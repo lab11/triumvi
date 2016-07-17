@@ -243,7 +243,7 @@ PROCESS_THREAD(calibrationProcess, ev, data) {
             ad5274_init();
             ad5274_ctrl_reg_write(AD5274_REG_RDAC_RP);
             setINAGain(inaGainArr[inaGainIdx]);
-            i2c_disable(I2C_SDA_GPIO_NUM, I2C_SDA_GPIO_PIN, I2C_SCL_GPIO_NUM, I2C_SCL_GPIO_PIN); 
+            i2c_disable(AD527X_SDA_GPIO_NUM, AD527X_SDA_GPIO_PIN, AD527X_SCL_GPIO_NUM, AD527X_SCL_GPIO_PIN); 
 
             // Enable comparator interrupt
             GPIO_DETECT_RISING(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
@@ -310,8 +310,16 @@ PROCESS_THREAD(calibrationProcess, ev, data) {
                         #ifdef DEBUG_ON
                         printf("new variance: %u\r\n", variance);
                         #endif
-                        if (variance > PHASE_VARIANCE_THRESHOLD)
+                        if (variance > PHASE_VARIANCE_THRESHOLD){
+                            if (batteryPackIsAttached()){
+                                batteryPackVoltageEn(SENSE_ENABLE);
+                                batteryPackInit();
+                                batteryPackLEDDriverInit();
+                                batteryPackLEDOn(BATTERY_PACK_LED_RED);
+                                i2c_disable(I2C_SDA_GPIO_NUM, I2C_SDA_GPIO_PIN, I2C_SCL_GPIO_NUM, I2C_SCL_GPIO_PIN); 
+                            }
                             while(1){}
+                        }
                     }
                     phaseOffset = getAverage(phaseOffset_array, CALIBRATION_CYCLES);
                     if (phaseOffset >= 360)
@@ -334,6 +342,22 @@ PROCESS_THREAD(calibrationProcess, ev, data) {
                     operation_mode = MODE_NORMAL;
                     process_start(&triumviProcess, NULL);
                     triumviLEDOFF();
+                    if (batteryPackIsAttached()){
+                        batteryPackVoltageEn(SENSE_ENABLE);
+                        batteryPackInit();
+                        batteryPackLEDDriverInit();
+                        batteryPackLEDOn(BATTERY_PACK_LED_GREEN);
+                        i2c_disable(I2C_SDA_GPIO_NUM, I2C_SDA_GPIO_PIN, I2C_SCL_GPIO_NUM, I2C_SCL_GPIO_PIN); 
+                        clock_delay_usec(50000);
+                        batteryPackLEDOff(BATTERY_PACK_LED_GREEN);
+                        batteryPackVoltageEn(SENSE_DISABLE);
+                    }
+                    // disable UART before returning to normal state
+                    #if defined(DEBUG_ON) || defined(DATADUMP)
+                    GPIO_SET_OUTPUT(GPIO_A_BASE, 0x47);
+                    GPIO_CLR_PIN(GPIO_A_BASE, 0x07);
+                    disable_all_ioc_override();
+                    #endif
                     break;
                     #endif
                 }
