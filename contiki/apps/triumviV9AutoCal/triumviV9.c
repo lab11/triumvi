@@ -46,8 +46,9 @@
 #define LOWERTHRESHOLD  185 // max value below this, gain is too small
 
 // number of samples per cycle
-#define BUF_SIZE 120    // sample current only, 11-bit resolution
-#define BUF_SIZE2 113   // sample both current and voltage, 10-bit resolution
+#define BUF_SIZE 120        // sample current only, 11-bit resolution, 1 cycles
+#define BUF_SIZE2 225       // sample both current and voltage, 10-bit resolution, 2 cycles
+#define MAX_BUF_SIZE 225    // max(BUF_SIZE, BUF_SIZE2)
 
 // number of calibration cycles
 #define CALIBRATION_CYCLES 512
@@ -59,6 +60,10 @@
 #define MAX_INA_GAIN_IDX 4
 #define MIN_INA_GAIN_IDX 1
 
+// voltage isolation filter offset
+#define VOLTAGE_SAMPLE_OFFSET 19
+// voltage scaling constant
+#define VOLTAGE_SCALING 1.067
 
 const uint8_t inaGainArr[6] = {1, 2, 3, 5, 9, 17};
 
@@ -81,6 +86,11 @@ typedef enum {
     STATE_TRIUMVI_LEDBLINK
 } triumvi_state_t;
 
+typedef enum {
+    STATE_CALIBRATION_IN_PROGRESS,
+    STATE_CALIBRATION_COMPLETED
+} triumvi_state_calibration_t;
+
 volatile static triumvi_state_t myState;
 
 /* global variables */
@@ -88,10 +98,10 @@ volatile static triumvi_state_t myState;
 const uint32_t flash_addr = FLASH_BASE - 2*FLASH_ERASE_SIZE + FLASH_SIZE;
 volatile uint32_t flash_data;
 
-uint32_t timerVal[BUF_SIZE];
-uint16_t currentADCVal[BUF_SIZE];
-int adjustedADCSamples[BUF_SIZE];
-uint16_t voltADCVal[BUF_SIZE2+2]; // compensate the voltage sample offset
+uint32_t timerVal[MAX_BUF_SIZE];
+uint16_t currentADCVal[MAX_BUF_SIZE];
+int adjustedADCSamples[MAX_BUF_SIZE];
+uint16_t voltADCVal[BUF_SIZE2]; 
 
 volatile uint16_t phaseOffset;
 volatile uint16_t dcOffset;
@@ -107,7 +117,6 @@ volatile uint8_t backOffTime;
 volatile uint8_t backOffHistory;
 volatile uint8_t inaGainIdx;
 volatile uint8_t allInitsAreReadyInt;
-
 
 /* End of global variables */
 
@@ -143,7 +152,7 @@ void encryptAndTransmit(uint8_t triumviStatusReg, int avgPower, uint8_t* myNonce
 void packData(uint8_t* dest, int reading);
 
 float currentDataTransform(int currentReading, uint8_t externalVolt);
-int voltDataTransform(uint16_t voltReading, uint16_t voltReference);
+float voltDataTransform(uint16_t voltReading, uint16_t voltReference);
 // functions do not use in data dump mode
 #if !defined(DATADUMP) && !defined(DATADUMP2) && !defined(DEBUG_ON)
 static void disable_all_ioc_override();
@@ -214,6 +223,7 @@ PROCESS_THREAD(calibrationProcess, ev, data) {
     static uint16_t cycleCnt = 0;
     uint16_t i;
     gainSetting_t gainSetting;
+    static triumvi_state_calibration_t calibration_state = STATE_CALIBRATION_IN_PROGRESS;
     #ifdef DATADUMP
     uint8_t inaGain;
     #else
@@ -236,119 +246,137 @@ PROCESS_THREAD(calibrationProcess, ev, data) {
 
     while (1){
         PROCESS_YIELD();
-        if (etimer_expired(&calibration_timer)){
-            triumviLEDON();
+        switch (calibration_state){
+            case STATE_CALIBRATION_IN_PROGRESS:
+                if (etimer_expired(&calibration_timer)){
+                    triumviLEDON();
 
-            // Enable digital pot
-            ad5274_init();
-            ad5274_ctrl_reg_write(AD5274_REG_RDAC_RP);
-            setINAGain(inaGainArr[inaGainIdx]);
-            i2c_disable(AD527X_SDA_GPIO_NUM, AD527X_SDA_GPIO_PIN, AD527X_SCL_GPIO_NUM, AD527X_SCL_GPIO_PIN); 
+                    // Enable digital pot
+                    ad5274_init();
+                    ad5274_ctrl_reg_write(AD5274_REG_RDAC_RP);
+                    setINAGain(inaGainArr[inaGainIdx]);
+                    i2c_disable(AD527X_SDA_GPIO_NUM, AD527X_SDA_GPIO_PIN, AD527X_SCL_GPIO_NUM, AD527X_SCL_GPIO_PIN); 
 
-            // Enable comparator interrupt
-            GPIO_DETECT_RISING(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
-            meterVoltageComparator(SENSE_ENABLE);
-            ungate_gpt(GPTIMER_1);
-            REG(SYSTICK_STCTRL) &= (~SYSTICK_STCTRL_INTEN);
+                    // Enable comparator interrupt
+                    GPIO_DETECT_RISING(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
+                    meterVoltageComparator(SENSE_ENABLE);
+                    ungate_gpt(GPTIMER_1);
+                    REG(SYSTICK_STCTRL) &= (~SYSTICK_STCTRL_INTEN);
 
-            // waiting for comparator interrupt
-            while (referenceInt==0){}
-            sampleCurrentWaveform();
-            referenceInt = 0;
+                    // waiting for comparator interrupt
+                    while (referenceInt==0){}
+                    sampleCurrentWaveform();
+                    referenceInt = 0;
 
-            // resume systick
-            REG(SYSTICK_STCTRL) |= SYSTICK_STCTRL_INTEN;
-            gate_gpt(GPTIMER_1);
+                    // resume systick
+                    REG(SYSTICK_STCTRL) |= SYSTICK_STCTRL_INTEN;
+                    gate_gpt(GPTIMER_1);
 
-            // check INA gain setting
-            gainSetting = gainCtrl(currentADCVal, 0x0);
+                    // check INA gain setting
+                    gainSetting = gainCtrl(currentADCVal, 0x0);
 
-            if (gainSetting == GAIN_OK){
-                #ifdef DATADUMP
-                // print data through UART
-                inaGain = inaGainArr[inaGainIdx];
-                printf("ADC reference: %u\r\n", getAverage(currentADCVal, BUF_SIZE));
-                printf("Time difference: %lu\r\n", (timerVal[0]-timerVal[1]));
-                printf("INA Gain: %u\r\n", inaGain);
-                for (i=0; i<BUF_SIZE; i+=1){
-                    printf("Current reading: %d\r\n", currentADCVal[i]);
-                }
-                #else
-                // perform phase, dc offset calculation
-                calculatedPhase = phaseMatchFilter(currentADCVal, &currentRef);
-                phaseOffset_array[cycleCnt] = calculatedPhase;
-                dcOffset_accum += currentRef;
-                #endif
-                cycleCnt += 1;
-                
-                if (cycleCnt < CALIBRATION_CYCLES){
-                    triumviLEDOFF();
-                    etimer_set(&calibration_timer, CLOCK_SECOND*0.1);
-                }
-                else{
-                    #ifdef DATADUMP
-                    etimer_set(&calibration_timer, CLOCK_SECOND*1);
-                    #else
-                    meterSenseVREn(SENSE_DISABLE);
-                    meterSenseConfig(VOLTAGE, SENSE_DISABLE);
-                    meterSenseConfig(CURRENT, SENSE_DISABLE);
-
-                    variance = getVariance(phaseOffset_array, CALIBRATION_CYCLES);
-                    // cannot lock phase, check if the phase across 360
-                    if (variance > PHASE_VARIANCE_THRESHOLD){
-                        #ifdef DEBUG_ON
-                        for (i=0; i<CALIBRATION_CYCLES; i++){
-                            printf("phase samples: %u\r\n", phaseOffset_array[i]);
+                    if (gainSetting == GAIN_OK){
+                        #ifdef DATADUMP
+                        // print data through UART
+                        inaGain = inaGainArr[inaGainIdx];
+                        printf("ADC reference: %u\r\n", getAverage(currentADCVal, BUF_SIZE));
+                        printf("Time difference: %lu\r\n", (timerVal[0]-timerVal[1]));
+                        printf("INA Gain: %u\r\n", inaGain);
+                        for (i=0; i<BUF_SIZE; i+=1){
+                            printf("Current reading: %d\r\n", currentADCVal[i]);
                         }
-                        printf("variance: %u\r\n", variance);
+                        #else
+                        // perform phase, dc offset calculation
+                        calculatedPhase = phaseMatchFilter(currentADCVal, &currentRef);
+                        phaseOffset_array[cycleCnt] = calculatedPhase;
+                        dcOffset_accum += currentRef;
                         #endif
-                        for (i=0; i<CALIBRATION_CYCLES; i++){
-                            if (phaseOffset_array[i] < 180)
-                                phaseOffset_array[i] += 360;
+                        cycleCnt += 1;
+                        
+                        if (cycleCnt < CALIBRATION_CYCLES){
+                            triumviLEDOFF();
+                            etimer_set(&calibration_timer, CLOCK_SECOND*0.1);
                         }
-                        variance = getVariance(phaseOffset_array, CALIBRATION_CYCLES);
-                        #ifdef DEBUG_ON
-                        printf("new variance: %u\r\n", variance);
-                        #endif
-                        if (variance > PHASE_VARIANCE_THRESHOLD){
+                        else{
+                            #ifdef DATADUMP
+                            etimer_set(&calibration_timer, CLOCK_SECOND*1);
+                            #else
+                            meterSenseVREn(SENSE_DISABLE);
+                            meterSenseConfig(VOLTAGE, SENSE_DISABLE);
+                            meterSenseConfig(CURRENT, SENSE_DISABLE);
+
+                            variance = getVariance(phaseOffset_array, CALIBRATION_CYCLES);
+                            // cannot lock phase, check if the phase across 360
+                            if (variance > PHASE_VARIANCE_THRESHOLD){
+                                #ifdef DEBUG_ON
+                                for (i=0; i<CALIBRATION_CYCLES; i++){
+                                    printf("phase samples: %u\r\n", phaseOffset_array[i]);
+                                }
+                                printf("variance: %u\r\n", variance);
+                                #endif
+                                for (i=0; i<CALIBRATION_CYCLES; i++){
+                                    if (phaseOffset_array[i] < 180)
+                                        phaseOffset_array[i] += 360;
+                                }
+                                variance = getVariance(phaseOffset_array, CALIBRATION_CYCLES);
+                                #ifdef DEBUG_ON
+                                printf("new variance: %u\r\n", variance);
+                                #endif
+                                if (variance > PHASE_VARIANCE_THRESHOLD){
+                                    if (batteryPackIsAttached()){
+                                        batteryPackVoltageEn(SENSE_ENABLE);
+                                        batteryPackInit();
+                                        batteryPackLEDDriverInit();
+                                        batteryPackLEDOn(BATTERY_PACK_LED_RED);
+                                        i2c_disable(I2C_SDA_GPIO_NUM, I2C_SDA_GPIO_PIN, I2C_SCL_GPIO_NUM, I2C_SCL_GPIO_PIN); 
+                                    }
+                                    while(1){}
+                                }
+                            }
+                            phaseOffset = getAverage(phaseOffset_array, CALIBRATION_CYCLES);
+                            if (phaseOffset >= 360)
+                                phaseOffset -= 360;
+                            dcOffset = (dcOffset_accum/CALIBRATION_CYCLES);
+                            
+                            #ifdef DEBUG_ON
+                            printf("phase offset: %u\r\n", phaseOffset);
+                            printf("dc offset: %u\r\n", dcOffset);
+                            printf("variance: %u\r\n", variance);
+                            //for (i=0; i<CALIBRATION_CYCLES; i++){
+                            //    printf("phase Offset %u: %u\r\n", i, phaseOffset_array[i]);
+                            //}
+                            #endif
+
+                            // write to flash
+                            tmp = (dcOffset<<16) | phaseOffset;
+                            rom_util_program_flash(&tmp, flash_addr, 4);
+
                             if (batteryPackIsAttached()){
                                 batteryPackVoltageEn(SENSE_ENABLE);
                                 batteryPackInit();
                                 batteryPackLEDDriverInit();
-                                batteryPackLEDOn(BATTERY_PACK_LED_RED);
+                                batteryPackLEDOn(BATTERY_PACK_LED_GREEN);
                                 i2c_disable(I2C_SDA_GPIO_NUM, I2C_SDA_GPIO_PIN, I2C_SCL_GPIO_NUM, I2C_SCL_GPIO_PIN); 
                             }
-                            while(1){}
+
+                            // advances state
+                            calibration_state = STATE_CALIBRATION_COMPLETED;
+                            etimer_set(&calibration_timer, CLOCK_SECOND*3);
+                            #endif // end of DATADUMP
                         }
                     }
-                    phaseOffset = getAverage(phaseOffset_array, CALIBRATION_CYCLES);
-                    if (phaseOffset >= 360)
-                        phaseOffset -= 360;
-                    dcOffset = (dcOffset_accum/CALIBRATION_CYCLES);
-                    
-                    #ifdef DEBUG_ON
-                    printf("phase offset: %u\r\n", phaseOffset);
-                    printf("dc offset: %u\r\n", dcOffset);
-                    printf("variance: %u\r\n", variance);
-                    //for (i=0; i<CALIBRATION_CYCLES; i++){
-                    //    printf("phase Offset %u: %u\r\n", i, phaseOffset_array[i]);
-                    //}
-                    #endif
+                    else{
+                        etimer_set(&calibration_timer, CLOCK_SECOND*1);
+                    }
+                }
+            break;
 
-                    // write to flash
-                    tmp = (dcOffset<<16) | phaseOffset;
-                    rom_util_program_flash(&tmp, flash_addr, 4);
-
+            case STATE_CALIBRATION_COMPLETED:
+                if (etimer_expired(&calibration_timer)){
                     operation_mode = MODE_NORMAL;
                     process_start(&triumviProcess, NULL);
                     triumviLEDOFF();
                     if (batteryPackIsAttached()){
-                        batteryPackVoltageEn(SENSE_ENABLE);
-                        batteryPackInit();
-                        batteryPackLEDDriverInit();
-                        batteryPackLEDOn(BATTERY_PACK_LED_GREEN);
-                        i2c_disable(I2C_SDA_GPIO_NUM, I2C_SDA_GPIO_PIN, I2C_SCL_GPIO_NUM, I2C_SCL_GPIO_PIN); 
-                        clock_delay_usec(50000);
                         batteryPackLEDOff(BATTERY_PACK_LED_GREEN);
                         batteryPackVoltageEn(SENSE_DISABLE);
                     }
@@ -359,12 +387,11 @@ PROCESS_THREAD(calibrationProcess, ev, data) {
                     disable_all_ioc_override();
                     #endif
                     break;
-                    #endif
                 }
-            }
-            else{
-                etimer_set(&calibration_timer, CLOCK_SECOND*1);
-            }
+            break;
+
+            default:
+            break;
         }
     }
 
@@ -487,7 +514,7 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                     sampleCount++;
                     referenceInt = 0;
 
-                    if (avgPower>0){
+                    if (avgPower>=0){
                         #ifdef DATADUMP2
                         uint8_t inaGain;
                         uint8_t i;
@@ -495,9 +522,8 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                         printf("ADC reference: %u\r\n", getAverage(currentADCVal, BUF_SIZE));
                         printf("Time difference: %lu\r\n", (timerVal[0]-timerVal[1]));
                         printf("INA Gain: %u\r\n", inaGain);
-                        for (i=0; i<BUF_SIZE; i+=1){
+                        for (i=0; i<BUF_SIZE; i+=1)
                             printf("Current reading: %d\r\n", currentADCVal[i]);
-                        }
                         // Write data into FRAM
                         #elif defined(FRAM_WRITE)
                         writeFRAM((uint16_t)(avgPower/1000), &rtctime);
@@ -596,9 +622,9 @@ uint16_t phaseMatchFilter(uint16_t* adcSamples, uint16_t* currentAVG){
 }
 
 int cycleProduct(uint16_t* adcSamples, uint16_t offset, uint16_t currentRef){
-    uint8_t i;
+    uint16_t i;
     uint16_t tmp;
-    uint8_t length = BUF_SIZE;
+    uint16_t length = BUF_SIZE;
     int product = 0;
     for (i=0; i<length; i++){
         tmp = i*3 + offset;
@@ -726,7 +752,7 @@ void meterInit(){
 
 // this function check if the ADC samples are within a proper range
 gainSetting_t gainCtrl(uint16_t* adcSamples, uint8_t externalVolt){
-    uint8_t i;
+    uint16_t i;
     uint16_t upperThreshold = UPPERTHRESHOLD;
     uint16_t lowerThreshold = LOWERTHRESHOLD;
     uint16_t length = BUF_SIZE;
@@ -833,26 +859,27 @@ void encryptAndTransmit(uint8_t triumviStatusReg, int avgPower, uint8_t* myNonce
 int sampleAndCalculate(uint8_t triumviStatusReg){
     int tempPower;
     int tempPower2 = 0;
-    uint8_t i;
-    uint16_t j;
-    uint8_t numOfCycles = 16;
-    uint8_t numOfBitShift = 4; // log2(numOfCycles)
+    uint16_t i, j, k;
+    uint8_t numOfCycles = 8;
+    uint8_t numOfBitShift = 3; // log2(numOfCycles)
     uint16_t voltRef;
     float energyCal = 0;
     gainSetting_t gainSetting;
+
     if (triumviStatusReg & EXTERNALVOLT_STATUSREG){
         for (i=0; i<numOfCycles; i++){
             sampleCurrentVoltageWaveform();
-            gainSetting = gainCtrl(currentADCVal, 0x0);
+            gainSetting = gainCtrl(currentADCVal, 0x1);
             if (gainSetting == GAIN_OK){
-                // shift two samples
-                voltADCVal[BUF_SIZE2] = voltADCVal[0];
-                voltADCVal[BUF_SIZE2+1] = voltADCVal[1];
                 voltRef = getAverage(voltADCVal, BUF_SIZE2);
+                energyCal = 0;
                 for (j=0; j<BUF_SIZE2; j++){
-                    energyCal += currentDataTransform(adjustedADCSamples[i], 0x1)*voltDataTransform(voltADCVal[i], voltRef);
+                    k = ((j + VOLTAGE_SAMPLE_OFFSET)>=BUF_SIZE2)? 
+                        (j+VOLTAGE_SAMPLE_OFFSET-BUF_SIZE2) : 
+                        j+VOLTAGE_SAMPLE_OFFSET;
+                    energyCal += currentDataTransform(adjustedADCSamples[j], 0x1)*voltDataTransform(voltADCVal[k], voltRef);
                 }
-                tempPower = energyCal/BUF_SIZE2; // unit is mW
+                tempPower = (int)(energyCal/BUF_SIZE2); // unit is mW
                 // Fix phase oppsite down
                 if (tempPower < 0)
                     tempPower = -1*tempPower;
@@ -881,9 +908,7 @@ int sampleAndCalculate(uint8_t triumviStatusReg){
         gate_gpt(GPTIMER_1);
         if (gainSetting==GAIN_OK){
             for (i=0; i<BUF_SIZE; i++){
-                j = i*3 + phaseOffset;
-                if (j>=360)
-                    j -= 360;
+                j = ((i*3+phaseOffset) >= 360)? i*3+phaseOffset-360 : i*3+phaseOffset;
                 energyCal += (currentDataTransform(adjustedADCSamples[i], 0x0)*stdSineTable[j]);
             }
             tempPower = (int)(energyCal/BUF_SIZE); // unit is mW
@@ -916,9 +941,10 @@ float currentDataTransform(int currentReading, uint8_t externalVolt){
     }
 }
 
-int voltDataTransform(uint16_t voltReading, uint16_t voltReference){
-	float voltageScaling = 1.262;
-	return (int)((voltReading - voltReference)*voltageScaling);
+float voltDataTransform(uint16_t voltReading, uint16_t voltReference){
+    float tmp;
+    tmp = (voltReading - voltReference)*VOLTAGE_SCALING;
+    return tmp;
 }
 
 void packData(uint8_t* dest, int reading){
