@@ -484,8 +484,10 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                         triumviStatusReg |= EXTERNALVOLT_STATUSREG;
                     if (sampleCount == 0)
                         triumviStatusReg |= FIRSTSAMPLE_STATUSREG;
-                    if (vcapLoopBack())
+                    if (vcapLoopBack()){
                         triumviStatusReg |= ((THREEPHASE_ID & 0x3)<<4);
+                            triumviLEDON();
+                    }
                     #ifdef FRAM_WRITE
                     triumviStatusReg |= FRAMWRITE_STATUSREG;
                     #endif
@@ -548,7 +550,7 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                             myState = STATE_BATTERYPACK_LEDBLINK;
                         }
                         else{
-                            triumviLEDON();
+                            //triumviLEDON();
                             myState = STATE_TRIUMVI_LEDBLINK;
                         }
                         rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.1, 1, &rtimerEvent, NULL);
@@ -688,6 +690,7 @@ void meterInit(){
     // Port B
     GPIO_SET_OUTPUT(GPIO_B_BASE, 0x06);
     GPIO_CLR_PIN(GPIO_B_BASE, 0x06);
+    GPIO_SET_INPUT(TRIUMVI_RDYn_IN_GPIO_BASE, (0x1<<TRIUMVI_RDYn_IN_GPIO_PIN));
 
     // Port C
     GPIO_SET_OUTPUT(GPIO_C_BASE, 0xeb);
@@ -697,6 +700,7 @@ void meterInit(){
     GPIO_SET_OUTPUT(GPIO_D_BASE, 0x1f);
     GPIO_SET_PIN(GPIO_D_BASE, 0x0f);
     GPIO_CLR_PIN(GPIO_D_BASE, 0x10);
+    GPIO_SET_INPUT(CONFIG_VCAP_LOOPBACK_GPIO_BASE, (0x1<<CONFIG_VCAP_LOOPBACK_GPIO_PIN));
     #if !defined(DATADUMP) && !defined(DATADUMP2) && !defined(DEBUG_ON)
     // disable all pull-up resistors
     disable_all_ioc_override();

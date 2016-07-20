@@ -141,7 +141,7 @@ void unitReady(){
 }
 
 uint8_t allUnitsReady(){
-    uint8_t tmp = GPIO_READ_PIN(TRIUMVI_RDYn_IN_GPIO_BASE, 0x1<<TRIUMVI_RDYn_IN_GPIO_PIN)>>TRIUMVI_RDYn_IN_GPIO_PIN;
+    uint8_t tmp = GPIO_READ_PIN(TRIUMVI_RDYn_IN_GPIO_BASE, (0x1<<TRIUMVI_RDYn_IN_GPIO_PIN));
     if (tmp>0)
         return 0;
     else
@@ -149,7 +149,11 @@ uint8_t allUnitsReady(){
 }
 
 uint8_t vcapLoopBack(){
-    return GPIO_READ_PIN(CONFIG_VCAP_LOOPBACK_GPIO_BASE, 0x1<<CONFIG_VCAP_LOOPBACK_GPIO_PIN)>>CONFIG_VCAP_LOOPBACK_GPIO_PIN;
+    uint8_t tmp = GPIO_READ_PIN(CONFIG_VCAP_LOOPBACK_GPIO_BASE, (0x1<<CONFIG_VCAP_LOOPBACK_GPIO_PIN));
+    if (tmp>0)
+        return 1;
+    else
+        return 0;
 }
 #endif
 
