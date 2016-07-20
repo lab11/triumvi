@@ -51,7 +51,7 @@ static uint8_t resetCnt = 0;
                         UDMA_CHCTL_SRCSIZE_8 | \
                         UDMA_CHCTL_ARBSIZE_4 | \
                         UDMA_CHCTL_XFERMODE_BASIC)
-#define LED_DEBUG
+//#define LED_DEBUG
 #define RESET_THRESHOLD 32  // if edison did not respond within 32 packets, reset CC2538
 
 typedef enum{
@@ -196,6 +196,9 @@ PROCESS_THREAD(spiProcess, ev, data) {
 
             /* Wait SPI from Edison*/
             case SPI_WAIT:
+                #ifdef LED_DEBUG
+                leds_on(LEDS_BLUE);
+                #endif
                 if (spi_rxfifo_halffull==1){
                     spi_rxfifo_halffull = 0; 
                     spi_data_ptr += spix_get_data(SPIDEV, spi_data_fifo+spi_data_ptr);
@@ -259,7 +262,7 @@ PROCESS_THREAD(spiProcess, ev, data) {
                     }
                     spi_data_ptr = 0;
                     #ifndef LED_DEBUG
-                    leds_on(LEDS_BLUE);
+                    leds_off(LEDS_BLUE);
                     #else
                     leds_on(LEDS_RED);
                     leds_off(LEDS_GREEN);
