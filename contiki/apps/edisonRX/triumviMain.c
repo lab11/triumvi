@@ -19,15 +19,18 @@
 #include "dev/udma.h"
 
 
+#define EXTERNALVOLT_STATUSREG 0x0080
+#define BATTERYPACK_STATUSREG  0x0040
+#define FRAMWRITE_STATUSREG    0x0008
+#define POWERFACTOR_STATUSREG  0x0004
 
 /* Triumvi received packet buffer */
 typedef struct{
-    uint8_t payload[16];
+    uint8_t payload[28];
     uint8_t length;
 } triumviPacket_t;
 
 #define TRIUMVI_PACKET_BUF_LEN 32
-
 static triumviPacket_t triumviRXPackets[TRIUMVI_PACKET_BUF_LEN];
 static uint8_t triumviAvailIDX = 0;
 static uint8_t triumviFullIDX = 0;
@@ -38,6 +41,9 @@ static uint8_t spi_cs_int = 0;
 static uint8_t spiInUse = 0;
 
 static uint8_t resetCnt = 0;
+
+const uint8_t possible_packet_length[] = {5, 7, 17, 19};
+#define POSSIBLE_PKT_LEN_COMBINATION 4
 
 /* spi interface */
 #define SPIDEV          0
@@ -301,7 +307,7 @@ PROCESS_THREAD(decryptProcess, ev, data) {
     uint8_t auth_res;
     uint8_t myPDATA_LEN;
 
-    uint16_t i;
+    uint16_t i, j, k;
     uint8_t tmp;
 
     packet_header_t rx_pkt_header;
@@ -324,11 +330,14 @@ PROCESS_THREAD(decryptProcess, ev, data) {
         src_addr_len = rx_pkt_header.pkt_src_addr_len;
 
         // data format: 
-        // 1 byte ID, 
-        // 8 byte source addr, 
-        // 4 byte power, 
-        // 1 byte status reg
-        // 2 byte panel/circuit ID (optional)
+        // 1 bytes ID, 
+        // 8 bytes source addr, 
+        // 4 bytes power, 
+        // 1 bytes status reg
+        // 2 bytes panel/circuit ID (optional)
+        // 4 bytes pf (optional)
+        // 4 bytes VRMS (optional)
+        // 4 bytes IRMS (optional)
 
         // RX buffer is not full
         if (triumviRXBufFull==0){
@@ -344,8 +353,8 @@ PROCESS_THREAD(decryptProcess, ev, data) {
             if (packet_ptr[0]==TRIUMVI_PKT_IDENTIFIER){
                 memcpy(myNonce, srcExtAddr, 8);
                 memcpy(&myNonce[9], &packetPayload[1], 4); // Nonce[8] should be 0
-                myPDATA_LEN = PDATA_LEN;
-                for (i=0; i<2; i++){
+                for (i=0; i<POSSIBLE_PKT_LEN_COMBINATION; i++){ 
+                    myPDATA_LEN = possible_packet_length[i];
                     memcpy(packetDuplicated, &packetPayload[5], packet_length-5);
                     ccm_auth_decrypt_start(LEN_LEN, 0, myNonce, aData, ADATA_LEN, 
                         cData, (myPDATA_LEN+MIC_LEN), MIC_LEN, NULL);
@@ -353,10 +362,6 @@ PROCESS_THREAD(decryptProcess, ev, data) {
                     auth_res = ccm_auth_decrypt_get_result(cData, myPDATA_LEN+MIC_LEN, myMic, MIC_LEN);
                     if (auth_res==CRYPTO_SUCCESS)
                         break;
-                    // Only for Triumvi packet identidier, since it chould have 
-                    // two different length
-                    else
-                        myPDATA_LEN += 2;
                 }
                 // succefully decoded the packet, pack the data into buffer
                 if (auth_res==CRYPTO_SUCCESS){
@@ -366,11 +371,23 @@ PROCESS_THREAD(decryptProcess, ev, data) {
                         triumviRXPackets[triumviAvailIDX].payload[tmp+i] = cData[i];
                     }
                     triumviRXPackets[triumviAvailIDX].payload[tmp+4] = cData[4]; // Status register
+                    j = 5;
+                    k = 5;
                     if (cData[4]&BATTERYPACK_STATUSREG){
-                        triumviRXPackets[triumviAvailIDX].payload[tmp+5] = cData[5]; // Panel ID
-                        triumviRXPackets[triumviAvailIDX].payload[tmp+6] = cData[6]; // Circuit ID
+                        triumviRXPackets[triumviAvailIDX].payload[tmp+j] = cData[k]; // Panel ID
+                        triumviRXPackets[triumviAvailIDX].payload[tmp+j+1] = cData[k+1]; // Circuit ID
                         triumviRXPackets[triumviAvailIDX].length += 2;
+                        j += 2;
+                        k += 2;
                     }
+                    // PF, VRMS, IRMS
+                    if (cData[4]&POWERFACTOR_STATUSREG){
+                        for (i=0; i<12; i++){
+                            triumviRXPackets[triumviAvailIDX].payload[tmp+j+i] = cData[k+i];
+                        }
+                        triumviRXPackets[triumviAvailIDX].length += 12;
+                    }
+                    // base length
                     triumviRXPackets[triumviAvailIDX].length += 5;
                     
                     // check if fifo is full

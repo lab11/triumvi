@@ -111,8 +111,8 @@ static const spi_slave_reg_t spi_slave_regs[SSI_INSTANCE_COUNT] = {
 
 void spix_slave_init(uint8_t spi);
 void spix_enable(uint8_t spi);
-inline int spix_check_rx_fifo_empty(uint8_t spi);
-inline uint32_t spix_check_tx_fifo_full(uint8_t spi);
+uint8_t spix_check_rx_fifo_empty(uint8_t spi);
+uint8_t spix_check_tx_fifo_full(uint8_t spi);
 uint8_t spix_get_data(uint8_t spi, uint8_t* data);
 void spix_put_data(uint8_t spi, uint8_t* data, uint8_t data_length);
 void spix_put_data_single(uint8_t spi, uint8_t data);

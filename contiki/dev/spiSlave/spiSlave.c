@@ -76,7 +76,7 @@ void spix_enable(uint8_t spi){
 }
 
 // return 1 if rx fifo is empty
-inline int spix_check_rx_fifo_empty(uint8_t spi){
+uint8_t spix_check_rx_fifo_empty(uint8_t spi){
   const spi_slave_reg_t* regs = &spi_slave_regs[spi];
   if ((REG(regs->base + SSI_SR) & SSI_SR_RNE_M) > 0)
     return 0;
@@ -85,7 +85,7 @@ inline int spix_check_rx_fifo_empty(uint8_t spi){
 }
 
 // return 1 if tx fifo is full
-inline uint32_t spix_check_tx_fifo_full(uint8_t spi){
+uint8_t spix_check_tx_fifo_full(uint8_t spi){
   const spi_slave_reg_t* regs = &spi_slave_regs[spi];
   if ((REG(regs->base + SSI_SR) & SSI_SR_TNF_M) > 0)
     return 0;
