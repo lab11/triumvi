@@ -34,8 +34,8 @@
 #define FIRSTSAMPLE_STATUSREG  0x0100
 #define EXTERNALVOLT_STATUSREG 0x0080
 #define BATTERYPACK_STATUSREG  0x0040
-#define THREEPHASE_STATUSREG   0x0030
 #define FRAMWRITE_STATUSREG    0x0008
+#define POWERFACTOR_STATUSREG  0x0004
 
 #define FLASH_BASE 0x200000
 #define FLASH_SIZE 0x80000 //rom_util_get_flash_size()
@@ -63,7 +63,7 @@
 // voltage isolation filter offset
 #define VOLTAGE_SAMPLE_OFFSET 19
 // voltage scaling constant
-#define VOLTAGE_SCALING 1.067
+#define VOLTAGE_SCALING 1092
 
 const uint8_t inaGainArr[6] = {1, 2, 3, 5, 9, 17};
 
@@ -98,10 +98,11 @@ volatile static triumvi_state_t myState;
 const uint32_t flash_addr = FLASH_BASE - 2*FLASH_ERASE_SIZE + FLASH_SIZE;
 volatile uint32_t flash_data;
 
-uint32_t timerVal[MAX_BUF_SIZE];
+uint32_t timerVal[2];
 uint16_t currentADCVal[MAX_BUF_SIZE];
-int adjustedADCSamples[MAX_BUF_SIZE];
+int adjustedCurrSamples[MAX_BUF_SIZE];
 uint16_t voltADCVal[BUF_SIZE2]; 
+int adjustedVoltSamples[BUF_SIZE2];
 
 volatile uint16_t phaseOffset;
 volatile uint16_t dcOffset;
@@ -147,22 +148,23 @@ void sampleCurrentVoltageWaveform();
 // power gate to current sensing, disable POT
 void disablePOT();
 // encrypt data using AES, and wirelessly transmit packet
-void encryptAndTransmit(uint16_t triumviStatusReg, int avgPower, uint8_t* myNonce, uint32_t nonceCounter);
+void encryptAndTransmit(uint16_t triumviStatusReg, int avgPower, float pf, 
+        uint32_t VRMS, uint32_t IRMS, uint8_t* myNonce, uint32_t nonceCounter);
 // split a uint32_t into 4 uint8_t
 void packData(uint8_t* dest, int reading);
 
-float currentDataTransform(int currentReading, uint8_t externalVolt);
-float voltDataTransform(uint16_t voltReading, uint16_t voltReference);
+int currentDataTransform(int currentReading, uint8_t externalVolt);
+int voltDataTransform(uint16_t voltReading, uint16_t voltReference);
 // functions do not use in data dump mode
 #if !defined(DATADUMP) && !defined(DATADUMP2) && !defined(DEBUG_ON)
 static void disable_all_ioc_override();
 #endif
 
 
-float powerFactor(int* currentSamples, uint16_t triumviStatusReg, int realPower);
-uint32_t currentRMS(int* data, uint16_t triumviStatusReg);
+float powerFactor(uint16_t triumviStatusReg, int realPower, uint32_t* VRMS, uint32_t* IRMS);
+uint32_t currentRMS(uint16_t triumviStatusReg);
 uint32_t mysqrt(uint32_t n);
-uint32_t voltageRMS();
+uint32_t voltageRMS(uint16_t triumviStatusReg);
 
 // ISRs
 static void rtimerEvent(struct rtimer *t, void *ptr);
@@ -421,7 +423,9 @@ PROCESS_THREAD(triumviProcess, ev, data) {
     uint8_t rdy;
 
     uint16_t triumviStatusReg;
+
     float pf;
+    static uint32_t VRMS, IRMS;
 
 	// Keep a counter of the number of samples we have taken
 	// since we have been on. This will obviously get reset if we lose power.
@@ -497,6 +501,10 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                     triumviStatusReg |= FRAMWRITE_STATUSREG;
                     #endif
 
+                    #ifdef POWERFACTOR_EN
+                    triumviStatusReg |= POWERFACTOR_STATUSREG;
+                    #endif
+
                     // Check if configuration board is attached
                     if (batteryPackIsAttached())
                         triumviStatusReg |= BATTERYPACK_STATUSREG;
@@ -537,9 +545,11 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                         #else
                         nonceCounter = random_rand();
                         
-                        //pf = powerFactor(adjustedADCSamples, triumviStatusReg, avgPower);
-                        //avgPower = (int)(currentRMS(adjustedADCSamples, triumviStatusReg)*1000);
-                        //avgPower = (int)(pf*1000000);
+                        if (triumviStatusReg & POWERFACTOR_STATUSREG){
+                            pf = powerFactor(triumviStatusReg, avgPower, &VRMS, &IRMS);
+                            if (pf>1)
+                                pf = 1;
+                        }
                         
                         // Battery pack attached, turn it on ans samples switches
                         if (triumviStatusReg & BATTERYPACK_STATUSREG){
@@ -547,7 +557,7 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                             sx1509b_init();
                             sx1509b_high_voltage_input_enable(SX1509B_PORTA, 0x1, SX1509B_HIGH_INPUT_ENABLE);
                         }
-                        encryptAndTransmit(triumviStatusReg, avgPower, myNonce, nonceCounter);
+                        encryptAndTransmit(triumviStatusReg, avgPower, pf, VRMS, IRMS, myNonce, nonceCounter);
                         #endif
                         // First sample, blinks battery pack blue LED
                         if (batteryPackIsUSBAttached() &&
@@ -674,7 +684,7 @@ void sampleCurrentWaveform(){
 	uint16_t sampleCnt = 0;
 	uint16_t temp;
 	while (sampleCnt < BUF_SIZE){
-		timerVal[sampleCnt] = get_event_time(GPTIMER_1, GPTIMER_SUBTIMER_A);
+		timerVal[(sampleCnt%2)] = get_event_time(GPTIMER_1, GPTIMER_SUBTIMER_A);
 		temp = adc_get(I_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_512);
 		currentADCVal[sampleCnt] = ((temp>>4)>2047)? 0 : (temp>>4);
 		sampleCnt++;
@@ -812,7 +822,7 @@ gainSetting_t gainCtrl(uint16_t* adcSamples, uint8_t externalVolt){
         if (currentCal > maxVal){
             maxVal = currentCal;
         }
-        adjustedADCSamples[i] = currentCal;
+        adjustedCurrSamples[i] = currentCal;
     }
     
     if ((maxVal < lowerThreshold) && (inaGainIdx<MAX_INA_GAIN_IDX)){
@@ -824,11 +834,13 @@ gainSetting_t gainCtrl(uint16_t* adcSamples, uint8_t externalVolt){
     return res;
 }
 
-void encryptAndTransmit(uint16_t triumviStatusReg, int avgPower, uint8_t* myNonce, uint32_t nonceCounter){
-	// 1 byte Identifier, 4 bytes nonce, 5~7 bytes payload, 4 byte MIC
-	static uint8_t packetData[16];
-	// 4 bytes reading, 1 byte status reg, (1 byte panel ID, 1 byte circuit ID optional)
-	static uint8_t readingBuf[7];
+void encryptAndTransmit(uint16_t triumviStatusReg, int avgPower, float pf, 
+        uint32_t VRMS, uint32_t IRMS, uint8_t* myNonce, uint32_t nonceCounter){
+	// 1 byte Identifier, 4 bytes nonce, 5~19 bytes payload, 4 byte MIC
+	static uint8_t packetData[28];
+	// 4 bytes reading, 1 byte status reg, 
+    // (1 bytes panel ID, 1 bytes circuit ID, 4 bytes PF, 4 bytes VRMS, 4 bytes IRMS optional)
+	static uint8_t readingBuf[19];
 	uint8_t* aData = myNonce;
 	uint8_t* pData = readingBuf;
 	uint8_t myMic[8] = {0x0};
@@ -838,8 +850,8 @@ void encryptAndTransmit(uint16_t triumviStatusReg, int avgPower, uint8_t* myNonc
 
 	packetData[0] = TRIUMVI_PKT_IDENTIFIER;
 	if (triumviStatusReg & BATTERYPACK_STATUSREG){
-		readingBuf[PDATA_LEN] = batteryPackReadPanelID();
-		readingBuf[PDATA_LEN+1] = batteryPackReadCircuitID();
+		readingBuf[myPDATA_LEN] = batteryPackReadPanelID();
+		readingBuf[myPDATA_LEN+1] = batteryPackReadCircuitID();
 		myPDATA_LEN += 2;
 		packetLen += 2;
         batteryPackVoltageEn(SENSE_DISABLE);
@@ -850,6 +862,13 @@ void encryptAndTransmit(uint16_t triumviStatusReg, int avgPower, uint8_t* myNonc
 	packData(&packetData[1], nonceCounter);
 	packData(&myNonce[9], nonceCounter);
 	packData(readingBuf, avgPower);
+    if (triumviStatusReg & POWERFACTOR_STATUSREG){
+        packData(&readingBuf[myPDATA_LEN], (uint32_t)(pf*1000));
+        packData(&readingBuf[myPDATA_LEN+4], VRMS);
+        packData(&readingBuf[myPDATA_LEN+8], IRMS);
+        myPDATA_LEN += 12;
+        packetLen += 12;
+    }
 
 	ccm_auth_encrypt_start(LEN_LEN, 0, myNonce, aData, ADATA_LEN,
 		pData, myPDATA_LEN, MIC_LEN, NULL);
@@ -876,7 +895,7 @@ int sampleAndCalculate(uint16_t triumviStatusReg){
     uint8_t numOfCycles = 8;
     uint8_t numOfBitShift = 3; // log2(numOfCycles)
     uint16_t voltRef;
-    float energyCal = 0;
+    int energyCal = 0;
     gainSetting_t gainSetting;
 
     if (triumviStatusReg & EXTERNALVOLT_STATUSREG){
@@ -890,9 +909,11 @@ int sampleAndCalculate(uint16_t triumviStatusReg){
                     k = ((j + VOLTAGE_SAMPLE_OFFSET)>=BUF_SIZE2)? 
                         (j+VOLTAGE_SAMPLE_OFFSET-BUF_SIZE2) : 
                         j+VOLTAGE_SAMPLE_OFFSET;
-                    energyCal += currentDataTransform(adjustedADCSamples[j], 0x1)*voltDataTransform(voltADCVal[k], voltRef);
+                    adjustedCurrSamples[j] = currentDataTransform(adjustedCurrSamples[j], 0x1);
+                    adjustedVoltSamples[k] = voltDataTransform(voltADCVal[k], voltRef);
+                    energyCal += (adjustedCurrSamples[j]*adjustedVoltSamples[k])/1000;
                 }
-                tempPower = (int)(energyCal/BUF_SIZE2); // unit is mW
+                tempPower = (energyCal/BUF_SIZE2); // unit is mW
                 // Fix phase oppsite down
                 if (tempPower < 0)
                     tempPower = -1*tempPower;
@@ -922,9 +943,10 @@ int sampleAndCalculate(uint16_t triumviStatusReg){
         if (gainSetting==GAIN_OK){
             for (i=0; i<BUF_SIZE; i++){
                 j = ((i*3+phaseOffset) >= 360)? i*3+phaseOffset-360 : i*3+phaseOffset;
-                energyCal += (currentDataTransform(adjustedADCSamples[i], 0x0)*stdSineTable[j]);
+                adjustedCurrSamples[i] = currentDataTransform(adjustedCurrSamples[i], 0x0);
+                energyCal += (adjustedCurrSamples[i]*stdSineTable[j]);
             }
-            tempPower = (int)(energyCal/BUF_SIZE); // unit is mW
+            tempPower = (energyCal/BUF_SIZE); // unit is mW
             // Fix phase oppsite down
             if (tempPower < 0)
                 tempPower = -1*tempPower;
@@ -942,22 +964,14 @@ void disablePOT(){
                 AD527X_SCL_GPIO_NUM, AD527X_SCL_GPIO_PIN); 
 }
 
-float currentDataTransform(int currentReading, uint8_t externalVolt){
+int currentDataTransform(int currentReading, uint8_t externalVolt){
     uint8_t inaGain = inaGainArr[inaGainIdx];
-    // 10-bit ADC
-    if (externalVolt){
-        return currentReading*I_TRANSFORM*2/inaGain;
-    }
-    // 11-Bit ADC
-    else{
-        return currentReading*I_TRANSFORM/inaGain; // ideal, completely linear
-    }
+    float tmp = (externalVolt)? currentReading*I_TRANSFORM*2/inaGain : currentReading*I_TRANSFORM/inaGain;
+    return (int)tmp;
 }
 
-float voltDataTransform(uint16_t voltReading, uint16_t voltReference){
-    float tmp;
-    tmp = (voltReading - voltReference)*VOLTAGE_SCALING;
-    return tmp;
+int voltDataTransform(uint16_t voltReading, uint16_t voltReference){
+    return (voltReading - voltReference)*VOLTAGE_SCALING;
 }
 
 void packData(uint8_t* dest, int reading){
@@ -971,7 +985,7 @@ void sampleCurrentVoltageWaveform(){
 	uint16_t sampleCnt = 0;
 	uint16_t temp;
 	while (sampleCnt < BUF_SIZE2){
-		timerVal[sampleCnt] = get_event_time(GPTIMER_1, GPTIMER_SUBTIMER_A);
+		timerVal[(sampleCnt%2)] = get_event_time(GPTIMER_1, GPTIMER_SUBTIMER_A);
 		temp = adc_get(I_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_256);
 		currentADCVal[sampleCnt] = ((temp>>5)>1023)? 0 : (temp>>5);
 		temp = adc_get(EXT_VOLT_IN_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_256);
@@ -1011,51 +1025,45 @@ static void referenceIntCallBack(uint8_t port, uint8_t pin){
         process_poll(&triumviProcess);
 }
 
-uint32_t currentRMS(int* data, uint16_t triumviStatusReg){
+// unit is mA
+uint32_t currentRMS(uint16_t triumviStatusReg){
     uint16_t i;
     uint32_t result = 0;
-    int tmp;
-    uint16_t length;
-    uint8_t externalVolt;
-    if (triumviStatusReg & EXTERNALVOLT_STATUSREG){
-        length = BUF_SIZE2;
-        externalVolt = 0x1;
-    }
-    else{
-        length = BUF_SIZE;
-        externalVolt = 0x0;
-    }
+    uint16_t length = (triumviStatusReg & EXTERNALVOLT_STATUSREG)? BUF_SIZE2 : BUF_SIZE;
 
     for (i=0; i<length; i++){
-        tmp = (int)currentDataTransform(data[i], externalVolt);
-        result += tmp*tmp;
+        result += adjustedCurrSamples[i]*adjustedCurrSamples[i];
     }
     result /= length;
     return mysqrt(result);
 }
 
-uint32_t voltageRMS(){
-    uint16_t voltRef = getAverage(voltADCVal, BUF_SIZE2);
+// unit is V
+uint32_t voltageRMS(uint16_t triumviStatusReg){
     uint16_t i;
-    int tmp;
-    uint32_t result = 0;
-    
-    for (i=0; i<BUF_SIZE2; i++){
-        tmp = (int)voltDataTransform(voltADCVal[i], voltRef);
-        result += tmp*tmp;
+    float tmp;
+    float result = 0;
+    if (triumviStatusReg & EXTERNALVOLT_STATUSREG){
+        for (i=0; i<BUF_SIZE2; i++){
+            tmp = adjustedVoltSamples[i]/1000;
+            result += tmp*tmp;
+        }
+        result /= BUF_SIZE2;
+        return mysqrt((uint32_t)result);
     }
-    result /= BUF_SIZE2;
-    return mysqrt(result);
+    return 120;
+    
     
 }
 
-float powerFactor(int* currentSamples, uint16_t triumviStatusReg, int realPower){
-    uint32_t irms = currentRMS(currentSamples, triumviStatusReg);
+float powerFactor(uint16_t triumviStatusReg, int realPower, uint32_t* VRMS, uint32_t* IRMS){
+    uint32_t irms = currentRMS(triumviStatusReg);
+    uint32_t vrms = voltageRMS(triumviStatusReg);
     if ((irms==0) || (realPower==0))
         return 0;
-    if (triumviStatusReg & EXTERNALVOLT_STATUSREG)
-        return (float)realPower/(voltageRMS()*irms);
-    return (float)realPower/(120*irms);
+    *VRMS = vrms*1000;
+    *IRMS = irms;
+    return (float)realPower/(vrms*irms);
 }
 
 uint32_t mysqrt(uint32_t n){

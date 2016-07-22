@@ -22,6 +22,8 @@
 #define UART_CONF_ENABLE 1
 #endif
 
+#define POWERFACTOR_EN
+
 
 #define TRIUMVI_PKT_IDENTIFIER 0xa0
 #define LEN_LEN 2 // LVal
