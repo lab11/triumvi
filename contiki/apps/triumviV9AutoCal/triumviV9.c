@@ -149,9 +149,11 @@ void sampleCurrentVoltageWaveform();
 void disablePOT();
 // encrypt data using AES, and wirelessly transmit packet
 void encryptAndTransmit(uint16_t triumviStatusReg, int avgPower, float pf, 
-        uint32_t VRMS, uint32_t IRMS, uint8_t* myNonce, uint32_t nonceCounter);
+        uint16_t VRMS, uint16_t IRMS, uint8_t* myNonce, uint32_t nonceCounter);
 // split a uint32_t into 4 uint8_t
 void packData(uint8_t* dest, int reading);
+// split a uint16_t into 2 uint8_t
+void packDataHalf(uint8_t* dest, uint16_t reading);
 
 int currentDataTransform(int currentReading, uint8_t externalVolt);
 int voltDataTransform(uint16_t voltReading, uint16_t voltReference);
@@ -161,10 +163,10 @@ static void disable_all_ioc_override();
 #endif
 
 
-float powerFactor(uint16_t triumviStatusReg, int realPower, uint32_t* VRMS, uint32_t* IRMS);
-uint32_t currentRMS(uint16_t triumviStatusReg);
-uint32_t mysqrt(uint32_t n);
-uint32_t voltageRMS(uint16_t triumviStatusReg);
+float powerFactor(uint16_t triumviStatusReg, int realPower, uint16_t* VRMS, uint16_t* IRMS);
+uint16_t currentRMS(uint16_t triumviStatusReg);
+uint16_t mysqrt(uint32_t n);
+uint16_t voltageRMS(uint16_t triumviStatusReg);
 
 // ISRs
 static void rtimerEvent(struct rtimer *t, void *ptr);
@@ -425,7 +427,7 @@ PROCESS_THREAD(triumviProcess, ev, data) {
     uint16_t triumviStatusReg;
 
     float pf;
-    static uint32_t VRMS, IRMS;
+    static uint16_t VRMS, IRMS;
 
 	// Keep a counter of the number of samples we have taken
 	// since we have been on. This will obviously get reset if we lose power.
@@ -835,17 +837,17 @@ gainSetting_t gainCtrl(uint16_t* adcSamples, uint8_t externalVolt){
 }
 
 void encryptAndTransmit(uint16_t triumviStatusReg, int avgPower, float pf, 
-        uint32_t VRMS, uint32_t IRMS, uint8_t* myNonce, uint32_t nonceCounter){
-	// 1 byte Identifier, 4 bytes nonce, 5~19 bytes payload, 4 byte MIC
-	static uint8_t packetData[28];
+        uint16_t VRMS, uint16_t IRMS, uint8_t* myNonce, uint32_t nonceCounter){
+	// 1 byte Identifier, 4 bytes nonce, 5~13 bytes payload, 4 byte MIC
+	static uint8_t packetData[22];
 	// 4 bytes reading, 1 byte status reg, 
-    // (1 bytes panel ID, 1 bytes circuit ID, 4 bytes PF, 4 bytes VRMS, 4 bytes IRMS optional)
-	static uint8_t readingBuf[19];
+    // (1 bytes panel ID, 1 bytes circuit ID, 2 bytes PF, 2 bytes VRMS, 2 bytes IRMS optional)
+	static uint8_t readingBuf[13];
 	uint8_t* aData = myNonce;
 	uint8_t* pData = readingBuf;
 	uint8_t myMic[8] = {0x0};
 	uint8_t myPDATA_LEN = PDATA_LEN;
-	uint8_t packetLen = 14;
+	uint8_t packetLen = 14; // minimum length, 1 byte ID, 4 bytes nonce, 5 bytes payload, 4 byte MIC
 	uint16_t randBackOff;
 
 	packetData[0] = TRIUMVI_PKT_IDENTIFIER;
@@ -863,11 +865,11 @@ void encryptAndTransmit(uint16_t triumviStatusReg, int avgPower, float pf,
 	packData(&myNonce[9], nonceCounter);
 	packData(readingBuf, avgPower);
     if (triumviStatusReg & POWERFACTOR_STATUSREG){
-        packData(&readingBuf[myPDATA_LEN], (uint32_t)(pf*1000));
-        packData(&readingBuf[myPDATA_LEN+4], VRMS);
-        packData(&readingBuf[myPDATA_LEN+8], IRMS);
-        myPDATA_LEN += 12;
-        packetLen += 12;
+        packDataHalf(&readingBuf[myPDATA_LEN], (uint16_t)(pf*1000));
+        packDataHalf(&readingBuf[myPDATA_LEN+2], VRMS);
+        packDataHalf(&readingBuf[myPDATA_LEN+4], IRMS);
+        myPDATA_LEN += 6;
+        packetLen += 6;
     }
 
 	ccm_auth_encrypt_start(LEN_LEN, 0, myNonce, aData, ADATA_LEN,
@@ -883,7 +885,7 @@ void encryptAndTransmit(uint16_t triumviStatusReg, int avgPower, float pf,
 	clock_delay_usec(randBackOff);
 	clock_delay_usec(randBackOff);
 
-    REG(RFCORE_XREG_TXPOWER) = 0xb6;    // set TX power to 0 dBm
+    //REG(RFCORE_XREG_TXPOWER) = 0xb6;    // set TX power to 0 dBm
 	cc2538_on_and_transmit();
 	CC2538_RF_CSP_ISRFOFF();
 }
@@ -981,6 +983,13 @@ void packData(uint8_t* dest, int reading){
 	}
 }
 
+void packDataHalf(uint8_t* dest, uint16_t data){
+	uint8_t i;
+	for (i=0; i<2; i++){
+		dest[i] = (data&(0xff<<(i<<3)))>>(i<<3);
+	}
+}
+
 void sampleCurrentVoltageWaveform(){
 	uint16_t sampleCnt = 0;
 	uint16_t temp;
@@ -1026,20 +1035,21 @@ static void referenceIntCallBack(uint8_t port, uint8_t pin){
 }
 
 // unit is mA
-uint32_t currentRMS(uint16_t triumviStatusReg){
+// FIX ME, OVERFLOW!!
+uint16_t currentRMS(uint16_t triumviStatusReg){
     uint16_t i;
     uint32_t result = 0;
     uint16_t length = (triumviStatusReg & EXTERNALVOLT_STATUSREG)? BUF_SIZE2 : BUF_SIZE;
 
     for (i=0; i<length; i++){
-        result += adjustedCurrSamples[i]*adjustedCurrSamples[i];
+        result += ((adjustedCurrSamples[i]*adjustedCurrSamples[i])>>2);
     }
     result /= length;
-    return mysqrt(result);
+    return (mysqrt(result)<<1);
 }
 
 // unit is V
-uint32_t voltageRMS(uint16_t triumviStatusReg){
+uint16_t voltageRMS(uint16_t triumviStatusReg){
     uint16_t i;
     float tmp;
     float result = 0;
@@ -1055,23 +1065,23 @@ uint32_t voltageRMS(uint16_t triumviStatusReg){
     
     
 }
-
-float powerFactor(uint16_t triumviStatusReg, int realPower, uint32_t* VRMS, uint32_t* IRMS){
-    uint32_t irms = currentRMS(triumviStatusReg);
-    uint32_t vrms = voltageRMS(triumviStatusReg);
+// realPower (mW), VRMS (v), IRMS (mA)
+float powerFactor(uint16_t triumviStatusReg, int realPower, uint16_t* VRMS, uint16_t* IRMS){
+    uint16_t irms = currentRMS(triumviStatusReg);
+    uint16_t vrms = voltageRMS(triumviStatusReg);
+    *VRMS = vrms;
+    *IRMS = irms;
     if ((irms==0) || (realPower==0))
         return 0;
-    *VRMS = vrms*1000;
-    *IRMS = irms;
     return (float)realPower/(vrms*irms);
 }
 
-uint32_t mysqrt(uint32_t n){
+uint16_t mysqrt(uint32_t n){
     uint32_t xn = n;
     uint8_t i;
     for (i=0; i<20; i++){
         xn = (xn + n/xn)/2;
     }
-    return xn;
+    return (uint16_t)xn;
 }
 

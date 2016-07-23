@@ -26,7 +26,7 @@
 
 /* Triumvi received packet buffer */
 typedef struct{
-    uint8_t payload[28];
+    uint8_t payload[22];
     uint8_t length;
 } triumviPacket_t;
 
@@ -42,7 +42,7 @@ static uint8_t spiInUse = 0;
 
 static uint8_t resetCnt = 0;
 
-const uint8_t possible_packet_length[] = {5, 7, 17, 19};
+const uint8_t possible_packet_length[] = {5, 7, 11, 13};
 #define POSSIBLE_PKT_LEN_COMBINATION 4
 
 /* spi interface */
@@ -382,10 +382,10 @@ PROCESS_THREAD(decryptProcess, ev, data) {
                     }
                     // PF, VRMS, IRMS
                     if (cData[4]&POWERFACTOR_STATUSREG){
-                        for (i=0; i<12; i++){
+                        for (i=0; i<6; i++){
                             triumviRXPackets[triumviAvailIDX].payload[tmp+j+i] = cData[k+i];
                         }
-                        triumviRXPackets[triumviAvailIDX].length += 12;
+                        triumviRXPackets[triumviAvailIDX].length += 6;
                     }
                     // base length
                     triumviRXPackets[triumviAvailIDX].length += 5;
