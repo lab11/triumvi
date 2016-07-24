@@ -57,8 +57,8 @@
 #define PHASE_VARIANCE_THRESHOLD 15
 
 // INA gain indices
-#define MAX_INA_GAIN_IDX 4
-#define MIN_INA_GAIN_IDX 1
+#define MAX_INA_GAIN_IDX 5
+#define MIN_INA_GAIN_IDX 0
 
 // voltage isolation filter offset
 #define VOLTAGE_SAMPLE_OFFSET 19
@@ -426,6 +426,7 @@ PROCESS_THREAD(triumviProcess, ev, data) {
 
     float pf;
     static uint16_t VRMS, IRMS;
+    uint16_t inaGain;
 
 	// Keep a counter of the number of samples we have taken
 	// since we have been on. This will obviously get reset if we lose power.
@@ -530,10 +531,9 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                     referenceInt = 0;
 
                     if (avgPower>=0){
-                        #ifdef DATADUMP2
-                        uint8_t inaGain;
-                        uint8_t i;
                         inaGain = inaGainArr[inaGainIdx];
+                        #ifdef DATADUMP2
+                        uint8_t i;
                         printf("ADC reference: %u\r\n", getAverage(currentADCVal, BUF_SIZE));
                         printf("Time difference: %lu\r\n", (timerVal[0]-timerVal[1]));
                         printf("INA Gain: %u\r\n", inaGain);
@@ -557,7 +557,7 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                             sx1509b_init();
                             sx1509b_high_voltage_input_enable(SX1509B_PORTA, 0x1, SX1509B_HIGH_INPUT_ENABLE);
                         }
-                        encryptAndTransmit(triumviStatusReg, avgPower, pf, VRMS, IRMS, myNonce, nonceCounter);
+                        encryptAndTransmit(triumviStatusReg, avgPower, pf, (inaGain<<8)|VRMS, IRMS, myNonce, nonceCounter);
                         #endif
                         // First sample, blinks battery pack blue LED
                         if (batteryPackIsUSBAttached() &&
