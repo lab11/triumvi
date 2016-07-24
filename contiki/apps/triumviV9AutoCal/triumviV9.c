@@ -832,6 +832,9 @@ gainSetting_t gainCtrl(uint16_t* adcSamples, uint8_t externalVolt){
     
     if ((maxVal < lowerThreshold) && (inaGainIdx<MAX_INA_GAIN_IDX)){
         res = GAIN_TOO_LOW;
+        // AD5272 is in shutdown mode, turn it on
+        if (inaGainIdx == 0)
+            ad5274_shutdown(0x0);
         inaGainIdx += 1;
         setINAGain(inaGainArr[inaGainIdx]);
     }

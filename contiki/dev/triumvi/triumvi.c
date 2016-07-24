@@ -218,10 +218,13 @@ inline uint8_t getINAGain(){
 #endif
 
 void setINAGain(uint8_t gain){
-    #if defined(VERSION9)
-    #ifdef AD5272
-    // AD5272, 1024 tabs
+    #ifdef VERSION9
     switch (gain){
+        case 1:
+            // shutdown --> Rg of INA 333 open
+            ad5274_shutdown(0x1);
+        break;
+
         case 2:
             ad5274_rdac_write(1023);
         break;
@@ -245,30 +248,6 @@ void setINAGain(uint8_t gain){
         default:
         break;
     }
-    #else
-    // AD5274, 256 tabs
-    switch (gain){
-        case 2:
-            ad5274_rdac_write(255);
-        break;
-
-        case 3:
-            ad5274_rdac_write(128);
-        break;
-        
-        case 5:
-            ad5274_rdac_write(64);
-        break;
-
-        case 9:
-            ad5274_rdac_write(32);
-        break;
-
-        case 17:
-            ad5274_rdac_write(16);
-        break;
-    }
-    #endif
     #else
 	switch (gain){
 		case 1: // Select S1

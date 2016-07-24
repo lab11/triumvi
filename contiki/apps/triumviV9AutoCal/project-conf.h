@@ -32,7 +32,6 @@
 #define PDATA_LEN 0x05
 
 #define VERSION9
-#define AD5272
 
 // Use custom address for this address
 // make ID=c0:98:e5:54:52:a0:00:01

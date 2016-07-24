@@ -33,13 +33,8 @@ uint8_t ad5274_ctrl_reg_read(){
 
 void ad5274_rdac_write(uint16_t rdac_val){
     uint8_t i2cOutGoingData[2] = {AD5274_CMD_RDAC_WRITE<<2, 0x00};
-    #ifndef AD5272
-    i2cOutGoingData[0] |= ((rdac_val & 0xc0)>>6);
-    i2cOutGoingData[1] = ((rdac_val & 0x3f)<<2);
-    #else
     i2cOutGoingData[0] |= ((rdac_val & 0x300)>>8);
     i2cOutGoingData[1] = (rdac_val & 0xff);
-    #endif
     i2c_burst_send(AD5274_CHIP_ADDR, i2cOutGoingData, 2);
 }
 
