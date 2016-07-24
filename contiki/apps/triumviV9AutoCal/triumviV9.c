@@ -158,9 +158,7 @@ void packDataHalf(uint8_t* dest, uint16_t reading);
 int currentDataTransform(int currentReading, uint8_t externalVolt);
 int voltDataTransform(uint16_t voltReading, uint16_t voltReference);
 // functions do not use in data dump mode
-#if !defined(DATADUMP) && !defined(DATADUMP2) && !defined(DEBUG_ON)
 static void disable_all_ioc_override();
-#endif
 
 
 float powerFactor(uint16_t triumviStatusReg, int realPower, uint16_t* VRMS, uint16_t* IRMS);
@@ -391,7 +389,7 @@ PROCESS_THREAD(calibrationProcess, ev, data) {
                         batteryPackVoltageEn(SENSE_DISABLE);
                     }
                     // disable UART before returning to normal state
-                    #if defined(DEBUG_ON) || defined(DATADUMP)
+                    #if !defined(DATADUMP2)
                     GPIO_SET_OUTPUT(GPIO_A_BASE, 0x47);
                     GPIO_CLR_PIN(GPIO_A_BASE, 0x07);
                     disable_all_ioc_override();
@@ -685,12 +683,14 @@ uint16_t getVariance(uint16_t* data, uint16_t length){
 void sampleCurrentWaveform(){
 	uint16_t sampleCnt = 0;
 	uint16_t temp;
+    timerVal[0] = get_event_time(GPTIMER_1, GPTIMER_SUBTIMER_A);
 	while (sampleCnt < BUF_SIZE){
-		timerVal[(sampleCnt%2)] = get_event_time(GPTIMER_1, GPTIMER_SUBTIMER_A);
+		//timerVal[(sampleCnt%2)] = get_event_time(GPTIMER_1, GPTIMER_SUBTIMER_A);
 		temp = adc_get(I_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_512);
 		currentADCVal[sampleCnt] = ((temp>>4)>2047)? 0 : (temp>>4);
 		sampleCnt++;
 	}
+    timerVal[1] = get_event_time(GPTIMER_1, GPTIMER_SUBTIMER_A);
 }
 
 void meterInit(){
@@ -711,7 +711,10 @@ void meterInit(){
     // Port B
     GPIO_SET_OUTPUT(GPIO_B_BASE, 0x06);
     GPIO_CLR_PIN(GPIO_B_BASE, 0x06);
-    GPIO_SET_INPUT(TRIUMVI_RDYn_IN_GPIO_BASE, (0x1<<TRIUMVI_RDYn_IN_GPIO_PIN));
+    GPIO_SET_INPUT(GPIO_B_BASE, 
+        (0x1<<TRIUMVI_RDYn_IN_GPIO_PIN) | 
+        (0x1<<CONFIG_PWR_LOOPBAK_GPIO_PIN) |
+        (0x1<<EXT_VOLT_IN_SEL_GPIO_PIN)); 
 
     // Port C
     GPIO_SET_OUTPUT(GPIO_C_BASE, 0xeb);
@@ -993,18 +996,19 @@ void packDataHalf(uint8_t* dest, uint16_t data){
 void sampleCurrentVoltageWaveform(){
 	uint16_t sampleCnt = 0;
 	uint16_t temp;
+	timerVal[0] = get_event_time(GPTIMER_1, GPTIMER_SUBTIMER_A);
 	while (sampleCnt < BUF_SIZE2){
-		timerVal[(sampleCnt%2)] = get_event_time(GPTIMER_1, GPTIMER_SUBTIMER_A);
+		//timerVal[(sampleCnt%2)] = get_event_time(GPTIMER_1, GPTIMER_SUBTIMER_A);
 		temp = adc_get(I_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_256);
 		currentADCVal[sampleCnt] = ((temp>>5)>1023)? 0 : (temp>>5);
 		temp = adc_get(EXT_VOLT_IN_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_256);
 		voltADCVal[sampleCnt] = ((temp>>5)>1023)? 0 : (temp>>5);
 		sampleCnt++;
 	}
+	timerVal[1] = get_event_time(GPTIMER_1, GPTIMER_SUBTIMER_A);
 }
 
 
-#if !defined(DATADUMP) && !defined(DATADUMP2) && !defined(DEBUG_ON)
 static void disable_all_ioc_override() {
 	uint8_t portnum = 0;
 	uint8_t pinnum = 0;
@@ -1014,7 +1018,6 @@ static void disable_all_ioc_override() {
 		}
 	}
 }
-#endif
 
 // interrupt when all units are ready
 static void unitReadyCallBack(uint8_t port, uint8_t pin){

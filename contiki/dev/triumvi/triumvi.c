@@ -314,7 +314,11 @@ void reenableSPI(){
 
 
 inline uint8_t externalVoltSel(){
-	return GPIO_READ_PIN(EXT_VOLT_IN_SEL_GPIO_BASE, 0x1<<EXT_VOLT_IN_SEL_GPIO_PIN)>>EXT_VOLT_IN_SEL_GPIO_PIN;
+    ioc_set_over(EXT_VOLT_IN_SEL_GPIO_NUM, EXT_VOLT_IN_SEL_GPIO_PIN, IOC_OVERRIDE_PDE);
+    if (GPIO_READ_PIN(EXT_VOLT_IN_SEL_GPIO_BASE, 0x1<<EXT_VOLT_IN_SEL_GPIO_PIN))
+        return 1;
+    else
+        return 0;
 }
 
 inline uint8_t isButtonPressed(){
@@ -355,9 +359,7 @@ uint8_t batteryPackIsAttached(){
 	GPIO_CLR_PIN(I2C_SCL_GPIO_BASE, 0x1<<I2C_SCL_GPIO_PIN);
 	return 0;
     #else
-	GPIO_SET_INPUT(CONFIG_PWR_LOOPBAK_GPIO_BASE, 0x1<<CONFIG_PWR_LOOPBAK_GPIO_PIN);
 	// There is a 100k ohm resistor feedback, must disable pull down resistor (20k ohm).
-	ioc_set_over(CONFIG_PWR_LOOPBAK_GPIO_NUM, CONFIG_PWR_LOOPBAK_GPIO_PIN, IOC_OVERRIDE_DIS);
     batteryPackVoltageEn(SENSE_ENABLE);
 	clock_delay_usec(10);
 	uint8_t tmp = GPIO_READ_PIN(CONFIG_PWR_LOOPBAK_GPIO_BASE, 0x1<<CONFIG_PWR_LOOPBAK_GPIO_PIN);
