@@ -388,12 +388,6 @@ PROCESS_THREAD(calibrationProcess, ev, data) {
                         batteryPackLEDOff(BATTERY_PACK_LED_GREEN);
                         batteryPackVoltageEn(SENSE_DISABLE);
                     }
-                    // disable UART before returning to normal state
-                    #if !defined(DATADUMP2)
-                    GPIO_SET_OUTPUT(GPIO_A_BASE, 0x47);
-                    GPIO_CLR_PIN(GPIO_A_BASE, 0x07);
-                    disable_all_ioc_override();
-                    #endif
                     break;
                 }
             break;
@@ -679,13 +673,30 @@ uint16_t getVariance(uint16_t* data, uint16_t length){
     return variance;
 }
 
-// Don't add/remove any lines in this subroutine
+// Fine tune to 2.99 degree / sample
 void sampleCurrentWaveform(){
 	uint16_t sampleCnt = 0;
 	uint16_t temp;
     timerVal[0] = get_event_time(GPTIMER_1, GPTIMER_SUBTIMER_A);
 	while (sampleCnt < BUF_SIZE){
-		//timerVal[(sampleCnt%2)] = get_event_time(GPTIMER_1, GPTIMER_SUBTIMER_A);
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
 		temp = adc_get(I_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_512);
 		currentADCVal[sampleCnt] = ((temp>>4)>2047)? 0 : (temp>>4);
 		sampleCnt++;
