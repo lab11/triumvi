@@ -161,7 +161,6 @@ int voltDataTransform(uint16_t voltReading, uint16_t voltReference);
 static void disable_all_ioc_override();
 
 
-float powerFactor(uint16_t triumviStatusReg, int realPower, uint16_t* VRMS, uint16_t* IRMS);
 uint16_t currentRMS(uint16_t triumviStatusReg);
 uint16_t mysqrt(uint32_t n);
 uint16_t voltageRMS(uint16_t triumviStatusReg);
@@ -526,6 +525,33 @@ PROCESS_THREAD(triumviProcess, ev, data) {
 
                     if (avgPower>=0){
                         inaGain = inaGainArr[inaGainIdx];
+                        if (triumviStatusReg & POWERFACTOR_STATUSREG){
+                            IRMS = currentRMS(triumviStatusReg);
+                            VRMS = voltageRMS(triumviStatusReg);
+                            if ((IRMS==0) || (avgPower==0))
+                                pf = 0;
+                            else
+                                pf = (float)avgPower/(VRMS*IRMS);
+                            if (pf > 1)
+                                pf = 1;
+                            switch (inaGain){
+                                case 2:
+                                    IRMS = (int)((float)IRMS*0.9909 + 35.2934);
+                                break;
+                                case 3:
+                                    IRMS = (int)((float)IRMS*0.9887 + 46.6898);
+                                break;
+                                case 5:
+                                    IRMS = (int)((float)IRMS*0.9861 + 49.4408);
+                                break;
+                                case 9:
+                                    IRMS = (int)((float)IRMS*0.9861 + 44.9526);
+                                break;
+                                case 17:
+                                    IRMS = (int)((float)IRMS*0.9654 + 61.7154);
+                                break;
+                            }
+                        }
                         #ifdef DATADUMP2
                         uint8_t i;
                         printf("ADC reference: %u\r\n", getAverage(currentADCVal, BUF_SIZE));
@@ -533,17 +559,14 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                         printf("INA Gain: %u\r\n", inaGain);
                         for (i=0; i<BUF_SIZE; i+=1)
                             printf("Current reading: %d\r\n", currentADCVal[i]);
+                        //printf("INA Gain: %u\r\n", inaGain);
+                        //printf("IRMS: %u\r\n", IRMS);
+                        //printf("Average Power: %u\r\n", avgPower);
                         // Write data into FRAM
                         #elif defined(FRAM_WRITE)
                         writeFRAM((uint16_t)(avgPower/1000), &rtctime);
                         #else
                         nonceCounter = random_rand();
-                        
-                        if (triumviStatusReg & POWERFACTOR_STATUSREG){
-                            pf = powerFactor(triumviStatusReg, avgPower, &VRMS, &IRMS);
-                            if (pf>1)
-                                pf = 1;
-                        }
                         
                         // Battery pack attached, turn it on ans samples switches
                         if (triumviStatusReg & BATTERYPACK_STATUSREG){
@@ -596,7 +619,7 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                     rTimerExpired = 0;
                     triumviLEDOFF();
                     #ifdef DATADUMP2
-                    rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.5, 1, &rtimerEvent, NULL);
+                    rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.1, 1, &rtimerEvent, NULL);
                     #else
                     rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*backOffTime, 1, &rtimerEvent, NULL);
                     #endif
@@ -1081,16 +1104,6 @@ uint16_t voltageRMS(uint16_t triumviStatusReg){
     return 120;
     
     
-}
-// realPower (mW), VRMS (v), IRMS (mA)
-float powerFactor(uint16_t triumviStatusReg, int realPower, uint16_t* VRMS, uint16_t* IRMS){
-    uint16_t irms = currentRMS(triumviStatusReg);
-    uint16_t vrms = voltageRMS(triumviStatusReg);
-    *VRMS = vrms;
-    *IRMS = irms;
-    if ((irms==0) || (realPower==0))
-        return 0;
-    return (float)realPower/(vrms*irms);
 }
 
 uint16_t mysqrt(uint32_t n){
