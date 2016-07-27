@@ -65,5 +65,8 @@ int process_packet_header(packet_header_t* header_ptr, uint8_t* packetbuf_header
 		header_ptr->pkt_src_addr = tempPtr;
 		tempPtr += (header_ptr->pkt_src_addr_len);
 	}
-	return 0;
+	return  header_ptr->pkt_dest_panID_len + 
+            header_ptr->pkt_dest_addr_len + 
+            header_ptr->pkt_src_panID_len + 
+            header_ptr->pkt_src_addr_len + 3;
 }
