@@ -65,6 +65,23 @@
 // voltage scaling constant
 #define VOLTAGE_SCALING 1092
 
+
+// calibration coefficient
+#define GAIN2_D0  35.2934
+#define GAIN2_D1   0.9909
+
+#define GAIN3_D0  46.6898
+#define GAIN3_D1   0.9887
+
+#define GAIN5_D0  49.4408
+#define GAIN5_D1   0.9861
+
+#define GAIN9_D0  44.9526
+#define GAIN9_D1   0.9861
+
+#define GAIN17_D0 61.7154
+#define GAIN17_D1  0.9654
+
 const uint8_t inaGainArr[6] = {1, 2, 3, 5, 9, 17};
 
 typedef enum {
@@ -241,6 +258,7 @@ PROCESS_THREAD(calibrationProcess, ev, data) {
     static uint32_t variance = 0;
     uint32_t tmp = 0;
     #endif
+    static uint32_t timerExp, currentTime;
 
     rom_util_page_erase(flash_addr, FLASH_ERASE_SIZE);
     triumviLEDON();
@@ -265,22 +283,34 @@ PROCESS_THREAD(calibrationProcess, ev, data) {
                     i2c_disable(AD527X_SDA_GPIO_NUM, AD527X_SDA_GPIO_PIN, AD527X_SCL_GPIO_NUM, AD527X_SCL_GPIO_PIN); 
 
                     // Enable comparator interrupt
-                    GPIO_DETECT_RISING(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
-                    meterVoltageComparator(SENSE_ENABLE);
                     ungate_gpt(GPTIMER_1);
                     REG(SYSTICK_STCTRL) &= (~SYSTICK_STCTRL_INTEN);
+                    timerExp = get_event_time(GPTIMER_1, GPTIMER_SUBTIMER_A) - 320000;
+                    GPIO_DETECT_RISING(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
+                    meterVoltageComparator(SENSE_ENABLE);
 
                     // waiting for comparator interrupt
-                    while (referenceInt==0){}
-                    sampleCurrentWaveform();
-                    referenceInt = 0;
+                    do {
+                        currentTime = get_event_time(GPTIMER_1, GPTIMER_SUBTIMER_A);
+                    }
+                    while ((currentTime > timerExp) && (referenceInt==0));
 
-                    // resume systick
-                    REG(SYSTICK_STCTRL) |= SYSTICK_STCTRL_INTEN;
-                    gate_gpt(GPTIMER_1);
+                    // time out, retry
+                    if (currentTime <= timerExp){
+                        gainSetting = GAIN_TOO_HIGH;
+                    }
+                    // captured interrupt
+                    else{
+                        sampleCurrentWaveform();
+                        referenceInt = 0;
 
-                    // check INA gain setting
-                    gainSetting = gainCtrl(currentADCVal, 0x0);
+                        // resume systick
+                        REG(SYSTICK_STCTRL) |= SYSTICK_STCTRL_INTEN;
+                        gate_gpt(GPTIMER_1);
+
+                        // check INA gain setting
+                        gainSetting = gainCtrl(currentADCVal, 0x0);
+                    }
 
                     if (gainSetting == GAIN_OK){
                         #ifdef DATADUMP
@@ -425,6 +455,8 @@ PROCESS_THREAD(triumviProcess, ev, data) {
 	// since we have been on. This will obviously get reset if we lose power.
 	// We would have to store this counter in FRAM for it to be persistent.
 	static uint32_t sampleCount = 0;
+    
+    static uint32_t timerExp, currentTime;
 
     unitReady();
     rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND, 1, &rtimerEvent, NULL);
@@ -509,21 +541,32 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                     setINAGain(inaGainArr[inaGainIdx]);
 
                     // Enable comparator interrupt
-                    GPIO_DETECT_RISING(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
-                    meterVoltageComparator(SENSE_ENABLE);
                     ungate_gpt(GPTIMER_1);
                     REG(SYSTICK_STCTRL) &= (~SYSTICK_STCTRL_INTEN);
+                    timerExp = get_event_time(GPTIMER_1, GPTIMER_SUBTIMER_A) - 320000;
+                    GPIO_DETECT_RISING(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
+                    meterVoltageComparator(SENSE_ENABLE);
 
-                    // Interrupted
-                    while (referenceInt==0){}
+                    // waiting for comparator interrupt
+                    do {
+                        currentTime = get_event_time(GPTIMER_1, GPTIMER_SUBTIMER_A);
+                    }
+                    while ((currentTime > timerExp) && (referenceInt==0));
 
-                    // voltage sensing and comparator interrupt can be disabled first (disableALL())
-                    avgPower = sampleAndCalculate(triumviStatusReg);
+                    // time out, retry
+                    if (currentTime <= timerExp){
+                        avgPower = -1;
+                    }
+                    // captured interrupt
+                    else{
+                        // voltage sensing and comparator interrupt can be disabled first (disableALL())
+                        avgPower = sampleAndCalculate(triumviStatusReg);
+                        referenceInt = 0;
+                    }
 
-                    sampleCount++;
-                    referenceInt = 0;
 
                     if (avgPower>=0){
+                        sampleCount++;
                         inaGain = inaGainArr[inaGainIdx];
                         if (triumviStatusReg & POWERFACTOR_STATUSREG){
                             IRMS = currentRMS(triumviStatusReg);
@@ -536,19 +579,19 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                                 pf = 1;
                             switch (inaGain){
                                 case 2:
-                                    IRMS = (int)((float)IRMS*0.9909 + 35.2934);
+                                    IRMS = (int)((float)IRMS*GAIN2_D1 + GAIN2_D0);
                                 break;
                                 case 3:
-                                    IRMS = (int)((float)IRMS*0.9887 + 46.6898);
+                                    IRMS = (int)((float)IRMS*GAIN3_D1 + GAIN3_D0);
                                 break;
                                 case 5:
-                                    IRMS = (int)((float)IRMS*0.9861 + 49.4408);
+                                    IRMS = (int)((float)IRMS*GAIN5_D1 + GAIN5_D0);
                                 break;
                                 case 9:
-                                    IRMS = (int)((float)IRMS*0.9861 + 44.9526);
+                                    IRMS = (int)((float)IRMS*GAIN9_D1 + GAIN9_D0);
                                 break;
                                 case 17:
-                                    IRMS = (int)((float)IRMS*0.9654 + 61.7154);
+                                    IRMS = (int)((float)IRMS*GAIN17_D1 + GAIN17_D0);
                                 break;
                             }
                         }
