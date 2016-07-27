@@ -566,7 +566,11 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                         #elif defined(FRAM_WRITE)
                         writeFRAM((uint16_t)(avgPower/1000), &rtctime);
                         #else
-                        nonceCounter = random_rand();
+                        
+                        uint16_t rand0, rand1;
+                        rand0 = random_rand();
+                        rand1 = random_rand();
+                        nonceCounter = (rand0<<16) | rand1;
                         
                         // Battery pack attached, turn it on ans samples switches
                         if (triumviStatusReg & BATTERYPACK_STATUSREG){
