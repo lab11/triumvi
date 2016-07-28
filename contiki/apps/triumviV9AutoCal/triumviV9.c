@@ -555,6 +555,10 @@ PROCESS_THREAD(triumviProcess, ev, data) {
 
                     // time out, retry
                     if (currentTime <= timerExp){
+                        meterSenseConfig(VOLTAGE, SENSE_DISABLE);
+                        disablePOT();
+                        REG(SYSTICK_STCTRL) |= SYSTICK_STCTRL_INTEN;
+                        gate_gpt(GPTIMER_1);
                         avgPower = -1;
                     }
                     // captured interrupt
