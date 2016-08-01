@@ -458,7 +458,6 @@ PROCESS_THREAD(triumviProcess, ev, data) {
     
     static uint32_t timerExp, currentTime;
 
-    unitReady();
     rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND, 1, &rtimerEvent, NULL);
     myState = STATE_INIT;
 
@@ -468,6 +467,7 @@ PROCESS_THREAD(triumviProcess, ev, data) {
             // initialization state, check READYn is low before moving forward
             case STATE_INIT:
                 rdy = 0;
+                unitReady();
                 if (rTimerExpired==1){
                     rTimerExpired = 0;
                     if (allUnitsReady())
@@ -484,6 +484,7 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                     rdy = 1;
                 }
                 if (rdy==1){
+                    GPIO_SET_PIN(TRIUMVI_READYn_OUT_GPIO_BASE, 0x1<<TRIUMVI_READYn_OUT_GPIO_PIN); // clear ready
                     meterSenseVREn(SENSE_ENABLE);
                     meterSenseConfig(VOLTAGE, SENSE_ENABLE);
                     rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.4, 1, &rtimerEvent, NULL);
