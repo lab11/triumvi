@@ -584,41 +584,56 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                         referenceInt = 0;
                     }
 
-
                     if (avgPower>=0){
                         sampleCount++;
                         inaGain = inaGainArr[inaGainIdx];
+                        #ifdef POLYFIT
+                        switch (inaGain){
+                            case 2:
+                                avgPower = (int)((float)avgPower*PGAIN2_D1 + PGAIN2_D0);
+                            break;
+                            case 3:
+                                avgPower = (int)((float)avgPower*PGAIN3_D1 + PGAIN3_D0);
+                            break;
+                            case 5:
+                                avgPower = (int)((float)avgPower*PGAIN5_D1 + PGAIN5_D0);
+                            break;
+                            case 9:
+                                avgPower = (int)((float)avgPower*PGAIN9_D1 + PGAIN9_D0);
+                            break;
+                            case 17:
+                                avgPower = (int)((float)avgPower*PGAIN17_D1 + PGAIN17_D0);
+                            break;
+                        }
+                        #endif
                         if (triumviStatusReg & POWERFACTOR_STATUSREG){
                             IRMS = currentRMS(triumviStatusReg);
                             VRMS = voltageRMS(triumviStatusReg);
+                            #ifdef POLYFIT
+                            switch (inaGain){
+                                case 2:
+                                    IRMS = (int)((float)IRMS*IGAIN2_D1 + IGAIN2_D0);
+                                break;
+                                case 3:
+                                    IRMS = (int)((float)IRMS*IGAIN3_D1 + IGAIN3_D0);
+                                break;
+                                case 5:
+                                    IRMS = (int)((float)IRMS*IGAIN5_D1 + IGAIN5_D0);
+                                break;
+                                case 9:
+                                    IRMS = (int)((float)IRMS*IGAIN9_D1 + IGAIN9_D0);
+                                break;
+                                case 17:
+                                    IRMS = (int)((float)IRMS*IGAIN17_D1 + IGAIN17_D0);
+                                break;
+                            }
+                            #endif
                             if ((IRMS==0) || (avgPower==0))
                                 pf = 0;
                             else
                                 pf = (float)avgPower/(VRMS*IRMS);
                             if (pf > 1)
                                 pf = 1;
-                            switch (inaGain){
-                                case 2:
-                                    IRMS = (int)((float)IRMS*IGAIN2_D1 + IGAIN2_D0);
-                                    avgPower = (int)((float)avgPower*PGAIN2_D1 + PGAIN2_D0);
-                                break;
-                                case 3:
-                                    IRMS = (int)((float)IRMS*IGAIN3_D1 + IGAIN3_D0);
-                                    avgPower = (int)((float)avgPower*PGAIN3_D1 + PGAIN3_D0);
-                                break;
-                                case 5:
-                                    IRMS = (int)((float)IRMS*IGAIN5_D1 + IGAIN5_D0);
-                                    avgPower = (int)((float)avgPower*PGAIN5_D1 + PGAIN5_D0);
-                                break;
-                                case 9:
-                                    IRMS = (int)((float)IRMS*IGAIN9_D1 + IGAIN9_D0);
-                                    avgPower = (int)((float)avgPower*PGAIN9_D1 + PGAIN9_D0);
-                                break;
-                                case 17:
-                                    IRMS = (int)((float)IRMS*IGAIN17_D1 + IGAIN17_D0);
-                                    avgPower = (int)((float)avgPower*PGAIN17_D1 + PGAIN17_D0);
-                                break;
-                            }
                         }
                         #ifdef DATADUMP2
                         uint8_t i;
