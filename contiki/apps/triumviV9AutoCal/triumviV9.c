@@ -67,20 +67,35 @@
 
 
 // calibration coefficient
-#define GAIN2_D0  35.2934
-#define GAIN2_D1   0.9909
+#define IGAIN2_D0  35.2934
+#define IGAIN2_D1   0.9909
 
-#define GAIN3_D0  46.6898
-#define GAIN3_D1   0.9887
+#define IGAIN3_D0  46.6898
+#define IGAIN3_D1   0.9887
 
-#define GAIN5_D0  49.4408
-#define GAIN5_D1   0.9861
+#define IGAIN5_D0  49.4408
+#define IGAIN5_D1   0.9861
 
-#define GAIN9_D0  44.9526
-#define GAIN9_D1   0.9861
+#define IGAIN9_D0  44.9526
+#define IGAIN9_D1   0.9861
 
-#define GAIN17_D0 61.7154
-#define GAIN17_D1  0.9654
+#define IGAIN17_D0 61.7154
+#define IGAIN17_D1  0.9654
+
+#define PGAIN2_D0  4350
+#define PGAIN2_D1  0.9961
+
+#define PGAIN3_D0  7092
+#define PGAIN3_D1  0.9877
+
+#define PGAIN5_D0  8578
+#define PGAIN5_D1  0.9810
+
+#define PGAIN9_D0  10656
+#define PGAIN9_D1  0.9685
+
+#define PGAIN17_D0 12335
+#define PGAIN17_D1 0.9451
 
 const uint8_t inaGainArr[6] = {1, 2, 3, 5, 9, 17};
 
@@ -584,19 +599,24 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                                 pf = 1;
                             switch (inaGain){
                                 case 2:
-                                    IRMS = (int)((float)IRMS*GAIN2_D1 + GAIN2_D0);
+                                    IRMS = (int)((float)IRMS*IGAIN2_D1 + IGAIN2_D0);
+                                    avgPower = (int)((float)avgPower*PGAIN2_D1 + PGAIN2_D0);
                                 break;
                                 case 3:
-                                    IRMS = (int)((float)IRMS*GAIN3_D1 + GAIN3_D0);
+                                    IRMS = (int)((float)IRMS*IGAIN3_D1 + IGAIN3_D0);
+                                    avgPower = (int)((float)avgPower*PGAIN3_D1 + PGAIN3_D0);
                                 break;
                                 case 5:
-                                    IRMS = (int)((float)IRMS*GAIN5_D1 + GAIN5_D0);
+                                    IRMS = (int)((float)IRMS*IGAIN5_D1 + IGAIN5_D0);
+                                    avgPower = (int)((float)avgPower*PGAIN5_D1 + PGAIN5_D0);
                                 break;
                                 case 9:
-                                    IRMS = (int)((float)IRMS*GAIN9_D1 + GAIN9_D0);
+                                    IRMS = (int)((float)IRMS*IGAIN9_D1 + IGAIN9_D0);
+                                    avgPower = (int)((float)avgPower*PGAIN9_D1 + PGAIN9_D0);
                                 break;
                                 case 17:
-                                    IRMS = (int)((float)IRMS*GAIN17_D1 + GAIN17_D0);
+                                    IRMS = (int)((float)IRMS*IGAIN17_D1 + IGAIN17_D0);
+                                    avgPower = (int)((float)avgPower*PGAIN17_D1 + PGAIN17_D0);
                                 break;
                             }
                         }
