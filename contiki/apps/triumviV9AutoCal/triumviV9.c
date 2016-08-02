@@ -602,7 +602,10 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                                 avgPower = (int)((float)avgPower*PGAIN9_D1 + PGAIN9_D0);
                             break;
                             case 17:
-                                avgPower = (int)((float)avgPower*PGAIN17_D1 + PGAIN17_D0);
+                                if (avgPower>50)
+                                    avgPower = (int)((float)avgPower*PGAIN17_D1 + PGAIN17_D0);
+                            break;
+                            default:
                             break;
                         }
                         #endif
@@ -625,6 +628,8 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                                 break;
                                 case 17:
                                     IRMS = (int)((float)IRMS*IGAIN17_D1 + IGAIN17_D0);
+                                break;
+                                default:
                                 break;
                             }
                             #endif
