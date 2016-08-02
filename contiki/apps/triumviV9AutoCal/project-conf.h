@@ -23,6 +23,7 @@
 #endif
 
 #define POWERFACTOR_EN
+#define POLYFIT
 
 
 #define TRIUMVI_PKT_IDENTIFIER 0xa0

@@ -58,44 +58,14 @@
 
 // INA gain indices
 #define MAX_INA_GAIN_IDX 5
-#define MIN_INA_GAIN_IDX 0
+#define MIN_INA_GAIN_IDX 1
 
 // voltage isolation filter offset
 #define VOLTAGE_SAMPLE_OFFSET 19
 // voltage scaling constant
 #define VOLTAGE_SCALING 1092
 
-
-// calibration coefficient
-#define IGAIN2_D0  35.2934
-#define IGAIN2_D1   0.9909
-
-#define IGAIN3_D0  46.6898
-#define IGAIN3_D1   0.9887
-
-#define IGAIN5_D0  49.4408
-#define IGAIN5_D1   0.9861
-
-#define IGAIN9_D0  44.9526
-#define IGAIN9_D1   0.9861
-
-#define IGAIN17_D0 61.7154
-#define IGAIN17_D1  0.9654
-
-#define PGAIN2_D0  4350
-#define PGAIN2_D1  0.9961
-
-#define PGAIN3_D0  7092
-#define PGAIN3_D1  0.9877
-
-#define PGAIN5_D0  8578
-#define PGAIN5_D1  0.9810
-
-#define PGAIN9_D0  10656
-#define PGAIN9_D1  0.9685
-
-#define PGAIN17_D0 12335
-#define PGAIN17_D1 0.9451
+#include "calibration_coef.h"
 
 const uint8_t inaGainArr[6] = {1, 2, 3, 5, 9, 17};
 
@@ -642,14 +612,14 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                         }
                         #ifdef DATADUMP2
                         uint8_t i;
-                        printf("ADC reference: %u\r\n", getAverage(currentADCVal, BUF_SIZE));
-                        printf("Time difference: %lu\r\n", (timerVal[0]-timerVal[1]));
-                        printf("INA Gain: %u\r\n", inaGain);
-                        for (i=0; i<BUF_SIZE; i+=1)
-                            printf("Current reading: %d\r\n", currentADCVal[i]);
+                        //printf("ADC reference: %u\r\n", getAverage(currentADCVal, BUF_SIZE));
+                        //printf("Time difference: %lu\r\n", (timerVal[0]-timerVal[1]));
                         //printf("INA Gain: %u\r\n", inaGain);
-                        //printf("IRMS: %u\r\n", IRMS);
-                        //printf("Average Power: %u\r\n", avgPower);
+                        //for (i=0; i<BUF_SIZE; i+=1)
+                        //    printf("Current reading: %d\r\n", currentADCVal[i]);
+                        printf("INA Gain: %u\r\n", inaGain);
+                        printf("IRMS: %u\r\n", IRMS);
+                        printf("Average Power: %u\r\n", avgPower);
                         // Write data into FRAM
                         #elif defined(FRAM_WRITE)
                         writeFRAM((uint16_t)(avgPower/1000), &rtctime);
