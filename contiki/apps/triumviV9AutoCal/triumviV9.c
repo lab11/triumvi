@@ -58,7 +58,7 @@
 
 // INA gain indices
 #define MAX_INA_GAIN_IDX 5
-#define MIN_INA_GAIN_IDX 1
+#define MIN_INA_GAIN_IDX 0
 
 // voltage isolation filter offset
 #define VOLTAGE_SAMPLE_OFFSET 19
@@ -597,7 +597,8 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                                     IRMS = (int)((float)IRMS*IGAIN9_D1 + IGAIN9_D0);
                                 break;
                                 case 17:
-                                    IRMS = (int)((float)IRMS*IGAIN17_D1 + IGAIN17_D0);
+                                    if (IRMS>0.4)
+                                        IRMS = (int)((float)IRMS*IGAIN17_D1 + IGAIN17_D0);
                                 break;
                                 default:
                                 break;
@@ -612,14 +613,14 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                         }
                         #ifdef DATADUMP2
                         uint8_t i;
-                        //printf("ADC reference: %u\r\n", getAverage(currentADCVal, BUF_SIZE));
-                        //printf("Time difference: %lu\r\n", (timerVal[0]-timerVal[1]));
-                        //printf("INA Gain: %u\r\n", inaGain);
-                        //for (i=0; i<BUF_SIZE; i+=1)
-                        //    printf("Current reading: %d\r\n", currentADCVal[i]);
+                        printf("ADC reference: %u\r\n", dcOffset);
+                        printf("Time difference: %lu\r\n", (timerVal[0]-timerVal[1]));
                         printf("INA Gain: %u\r\n", inaGain);
-                        printf("IRMS: %u\r\n", IRMS);
-                        printf("Average Power: %u\r\n", avgPower);
+                        for (i=0; i<BUF_SIZE; i+=1)
+                            printf("Current reading: %d\r\n", currentADCVal[i]);
+                        //printf("INA Gain: %u\r\n", inaGain);
+                        //printf("IRMS: %u\r\n", IRMS);
+                        //printf("Average Power: %u\r\n", avgPower);
                         // Write data into FRAM
                         #elif defined(FRAM_WRITE)
                         writeFRAM((uint16_t)(avgPower/1000), &rtctime);
