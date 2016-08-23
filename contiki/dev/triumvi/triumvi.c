@@ -338,12 +338,13 @@ uint8_t batteryPackIsAttached(){
 	GPIO_CLR_PIN(I2C_SCL_GPIO_BASE, 0x1<<I2C_SCL_GPIO_PIN);
 	return 0;
     #else
-    ioc_set_over(CONFIG_PWR_LOOPBAK_GPIO_BASE, CONFIG_PWR_LOOPBAK_GPIO_PIN, IOC_OVERRIDE_PDE);
+    ioc_set_over(CONFIG_PWR_LOOPBAK_GPIO_NUM, CONFIG_PWR_LOOPBAK_GPIO_PIN, IOC_OVERRIDE_PDE);
+    clock_delay_usec(5);
+    ioc_set_over(CONFIG_PWR_LOOPBAK_GPIO_NUM, CONFIG_PWR_LOOPBAK_GPIO_PIN, IOC_OVERRIDE_DIS);
     batteryPackVoltageEn(SENSE_ENABLE);
-    clock_delay_usec(10);
+    clock_delay_usec(5);
     uint8_t tmp = GPIO_READ_PIN(CONFIG_PWR_LOOPBAK_GPIO_BASE, 0x1<<CONFIG_PWR_LOOPBAK_GPIO_PIN);
     batteryPackVoltageEn(SENSE_DISABLE);
-    ioc_set_over(CONFIG_PWR_LOOPBAK_GPIO_BASE, CONFIG_PWR_LOOPBAK_GPIO_PIN, IOC_OVERRIDE_DIS);
     if (tmp > 0)
         return 1;
     else
