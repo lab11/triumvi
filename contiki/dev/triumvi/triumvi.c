@@ -338,11 +338,12 @@ uint8_t batteryPackIsAttached(){
 	GPIO_CLR_PIN(I2C_SCL_GPIO_BASE, 0x1<<I2C_SCL_GPIO_PIN);
 	return 0;
     #else
-	// There is a 100k ohm resistor feedback, must disable pull down resistor (20k ohm).
+    ioc_set_over(CONFIG_PWR_LOOPBAK_GPIO_BASE, CONFIG_PWR_LOOPBAK_GPIO_PIN, IOC_OVERRIDE_PDE);
     batteryPackVoltageEn(SENSE_ENABLE);
-	clock_delay_usec(10);
-	uint8_t tmp = GPIO_READ_PIN(CONFIG_PWR_LOOPBAK_GPIO_BASE, 0x1<<CONFIG_PWR_LOOPBAK_GPIO_PIN);
+    clock_delay_usec(10);
+    uint8_t tmp = GPIO_READ_PIN(CONFIG_PWR_LOOPBAK_GPIO_BASE, 0x1<<CONFIG_PWR_LOOPBAK_GPIO_PIN);
     batteryPackVoltageEn(SENSE_DISABLE);
+    ioc_set_over(CONFIG_PWR_LOOPBAK_GPIO_BASE, CONFIG_PWR_LOOPBAK_GPIO_PIN, IOC_OVERRIDE_DIS);
     if (tmp > 0)
         return 1;
     else
