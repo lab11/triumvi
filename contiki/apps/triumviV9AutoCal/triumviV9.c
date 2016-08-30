@@ -43,6 +43,7 @@
 
 // Adjusted (DC removal) ADC sample thresholds
 #define UPPERTHRESHOLD  430 // any value above this, gain is too large
+#define UPPERTHRESHOLD_2 780 // only apply this threshold at gain = 2 (inaGainIdx==1)
 #define LOWERTHRESHOLD  185 // max value below this, gain is too small
 
 // number of samples per cycle
@@ -878,7 +879,7 @@ void meterInit(){
 // this function check if the ADC samples are within a proper range
 gainSetting_t gainCtrl(uint16_t* adcSamples, uint8_t externalVolt){
     uint16_t i;
-    uint16_t upperThreshold = UPPERTHRESHOLD;
+    uint16_t upperThreshold = (inaGainIdx==1)? UPPERTHRESHOLD_2 : UPPERTHRESHOLD;
     uint16_t lowerThreshold = LOWERTHRESHOLD;
     uint16_t length = BUF_SIZE;
     uint16_t currentRef;
