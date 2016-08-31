@@ -42,9 +42,10 @@
 #define FLASH_ERASE_SIZE 0x800
 
 // Adjusted (DC removal) ADC sample thresholds
-#define UPPERTHRESHOLD  430 // any value above this, gain is too large
-#define UPPERTHRESHOLD_2 780 // only apply this threshold at gain = 2 (inaGainIdx==1)
-#define LOWERTHRESHOLD  185 // max value below this, gain is too small
+#define UPPERTHRESHOLD0  400 // upper threshold for gain == 17
+#define UPPERTHRESHOLD1  500 // upper threshold for gain == 3, 5, 9
+#define UPPERTHRESHOLD2  700 // upper threshold for gain == 2
+#define LOWERTHRESHOLD  185  // lower threshold
 
 // number of samples per cycle
 #define BUF_SIZE 120        // sample current only, 11-bit resolution, 1 cycles
@@ -868,7 +869,6 @@ void meterInit(){
 	rTimerExpired = 0;
 	referenceInt = 0;
     allInitsAreReadyInt = 0;
-    //inaGainIdx = MAX_INA_GAIN_IDX;
     inaGainIdx = 3; // use larger gain setting
 
 	backOffTime = 4;
@@ -879,7 +879,8 @@ void meterInit(){
 // this function check if the ADC samples are within a proper range
 gainSetting_t gainCtrl(uint16_t* adcSamples, uint8_t externalVolt){
     uint16_t i;
-    uint16_t upperThreshold = (inaGainIdx==1)? UPPERTHRESHOLD_2 : UPPERTHRESHOLD;
+    uint16_t upperThreshold = (inaGainIdx==MAX_INA_GAIN_IDX)? UPPERTHRESHOLD0 : 
+                              (inaGainIdx==1)? UPPERTHRESHOLD2 : UPPERTHRESHOLD1;
     uint16_t lowerThreshold = LOWERTHRESHOLD;
     uint16_t length = BUF_SIZE;
     uint16_t currentRef;
@@ -900,8 +901,8 @@ gainSetting_t gainCtrl(uint16_t* adcSamples, uint8_t externalVolt){
             #else
             currentRef = (dcOffset>>1);
             #endif
-            upperThreshold = (UPPERTHRESHOLD>>1);
-            lowerThreshold= (LOWERTHRESHOLD>>1);
+            upperThreshold = (upperThreshold>>1);
+            lowerThreshold = (lowerThreshold>>1);
             length = BUF_SIZE2;
         }
         else{
