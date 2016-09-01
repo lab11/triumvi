@@ -29,7 +29,11 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define I_TRANSFORM 48.34468
+#ifdef RSENSE_LOW
+#define I_TRANSFORM 97 // 45.3 ohm sensing resistor
+#else
+#define I_TRANSFORM 48.34468 // 90.9 ohm sensing resistor
+#endif
 
 #define FIRSTSAMPLE_STATUSREG  0x0100
 #define EXTERNALVOLT_STATUSREG 0x0080
@@ -60,7 +64,7 @@
 
 // INA gain indices
 #define MAX_INA_GAIN_IDX 5
-#define MIN_INA_GAIN_IDX 0
+#define MIN_INA_GAIN_IDX 1
 
 // voltage isolation filter offset
 #define VOLTAGE_SAMPLE_OFFSET 19
@@ -255,6 +259,7 @@ PROCESS_THREAD(calibrationProcess, ev, data) {
     meterSenseVREn(SENSE_ENABLE);
     meterSenseConfig(VOLTAGE, SENSE_ENABLE);
     meterSenseConfig(CURRENT, SENSE_ENABLE);
+
 
     while (1){
         PROCESS_YIELD();
@@ -869,7 +874,11 @@ void meterInit(){
 	rTimerExpired = 0;
 	referenceInt = 0;
     allInitsAreReadyInt = 0;
-    inaGainIdx = 3; // use larger gain setting
+    #ifdef RSENSE_LOW
+    inaGainIdx = 4; // G = 9
+    #else
+    inaGainIdx = 3; // G = 5
+    #endif
 
 	backOffTime = 4;
 	backOffHistory = 0;

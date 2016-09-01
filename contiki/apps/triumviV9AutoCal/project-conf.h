@@ -24,6 +24,7 @@
 
 #define POWERFACTOR_EN
 #define POLYFIT
+#define RSENSE_LOW // 45.3 ohm sensing resistor
 
 
 #define TRIUMVI_PKT_IDENTIFIER 0xa0
