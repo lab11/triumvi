@@ -67,9 +67,9 @@
 #define MIN_INA_GAIN_IDX 1
 
 // voltage isolation filter offset
-#define VOLTAGE_SAMPLE_OFFSET 19
+#define VOLTAGE_SAMPLE_OFFSET 0
 // voltage scaling constant
-#define VOLTAGE_SCALING 1092
+#define VOLTAGE_SCALING 720
 
 #include "calibration_coef.h"
 
