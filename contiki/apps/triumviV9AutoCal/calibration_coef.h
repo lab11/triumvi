@@ -1,36 +1,31 @@
-#define IGAIN17_D0 61.7154
-#define IGAIN17_D1 0.9654
+#define IGAIN17_D0 62.6530
+#define IGAIN17_D1 0.9703
 
-#define IGAIN9_D0 47.3306
-#define IGAIN9_D1 0.9842
+#define IGAIN9_D0 38.6570
+#define IGAIN9_D1 0.9893
 
-#define IGAIN5_D0 45.5476
-#define IGAIN5_D1 0.9881
+#define IGAIN5_D0 34.0731
+#define IGAIN5_D1 0.9916
 
-#define IGAIN3_D0 47.3888
-#define IGAIN3_D1 0.9886
+#define IGAIN3_D0 -21.5563
+#define IGAIN3_D1 0.9988
 
+// from larger sensing resistor
 #define IGAIN2_D0 35.4659
 #define IGAIN2_D1 0.9909
 
-#define IGAIN1_D0 -1611.1065
-#define IGAIN1_D1 1.1474
+#define PGAIN17_D0 10346
+#define PGAIN17_D1 0.9517
 
-#define PGAIN17_D0 12335
-#define PGAIN17_D1 0.9451
+#define PGAIN9_D0 4038
+#define PGAIN9_D1 0.9922
 
-#define PGAIN9_D0 10656
-#define PGAIN9_D1 0.9685
+#define PGAIN5_D0 3674
+#define PGAIN5_D1 0.9941
 
-#define PGAIN5_D0 8578
-#define PGAIN5_D1 0.9810
+#define PGAIN3_D0 2003
+#define PGAIN3_D1 0.9950
 
-#define PGAIN3_D0 7092
-#define PGAIN3_D1 0.9877
-
+// from larger sensing resistor
 #define PGAIN2_D0 3013
 #define PGAIN2_D1 0.9981
-
-#define PGAIN1_D0 -325655
-#define PGAIN1_D1 1.3014
-

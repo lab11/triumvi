@@ -620,14 +620,14 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                         }
                         #ifdef DATADUMP2
                         uint8_t i;
-                        printf("ADC reference: %u\r\n", dcOffset);
-                        printf("Time difference: %lu\r\n", (timerVal[0]-timerVal[1]));
-                        printf("INA Gain: %u\r\n", inaGain);
-                        for (i=0; i<BUF_SIZE; i+=1)
-                            printf("Current reading: %d\r\n", currentADCVal[i]);
+                        //printf("ADC reference: %u\r\n", dcOffset);
+                        //printf("Time difference: %lu\r\n", (timerVal[0]-timerVal[1]));
                         //printf("INA Gain: %u\r\n", inaGain);
-                        //printf("IRMS: %u\r\n", IRMS);
-                        //printf("Average Power: %u\r\n", avgPower);
+                        //for (i=0; i<BUF_SIZE; i+=1)
+                        //    printf("Current reading: %d\r\n", currentADCVal[i]);
+                        printf("INA Gain: %u\r\n", inaGain);
+                        printf("IRMS: %u\r\n", IRMS);
+                        printf("Average Power: %u\r\n", avgPower);
                         // Write data into FRAM
                         #elif defined(FRAM_WRITE)
                         writeFRAM((uint16_t)(avgPower/1000), &rtctime);
