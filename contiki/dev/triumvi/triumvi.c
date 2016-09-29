@@ -127,7 +127,7 @@ inline void triumviLEDToggle(){
 		GPIO_SET_PIN(LED_RED_BASE, LED_RED_MASK);
 }
 
-#ifdef VERSION9
+#if defined(VERSION9) || defined(VERSION10)
 void meterSenseVREn(uint8_t en){
     // enable voltage regulator
     if (en==SENSE_ENABLE)
@@ -137,23 +137,30 @@ void meterSenseVREn(uint8_t en){
 }
 
 void unitReady(){
+    #ifdef VERSION9
     GPIO_CLR_PIN(TRIUMVI_READYn_OUT_GPIO_BASE, 0x1<<TRIUMVI_READYn_OUT_GPIO_PIN);
+    #else
+    GPIO_SET_PIN(TRIUMVI_READYn_OUT_GPIO_BASE, 0x1<<TRIUMVI_READYn_OUT_GPIO_PIN);
+    #endif
 }
 
 uint8_t allUnitsReady(){
     uint8_t tmp = GPIO_READ_PIN(TRIUMVI_RDYn_IN_GPIO_BASE, (0x1<<TRIUMVI_RDYn_IN_GPIO_PIN));
-    if (tmp>0)
-        return 0;
-    else
-        return 1;
+    #ifdef VERSION9
+    if (tmp>0) return 0; else return 1;
+    #else
+    if (tmp>0) return 1; else return 0;
+    #endif
 }
 
 uint8_t vcapLoopBack(){
     uint8_t tmp = GPIO_READ_PIN(CONFIG_VCAP_LOOPBACK_GPIO_BASE, (0x1<<CONFIG_VCAP_LOOPBACK_GPIO_PIN));
-    if (tmp>0)
-        return 1;
-    else
-        return 0;
+    #ifdef VERSION9
+    if (tmp>0) return 1; else return 0;
+    #else
+    if (tmp>0) return 0; else return 1;
+    #endif
+
 }
 #endif
 
@@ -184,7 +191,7 @@ inline void meterVoltageComparator(uint8_t en){
 	}
 }
 
-#ifndef VERSION9
+#ifdef VERSION8
 inline void meterMUXConfig(uint8_t en){
 	if (en==SENSE_ENABLE)
 		GPIO_SET_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_EN_GPIO_PIN);
@@ -218,11 +225,38 @@ inline uint8_t getINAGain(){
 #endif
 
 void setINAGain(uint8_t gain){
-    #ifdef VERSION9
+    #ifdef VERSION8
+	switch (gain){
+		case 1: // Select S1
+			GPIO_CLR_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A0_GPIO_PIN);
+			GPIO_CLR_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A1_GPIO_PIN);
+		break;
+		case 2: // Select S2
+			GPIO_SET_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A0_GPIO_PIN);
+			GPIO_CLR_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A1_GPIO_PIN);
+		break;
+		case 5: // Select S3
+			GPIO_CLR_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A0_GPIO_PIN);
+			GPIO_SET_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A1_GPIO_PIN);
+		break;
+		case 10: // Select S4
+			GPIO_SET_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A0_GPIO_PIN);
+			GPIO_SET_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A1_GPIO_PIN);
+		break;
+		default:
+		break;
+	}
+    #else
     switch (gain){
         case 1:
+            #ifdef VERSION9
             // shutdown --> Rg of INA 333 open
             ad5274_shutdown(0x1);
+            #else
+            // This pin is shared with mux enable 
+            GPIO_CLR_PIN(GPIO_PORT_TO_BASE(FM25V02_HOLD_N_PORT_NUM), 
+                        0x1<<FM25V02_HOLD_N_PIN);
+            #endif
         break;
 
         case 2:
@@ -248,27 +282,6 @@ void setINAGain(uint8_t gain){
         default:
         break;
     }
-    #else
-	switch (gain){
-		case 1: // Select S1
-			GPIO_CLR_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A0_GPIO_PIN);
-			GPIO_CLR_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A1_GPIO_PIN);
-		break;
-		case 2: // Select S2
-			GPIO_SET_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A0_GPIO_PIN);
-			GPIO_CLR_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A1_GPIO_PIN);
-		break;
-		case 5: // Select S3
-			GPIO_CLR_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A0_GPIO_PIN);
-			GPIO_SET_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A1_GPIO_PIN);
-		break;
-		case 10: // Select S4
-			GPIO_SET_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A0_GPIO_PIN);
-			GPIO_SET_PIN(MUX_IO_GPIO_BASE, 0x1<<MUX_A1_GPIO_PIN);
-		break;
-		default:
-		break;
-	}
     #endif
 }
 
@@ -307,7 +320,7 @@ inline uint8_t isButtonPressed(){
 		return 1;
 }
 
-#ifdef VERSION9
+#if defined(VERSION9) || defined(VERSION10)
 void batteryPackVoltageEn(uint8_t en){
     if (en==SENSE_ENABLE)
         GPIO_SET_PIN(CONFIG_PWR_SW_GPIO_BASE , 0x1<<CONFIG_PWR_SW_GPIO_PIN);
@@ -317,7 +330,7 @@ void batteryPackVoltageEn(uint8_t en){
 #endif
 
 uint8_t batteryPackIsAttached(){
-    #ifndef VERSION9
+    #ifdef VERSION8
 	// set input, disable internal pull-up
 	// If external battery pack is attached, I2C should be hold high
 	GPIO_SET_INPUT(I2C_SCL_GPIO_BASE, 0x1<<I2C_SCL_GPIO_PIN);
@@ -355,7 +368,7 @@ uint8_t batteryPackIsAttached(){
 void batteryPackInit(){
 	// I2C init
 	sx1509b_init();
-    #ifndef VERSION9
+    #ifdef VERSION8
 	sx1509b_software_reset();
     #endif
 	// Port A pin 0 is connected to VUSB directly
@@ -383,10 +396,10 @@ uint8_t batteryPackReadPanelID(){
 uint8_t batteryPackReadCircuitID(){
 	sx1509b_gpio_pullup_cfg(SX1509B_PORTB, 0xff, SX1509B_OUTPUT_RESISTOR_ENABLE);
 	uint8_t portBReg = sx1509b_gpio_read_port(SX1509B_PORTB);
-    #ifdef VERSION9
-	uint8_t circuitID = (15 - (portBReg>>4)) + (15 - (portBReg&0x0f))*10;
-    #else
+    #ifdef VERSION8
 	uint8_t circuitID = (15 - (portBReg&0x0f)) + (15 - (portBReg>>4))*10;
+    #else
+	uint8_t circuitID = (15 - (portBReg>>4)) + (15 - (portBReg&0x0f))*10;
     #endif
 	sx1509b_gpio_pullup_cfg(SX1509B_PORTB, 0xff, SX1509B_OUTPUT_RESISTOR_DISABLE);
 	return circuitID;

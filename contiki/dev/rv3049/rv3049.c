@@ -41,7 +41,7 @@ rv3049_init()
 {
   
   // Triumvi V9 doesn't connect to this pin
-  #ifndef VERSION9
+  #ifdef VERSION8
   GPIO_SET_INPUT(GPIO_PORT_TO_BASE(RV3049_INT_N_PORT_NUM),
                  GPIO_PIN_MASK(RV3049_INT_N_PIN));
   #endif

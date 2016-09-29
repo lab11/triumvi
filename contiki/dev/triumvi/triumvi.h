@@ -42,7 +42,7 @@ void triumviLEDON();
 void triumviLEDOFF();
 void triumviLEDToggle();
 
-#ifdef VERSION9
+#if defined(VERSION9) || defined(VERSION10)
 // Enable/Disable LDO on Sensing board
 void meterSenseVREn(uint8_t en);
 
@@ -62,7 +62,7 @@ void meterSenseConfig(uint8_t type, uint8_t en);
 // Enable comparater interrupt
 void meterVoltageComparator(uint8_t en);
 
-#ifndef VERSION9
+#ifdef VERSION8
 #define MAX_INA_GAIN_IDX 3
 #define MAX_INA_GAIN 10
 #define MIN_INA_GAIN 1
@@ -82,7 +82,7 @@ uint8_t externalVoltSel();
 uint8_t isButtonPressed();
 
 // Battery Pack functions
-#ifdef VERSION9
+#if defined(VERSION9) || defined(VERSION10)
 void batteryPackVoltageEn(uint8_t en);
 #endif
 uint8_t batteryPackIsAttached();
