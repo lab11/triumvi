@@ -476,7 +476,7 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                     rdy = 1;
                 }
                 if (rdy==1){
-                    GPIO_SET_PIN(TRIUMVI_READYn_OUT_GPIO_BASE, 0x1<<TRIUMVI_READYn_OUT_GPIO_PIN); // clear ready
+                    unitClrReady();
                     meterSenseVREn(SENSE_ENABLE);
                     meterSenseConfig(VOLTAGE, SENSE_ENABLE);
                     rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.4, 1, &rtimerEvent, NULL);
