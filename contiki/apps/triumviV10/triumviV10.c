@@ -472,7 +472,7 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                     rdy = 1;
                 }
                 if (rdy==1){
-                    GPIO_SET_PIN(TRIUMVI_READYn_OUT_GPIO_BASE, 0x1<<TRIUMVI_READYn_OUT_GPIO_PIN); // clear ready
+                    unitClrReady();
                     meterSenseVREn(SENSE_ENABLE);
                     meterSenseConfig(VOLTAGE, SENSE_ENABLE);
                     rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.4, 1, &rtimerEvent, NULL);
@@ -706,7 +706,7 @@ static void rtimerEvent(struct rtimer *t, void *ptr){
     process_poll(&triumviProcess);
 }
 
-// return phase offset has max product, muct be in calibration mode
+// return phase offset has max product, only be called in calibration mode
 uint16_t phaseMatchFilter(uint16_t* adcSamples, uint16_t* currentAVG){
     uint16_t i;
     int prod[360];

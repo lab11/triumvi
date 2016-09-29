@@ -144,6 +144,14 @@ void unitReady(){
     #endif
 }
 
+void unitClrReady(){
+    #ifdef VERSION9
+    GPIO_SET_PIN(TRIUMVI_READYn_OUT_GPIO_BASE, 0x1<<TRIUMVI_READYn_OUT_GPIO_PIN);
+    #else
+    GPIO_CLR_PIN(TRIUMVI_READYn_OUT_GPIO_BASE, 0x1<<TRIUMVI_READYn_OUT_GPIO_PIN);
+    #endif
+}
+
 uint8_t allUnitsReady(){
     uint8_t tmp = GPIO_READ_PIN(TRIUMVI_RDYn_IN_GPIO_BASE, (0x1<<TRIUMVI_RDYn_IN_GPIO_PIN));
     #ifdef VERSION9

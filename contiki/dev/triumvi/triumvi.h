@@ -46,8 +46,11 @@ void triumviLEDToggle();
 // Enable/Disable LDO on Sensing board
 void meterSenseVREn(uint8_t en);
 
-// Dessert READYn signal
+// signals unit is ready
 void unitReady();
+
+// clear the ready signal
+void unitClrReady();
 
 // Return 1 if all units in the chain are ready, 0 otherwise
 uint8_t allUnitsReady();
