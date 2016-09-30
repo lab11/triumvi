@@ -22,6 +22,7 @@
 #define UART_CONF_ENABLE 1
 #endif
 
+//#define FIFTYHZ
 #define POWERFACTOR_EN
 #define POLYFIT
 
