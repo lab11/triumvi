@@ -12,7 +12,7 @@
 //#define RTC_SET
 //#define FRAM_WRITE
 
-//#define DATADUMP
+#define DATADUMP
 //#define DATADUMP2
 //#define DEBUG_ON
 
@@ -22,6 +22,7 @@
 #define UART_CONF_ENABLE 1
 #endif
 
+//#define FIFTYHZ
 #define POWERFACTOR_EN
 #define POLYFIT
 #define RSENSE_LOW // 45.3 ohm sensing resistor

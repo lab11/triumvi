@@ -73,6 +73,8 @@
 
 #include "calibration_coef.h"
 
+
+
 const uint8_t inaGainArr[6] = {1, 2, 3, 5, 9, 17};
 
 typedef enum {
@@ -311,9 +313,9 @@ PROCESS_THREAD(calibrationProcess, ev, data) {
                         printf("ADC reference: %u\r\n", getAverage(currentADCVal, BUF_SIZE));
                         printf("Time difference: %lu\r\n", (timerVal[0]-timerVal[1]));
                         printf("INA Gain: %u\r\n", inaGain);
-                        for (i=0; i<BUF_SIZE; i+=1){
-                            printf("Current reading: %d\r\n", currentADCVal[i]);
-                        }
+                        //for (i=0; i<BUF_SIZE; i+=1){
+                        //    printf("Current reading: %d\r\n", currentADCVal[i]);
+                        //}
                         #else
                         // perform phase, dc offset calculation
                         calculatedPhase = phaseMatchFilter(currentADCVal, &currentRef);
@@ -766,12 +768,22 @@ uint16_t getVariance(uint16_t* data, uint16_t length){
     return variance;
 }
 
-// Fine tune to 2.99 degree / sample
+// Fine tune to 3.002 degree / sample
 void sampleCurrentWaveform(){
 	uint16_t sampleCnt = 0;
 	uint16_t temp;
+    #ifdef FIFTYHZ
+    uint8_t i;
+    #endif
     timerVal[0] = get_event_time(GPTIMER_1, GPTIMER_SUBTIMER_A);
 	while (sampleCnt < BUF_SIZE){
+        #ifdef FIFTYHZ
+        for (i=0; i<59; i++)
+            asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        #else
         asm("nop");
         asm("nop");
         asm("nop");
@@ -790,6 +802,17 @@ void sampleCurrentWaveform(){
         asm("nop");
         asm("nop");
         asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        #endif
 		temp = adc_get(I_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_512);
 		currentADCVal[sampleCnt] = ((temp>>4)>2047)? 0 : (temp>>4);
 		sampleCnt++;
