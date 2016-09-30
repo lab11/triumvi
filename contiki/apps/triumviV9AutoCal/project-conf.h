@@ -12,7 +12,7 @@
 //#define RTC_SET
 //#define FRAM_WRITE
 
-#define DATADUMP
+//#define DATADUMP
 //#define DATADUMP2
 //#define DEBUG_ON
 

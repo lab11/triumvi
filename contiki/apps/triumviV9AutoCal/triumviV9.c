@@ -53,8 +53,8 @@
 
 // number of samples per cycle
 #define BUF_SIZE 120        // sample current only, 11-bit resolution, 1 cycles
-#define BUF_SIZE2 225       // sample both current and voltage, 10-bit resolution, 2 cycles
-#define MAX_BUF_SIZE 225    // max(BUF_SIZE, BUF_SIZE2)
+#define BUF_SIZE2 228       // sample both current and voltage, 10-bit resolution, 2 cycles
+#define MAX_BUF_SIZE 228    // max(BUF_SIZE, BUF_SIZE2)
 
 // number of calibration cycles
 #define CALIBRATION_CYCLES 512
@@ -72,8 +72,6 @@
 #define VOLTAGE_SCALING 720
 
 #include "calibration_coef.h"
-
-
 
 const uint8_t inaGainArr[6] = {1, 2, 3, 5, 9, 17};
 
@@ -313,9 +311,9 @@ PROCESS_THREAD(calibrationProcess, ev, data) {
                         printf("ADC reference: %u\r\n", getAverage(currentADCVal, BUF_SIZE));
                         printf("Time difference: %lu\r\n", (timerVal[0]-timerVal[1]));
                         printf("INA Gain: %u\r\n", inaGain);
-                        //for (i=0; i<BUF_SIZE; i+=1){
-                        //    printf("Current reading: %d\r\n", currentADCVal[i]);
-                        //}
+                        for (i=0; i<BUF_SIZE; i+=1){
+                            printf("Current reading: %d\r\n", currentADCVal[i]);
+                        }
                         #else
                         // perform phase, dc offset calculation
                         calculatedPhase = phaseMatchFilter(currentADCVal, &currentRef);
@@ -1130,9 +1128,23 @@ void packDataHalf(uint8_t* dest, uint16_t data){
 void sampleCurrentVoltageWaveform(){
 	uint16_t sampleCnt = 0;
 	uint16_t temp;
+    #ifdef FIFTYHZ
+    uint8_t i;
+    #endif
 	timerVal[0] = get_event_time(GPTIMER_1, GPTIMER_SUBTIMER_A);
 	while (sampleCnt < BUF_SIZE2){
-		//timerVal[(sampleCnt%2)] = get_event_time(GPTIMER_1, GPTIMER_SUBTIMER_A);
+        #ifdef FIFTYHZ
+        for (i=0; i<59; i++)
+            asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        #else
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        #endif
 		temp = adc_get(I_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_256);
 		currentADCVal[sampleCnt] = ((temp>>5)>1023)? 0 : (temp>>5);
 		temp = adc_get(EXT_VOLT_IN_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_256);
