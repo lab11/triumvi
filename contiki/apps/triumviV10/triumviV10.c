@@ -105,8 +105,7 @@ volatile uint32_t flash_data;
 uint32_t timerVal[2];
 uint16_t currentADCVal[MAX_BUF_SIZE];
 int adjustedCurrSamples[MAX_BUF_SIZE];
-uint16_t voltADCVal[BUF_SIZE2]; 
-int adjustedVoltSamples[BUF_SIZE2];
+int voltADCVal[BUF_SIZE2]; 
 
 volatile uint16_t phaseOffset;
 volatile uint16_t dcOffset;
@@ -139,6 +138,8 @@ uint16_t getVariance(uint16_t* data, uint16_t length);
 
 // return mean(data)
 uint16_t getAverage(uint16_t* data, uint16_t length);
+// return mean(data)
+uint16_t getAverage32(int* data, uint16_t length);
 // gain control, adjust gain if necessary
 gainSetting_t gainCtrl(uint16_t* adcSamples, uint8_t externalVolt);
 // initialize GPIO, peripherals
@@ -160,7 +161,7 @@ void packData(uint8_t* dest, int reading);
 void packDataHalf(uint8_t* dest, uint16_t reading);
 
 int currentDataTransform(int currentReading, uint8_t externalVolt);
-int voltDataTransform(uint16_t voltReading, uint16_t voltReference);
+int voltDataTransform(int voltReading, uint16_t voltReference);
 // functions do not use in data dump mode
 static void disable_all_ioc_override();
 
@@ -1029,15 +1030,15 @@ int sampleAndCalculate(uint16_t triumviStatusReg){
             sampleCurrentVoltageWaveform();
             gainSetting = gainCtrl(currentADCVal, 0x1);
             if (gainSetting == GAIN_OK){
-                voltRef = getAverage(voltADCVal, BUF_SIZE2);
+                voltRef = getAverage32(voltADCVal, BUF_SIZE2);
                 energyCal = 0;
                 for (j=0; j<BUF_SIZE2; j++){
                     k = ((j + VOLTAGE_SAMPLE_OFFSET)>=BUF_SIZE2)? 
                         (j+VOLTAGE_SAMPLE_OFFSET-BUF_SIZE2) : 
                         j+VOLTAGE_SAMPLE_OFFSET;
                     adjustedCurrSamples[j] = currentDataTransform(adjustedCurrSamples[j], 0x1);
-                    adjustedVoltSamples[k] = voltDataTransform(voltADCVal[k], voltRef);
-                    energyCal += (adjustedCurrSamples[j]*adjustedVoltSamples[k])/1000;
+                    voltADCVal[k] = voltDataTransform(voltADCVal[k], voltRef);
+                    energyCal += (adjustedCurrSamples[j]*voltADCVal[k])/1000;
                 }
                 tempPower = (energyCal/BUF_SIZE2); // unit is mW
                 // Fix phase oppsite down
@@ -1096,7 +1097,7 @@ int currentDataTransform(int currentReading, uint8_t externalVolt){
     return (int)tmp;
 }
 
-int voltDataTransform(uint16_t voltReading, uint16_t voltReference){
+int voltDataTransform(int voltReading, uint16_t voltReference){
     return (voltReading - voltReference)*VOLTAGE_SCALING;
 }
 
@@ -1165,11 +1166,6 @@ static void unitReadyCallBack(uint8_t port, uint8_t pin){
 static void referenceIntCallBack(uint8_t port, uint8_t pin){
     meterVoltageComparator(SENSE_DISABLE);
     referenceInt = 1;
-    // not sure if this is necessary
-    if (operation_mode==MODE_CALIBRATION)
-        process_poll(&calibrationProcess);
-    else
-        process_poll(&triumviProcess);
 }
 
 // unit is mA
@@ -1193,7 +1189,7 @@ uint16_t voltageRMS(uint16_t triumviStatusReg){
     float result = 0;
     if (triumviStatusReg & EXTERNALVOLT_STATUSREG){
         for (i=0; i<BUF_SIZE2; i++){
-            tmp = adjustedVoltSamples[i]/1000;
+            tmp = voltADCVal[i]/1000;
             result += tmp*tmp;
         }
         result /= BUF_SIZE2;
