@@ -536,10 +536,12 @@ PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
                             amplitude_calibration_state = STATE_AMP_CALIBRATION_IN_PROGRESS;
                         }
                     }
+                }
             break;
 
             case STATE_AMP_CALIBRATION_IN_PROGRESS:
                 if (etimer_expired(&calibration_timer)){
+                    /*
                     triumviLEDON();
 
                     // Enable digital pot
@@ -575,6 +577,7 @@ PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
                     }
 
                     if (gainSetting==GAIN_OK){
+                        
                         energyCal = 0;
                         for (i=0; i<BUF_SIZE; i++){
                             j = ((i*3+phaseOffset) >= 360)? i*3+phaseOffset-360 : i*3+phaseOffset;
@@ -640,11 +643,13 @@ PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
                             amplitude_calibration_state = STATE_AMP_CALIBRATION_IN_PROGRESS;
                         }
                         triumviLEDOFF();
+                        
                     }
                     else{
                         triumviLEDOFF();
                         etimer_set(&calibration_timer, CLOCK_SECOND*0.1);
                     }
+                    */
                 }
             break;
         }
