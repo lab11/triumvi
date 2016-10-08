@@ -1176,11 +1176,6 @@ static void unitReadyCallBack(uint8_t port, uint8_t pin){
 static void referenceIntCallBack(uint8_t port, uint8_t pin){
     meterVoltageComparator(SENSE_DISABLE);
     referenceInt = 1;
-    // not sure if this is necessary
-    if (operation_mode==MODE_CALIBRATION)
-        process_poll(&calibrationProcess);
-    else
-        process_poll(&triumviProcess);
 }
 
 // unit is mA
