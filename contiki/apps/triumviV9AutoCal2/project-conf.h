@@ -14,11 +14,12 @@
 
 //#define DATADUMP
 //#define DATADUMP2
+//#define DATADUMP3
 //#define DEBUG_ON
 
 //#define AVG_VREF      // calculate the reference by averaging a cycle
 
-#if defined(DATADUMP) || defined(DATADUMP2) || defined(DEBUG_ON)
+#if defined(DATADUMP) || defined(DATADUMP2) || defined(DEBUG_ON) || defined(DATADUMP3)
 #define UART_CONF_ENABLE 1
 #endif
 

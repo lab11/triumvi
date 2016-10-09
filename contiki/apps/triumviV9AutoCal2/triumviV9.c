@@ -59,7 +59,7 @@
 // number of calibration cycles
 //#define CALIBRATION_CYCLES 512
 #define CALIBRATION_CYCLES 128
-#define AMP_CALIBRATION_CYCLE 64
+#define AMP_CALIBRATION_CYCLE 16
 
 // maximum different current setting per gain
 #define MAX_CURRENT_SETTING_PER_GAIN 16
@@ -83,7 +83,7 @@
 #define APS3B12_PACKET_ID 31
 #define APS3B12_ENABLE 1
 #define APS3B12_SET_CURRENT 2
-#define APS3B12_TRIALS 5
+#define APS3B12_TRIALS 10
 
 #include "calibration_coef.h"
 
@@ -304,7 +304,7 @@ PROCESS_THREAD(phaseCalibrationProcess, ev, data) {
                     triumviLEDOFF();
                     if (aps_trials < APS3B12_TRIALS){
                         aps3b12_enable(0x1);
-                        etimer_set(&calibration_timer, CLOCK_SECOND*1);
+                        etimer_set(&calibration_timer, CLOCK_SECOND*0.5);
                         aps_trials += 1;
                     }
                     else{
@@ -527,7 +527,7 @@ PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
                     triumviLEDOFF();
                     if (aps_trials < APS3B12_TRIALS){
                         aps3b12_set_current(currentSetting);
-                        etimer_set(&calibration_timer, CLOCK_SECOND*1);
+                        etimer_set(&calibration_timer, CLOCK_SECOND*0.5);
                         aps_trials += 1;
                     }
                     else{
@@ -614,6 +614,21 @@ PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
                                 #endif
                                 //read_power[current_set_cnt] = sum_power/AMP_CALIBRATION_CYCLE;
 
+                                if (((current_set_cnt == MAX_CURRENT_SETTING_PER_GAIN) || (currentSetting == MAX_CURRENT_SETTING)) && (current_set_cnt > 1)){
+                                    linearFit(read_current, src_setting, current_set_cnt, &slope_n, &slope_d, &offset);
+                                    #ifdef DATADUMP3
+                                    printf("B\r\n");
+                                    printf("Number of points: %u\r\n", current_set_cnt);
+                                    printf("Numerator: %lu\r\n", slope_n);
+                                    printf("Denumerator: %lu\r\n", slope_d);
+                                    printf("Offset: %d\r\n", offset);
+                                    #endif
+                                    rom_util_program_flash((uint32_t*)&slope_n, flash_addr+(inaGainIdx*16)+4, 4);
+                                    rom_util_program_flash((uint32_t*)&slope_d, flash_addr+(inaGainIdx*16)+8, 4);
+                                    rom_util_program_flash((uint32_t*)&offset, flash_addr+(inaGainIdx*16)+12, 4);
+                                    current_set_cnt = 0;
+                                }
+
                                 currentSetting += 250;
                                 // calibration completed
                                 if (currentSetting > MAX_CURRENT_SETTING){
@@ -626,21 +641,21 @@ PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
                                 amplitude_calibration_state = STATE_AMP_STD_LOAD_SET;
                             }
                             else{
+                                if ((prevInaGainIdx<=MAX_INA_GAIN_IDX) && (amp_cal_cnt==1) && (inaGainIdx != prevInaGainIdx) && (current_set_cnt > 1)){
+                                    linearFit(read_current, src_setting, current_set_cnt, &slope_n, &slope_d, &offset);
+                                    #ifdef DATADUMP3
+                                    printf("A\r\n");
+                                    printf("Number of points: %u\r\n", current_set_cnt);
+                                    printf("Numerator: %lu\r\n", slope_n);
+                                    printf("Denumerator: %lu\r\n", slope_d);
+                                    printf("Offset: %d\r\n", offset);
+                                    #endif
+                                    rom_util_program_flash((uint32_t*)&slope_n, flash_addr+(prevInaGainIdx*16)+4, 4);
+                                    rom_util_program_flash((uint32_t*)&slope_d, flash_addr+(prevInaGainIdx*16)+8, 4);
+                                    rom_util_program_flash((uint32_t*)&offset, flash_addr+(prevInaGainIdx*16)+12, 4);
+                                    current_set_cnt = 0;
+                                }
                                 etimer_set(&calibration_timer, CLOCK_SECOND*0.1);
-                            }
-                            if (((prevInaGainIdx<=MAX_INA_GAIN_IDX) && (amp_cal_cnt==1) && (inaGainIdx != prevInaGainIdx)) ||
-                               (((current_set_cnt == MAX_CURRENT_SETTING_PER_GAIN) || (currentSetting == MAX_CURRENT_SETTING)) && (current_set_cnt > 1))){
-                                linearFit(read_current, src_setting, current_set_cnt, &slope_n, &slope_d, &offset);
-                                #ifdef DATADUMP3
-                                printf("Number of points: %u\r\n", current_set_cnt);
-                                printf("Numerator: %lu\r\n", slope_n);
-                                printf("Denumerator: %lu\r\n", slope_d);
-                                printf("Offset: %d\r\n", offset);
-                                #endif
-                                rom_util_program_flash((uint32_t*)&slope_n, flash_addr+(prevInaGainIdx*16)+4, 4);
-                                rom_util_program_flash((uint32_t*)&slope_d, flash_addr+(prevInaGainIdx*16)+8, 4);
-                                rom_util_program_flash((uint32_t*)&offset, flash_addr+(prevInaGainIdx*16)+12, 4);
-                                current_set_cnt = 0;
                             }
                             prevInaGainIdx = inaGainIdx;
                         }
@@ -667,6 +682,11 @@ PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
         }
     }
 
+    #if (defined(DATADUMP) || defined(DATADUMP3)) && !defined(DATADUMP2)
+    GPIO_SET_OUTPUT(GPIO_A_BASE, 0x47);
+    GPIO_CLR_PIN(GPIO_A_BASE, 0x07);
+    GPIO_SET_PIN(TRIUMVI_READYn_OUT_GPIO_BASE, 0x1<<TRIUMVI_READYn_OUT_GPIO_PIN); // not ready yet
+    #endif
     PROCESS_END();
 }
 
@@ -844,31 +864,34 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                             numerator   = REG(flash_addr+(inaGainIdx*16)+4);
                             denumerator = REG(flash_addr+(inaGainIdx*16)+8);
                             offset      = REG(flash_addr+(inaGainIdx*16)+12);
-                            if ((offset != 0xffffffff) && (IRMS > 0.4)){
-                                IRMS = (uint16_t)((((uint64_t)IRMS)*numerator)/denumerator + offset);
+                            if (offset != 0xffffffff){
+                                if (IRMS > 0.4){
+                                    IRMS = (uint16_t)((((uint64_t)IRMS)*numerator/denumerator) + offset);
+                                }
                             }
-                            /*
-                            switch (inaGain){
-                                case 2:
-                                    IRMS = (int)((float)IRMS*IGAIN2_D1 + IGAIN2_D0);
-                                break;
-                                case 3:
-                                    IRMS = (int)((float)IRMS*IGAIN3_D1 + IGAIN3_D0);
-                                break;
-                                case 5:
-                                    IRMS = (int)((float)IRMS*IGAIN5_D1 + IGAIN5_D0);
-                                break;
-                                case 9:
-                                    IRMS = (int)((float)IRMS*IGAIN9_D1 + IGAIN9_D0);
-                                break;
-                                case 17:
-                                    if (IRMS>0.4)
-                                        IRMS = (int)((float)IRMS*IGAIN17_D1 + IGAIN17_D0);
-                                break;
-                                default:
-                                break;
+                            // use default calibration coef
+                            else{
+                                switch (inaGain){
+                                    case 2:
+                                        IRMS = (int)((float)IRMS*IGAIN2_D1 + IGAIN2_D0);
+                                    break;
+                                    case 3:
+                                        IRMS = (int)((float)IRMS*IGAIN3_D1 + IGAIN3_D0);
+                                    break;
+                                    case 5:
+                                        IRMS = (int)((float)IRMS*IGAIN5_D1 + IGAIN5_D0);
+                                    break;
+                                    case 9:
+                                        IRMS = (int)((float)IRMS*IGAIN9_D1 + IGAIN9_D0);
+                                    break;
+                                    case 17:
+                                        if (IRMS>0.4)
+                                            IRMS = (int)((float)IRMS*IGAIN17_D1 + IGAIN17_D0);
+                                    break;
+                                    default:
+                                    break;
+                                }
                             }
-                            */
                             #endif
                             if ((IRMS==0) || (avgPower==0))
                                 pf = 0;
