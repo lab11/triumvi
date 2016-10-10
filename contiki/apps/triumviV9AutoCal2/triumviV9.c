@@ -57,15 +57,16 @@
 #define MAX_BUF_SIZE 228    // max(BUF_SIZE, BUF_SIZE2)
 
 // number of calibration cycles
-//#define CALIBRATION_CYCLES 512
-#define CALIBRATION_CYCLES 128
-#define AMP_CALIBRATION_CYCLE 16
+#define CALIBRATION_CYCLES 512
+#define AMP_CALIBRATION_CYCLE 128
+
+#define VOLTAGE_NOMINAL 120
 
 // maximum different current setting per gain
 #define MAX_CURRENT_SETTING_PER_GAIN 16
 
 // maximum achievable setting for APS3B12, unit is mA
-#define MAX_CURRENT_SETTING 4000 
+#define MAX_CURRENT_SETTING 8500 
 
 // phase lock threshold
 #define PHASE_VARIANCE_THRESHOLD 15
@@ -118,7 +119,8 @@ typedef enum {
 
 typedef enum{
     STATE_AMP_STD_LOAD_SET,
-    STATE_AMP_CALIBRATION_IN_PROGRESS
+    STATE_AMP_CALIBRATION_IN_PROGRESS,
+    STATE_AMP_CALIBRATION_LED_OFF
 } triumvi_state_amp_calibration_t;
 
 volatile static triumvi_state_t myState;
@@ -496,14 +498,14 @@ PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
     static triumvi_state_amp_calibration_t amplitude_calibration_state = STATE_AMP_STD_LOAD_SET;
     static uint32_t timerExp, currentTime;
     uint16_t i, j;
-    //int tempPower;
-    //int energyCal;
-    //static uint32_t sum_power;
+    int tempPower;
+    int energyCal;
+    static uint32_t sum_power;
     static uint32_t sum_currentRMS;
     static uint8_t prevInaGainIdx = MAX_INA_GAIN_IDX+1;
-    static uint16_t src_setting[MAX_CURRENT_SETTING_PER_GAIN];
+    static uint16_t current_setting[MAX_CURRENT_SETTING_PER_GAIN];
     static uint16_t read_current[MAX_CURRENT_SETTING_PER_GAIN];
-    //static uint16_t read_power[MAX_CURRENT_SETTING_PER_GAIN];
+    static uint16_t read_power[MAX_CURRENT_SETTING_PER_GAIN];
     static uint8_t current_set_cnt;
     static uint8_t amp_cal_cnt;
     static uint8_t amp_cal_completed;
@@ -533,18 +535,24 @@ PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
                     else{
                         aps_trials = 0;
                         sum_currentRMS = 0;
-                        //sum_power= 0;
+                        sum_power = 0;
                         amp_cal_cnt = 0;
                         if (amp_cal_completed){
-                            // start measurement process
-                            operation_mode = MODE_NORMAL;
-                            process_start(&triumviProcess, NULL);
-                            break;
+                            if (batteryPackIsAttached()){
+                                batteryPackVoltageEn(SENSE_ENABLE);
+                                batteryPackInit();
+                                batteryPackLEDDriverInit();
+                                batteryPackLEDOn(BATTERY_PACK_LED_GREEN);
+                                i2c_disable(I2C_SDA_GPIO_NUM, I2C_SDA_GPIO_PIN, I2C_SCL_GPIO_NUM, I2C_SCL_GPIO_PIN); 
+                            }
+                            triumviLEDON();
+                            amplitude_calibration_state = STATE_AMP_CALIBRATION_LED_OFF;
                         }
                         else{
                             amplitude_calibration_state = STATE_AMP_CALIBRATION_IN_PROGRESS;
-                            etimer_set(&calibration_timer, CLOCK_SECOND*3);
                         }
+                        etimer_set(&calibration_timer, CLOCK_SECOND*3);
+                        
                     }
                 }
             break;
@@ -587,37 +595,38 @@ PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
 
                     if (gainSetting==GAIN_OK){
                         
-                        //energyCal = 0;
+                        energyCal = 0;
                         for (i=0; i<BUF_SIZE; i++){
-                            //j = ((i*3+phaseOffset) >= 360)? i*3+phaseOffset-360 : i*3+phaseOffset;
+                            j = ((i*3+phaseOffset) >= 360)? i*3+phaseOffset-360 : i*3+phaseOffset;
                             adjustedCurrSamples[i] = currentDataTransform(adjustedCurrSamples[i], 0x0);
-                            //energyCal += (adjustedCurrSamples[i]*stdSineTable[j]);
+                            energyCal += (adjustedCurrSamples[i]*stdSineTable[j]);
                         }
-                        //tempPower = (energyCal/BUF_SIZE); // unit is mW
+                        tempPower = (energyCal/BUF_SIZE); // unit is mW
                         // Fix phase oppsite down
-                        //if (tempPower < 0)
-                        //    tempPower = -1*tempPower;
+                        if (tempPower < 0)
+                            tempPower = -1*tempPower;
 
                         // need to perform flash check, make sure if it's empty to proceed
                         flash_data = REG(flash_addr+(inaGainIdx*16)+4);
 
                         if (flash_data==0xffffffff){ 
-                            //sum_power += tempPower;
+                            sum_power += tempPower;
                             sum_currentRMS += currentRMS(0);
                             amp_cal_cnt += 1;
                             if (amp_cal_cnt == AMP_CALIBRATION_CYCLE){
-                                src_setting[current_set_cnt] = currentSetting;
+                                current_setting[current_set_cnt] = currentSetting;
                                 read_current[current_set_cnt] = sum_currentRMS/AMP_CALIBRATION_CYCLE;
+                                read_power[current_set_cnt] = (sum_power/AMP_CALIBRATION_CYCLE/VOLTAGE_NOMINAL);
                                 #ifdef DATADUMP3
-                                printf("Source Setting: %u\r\n", src_setting[current_set_cnt]);
+                                printf("Source Setting: %u\r\n", current_setting[current_set_cnt]);
                                 printf("IRMS Reading: %u\r\n", read_current[current_set_cnt]);
                                 #endif
-                                //read_power[current_set_cnt] = sum_power/AMP_CALIBRATION_CYCLE;
 
                                 if (((current_set_cnt == MAX_CURRENT_SETTING_PER_GAIN) || (currentSetting == MAX_CURRENT_SETTING)) && (current_set_cnt > 1)){
-                                    linearFit(read_current, src_setting, current_set_cnt, &slope_n, &slope_d, &offset);
+                                    linearFit(read_current, current_setting, current_set_cnt, &slope_n, &slope_d, &offset);
                                     #ifdef DATADUMP3
                                     printf("B\r\n");
+                                    printf("current correction\r\n");
                                     printf("Number of points: %u\r\n", current_set_cnt);
                                     printf("Numerator: %lu\r\n", slope_n);
                                     printf("Denumerator: %lu\r\n", slope_d);
@@ -626,6 +635,18 @@ PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
                                     rom_util_program_flash((uint32_t*)&slope_n, flash_addr+(inaGainIdx*16)+4, 4);
                                     rom_util_program_flash((uint32_t*)&slope_d, flash_addr+(inaGainIdx*16)+8, 4);
                                     rom_util_program_flash((uint32_t*)&offset, flash_addr+(inaGainIdx*16)+12, 4);
+                                    // power correction
+                                    linearFit(read_power, current_setting, current_set_cnt, &slope_n, &slope_d, &offset);
+                                    offset *= VOLTAGE_NOMINAL;
+                                    #ifdef DATADUMP3
+                                    printf("power correction\r\n");
+                                    printf("Numerator: %lu\r\n", slope_n);
+                                    printf("Denumerator: %lu\r\n", slope_d);
+                                    printf("Offset: %d\r\n", offset);
+                                    #endif
+                                    rom_util_program_flash((uint32_t*)&slope_n, flash_addr+(inaGainIdx*16)+4+(MAX_INA_GAIN_IDX+1)*16, 4);
+                                    rom_util_program_flash((uint32_t*)&slope_d, flash_addr+(inaGainIdx*16)+8+(MAX_INA_GAIN_IDX+1)*16, 4);
+                                    rom_util_program_flash((uint32_t*)&offset, flash_addr+(inaGainIdx*16)+12+(MAX_INA_GAIN_IDX+1)*16, 4);
                                     current_set_cnt = 0;
                                 }
 
@@ -642,9 +663,10 @@ PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
                             }
                             else{
                                 if ((prevInaGainIdx<=MAX_INA_GAIN_IDX) && (amp_cal_cnt==1) && (inaGainIdx != prevInaGainIdx) && (current_set_cnt > 1)){
-                                    linearFit(read_current, src_setting, current_set_cnt, &slope_n, &slope_d, &offset);
+                                    linearFit(read_current, current_setting, current_set_cnt, &slope_n, &slope_d, &offset);
                                     #ifdef DATADUMP3
                                     printf("A\r\n");
+                                    printf("current correction\r\n");
                                     printf("Number of points: %u\r\n", current_set_cnt);
                                     printf("Numerator: %lu\r\n", slope_n);
                                     printf("Denumerator: %lu\r\n", slope_d);
@@ -653,6 +675,18 @@ PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
                                     rom_util_program_flash((uint32_t*)&slope_n, flash_addr+(prevInaGainIdx*16)+4, 4);
                                     rom_util_program_flash((uint32_t*)&slope_d, flash_addr+(prevInaGainIdx*16)+8, 4);
                                     rom_util_program_flash((uint32_t*)&offset, flash_addr+(prevInaGainIdx*16)+12, 4);
+                                    // power correction
+                                    linearFit(read_power, current_setting, current_set_cnt, &slope_n, &slope_d, &offset);
+                                    offset *= VOLTAGE_NOMINAL;
+                                    #ifdef DATADUMP3
+                                    printf("power correction\r\n");
+                                    printf("Numerator: %lu\r\n", slope_n);
+                                    printf("Denumerator: %lu\r\n", slope_d);
+                                    printf("Offset: %d\r\n", offset);
+                                    #endif
+                                    rom_util_program_flash((uint32_t*)&slope_n, flash_addr+(prevInaGainIdx*16)+4+(MAX_INA_GAIN_IDX+1)*16, 4);
+                                    rom_util_program_flash((uint32_t*)&slope_d, flash_addr+(prevInaGainIdx*16)+8+(MAX_INA_GAIN_IDX+1)*16, 4);
+                                    rom_util_program_flash((uint32_t*)&offset, flash_addr+(prevInaGainIdx*16)+12+(MAX_INA_GAIN_IDX+1)*16, 4);
                                     current_set_cnt = 0;
                                 }
                                 etimer_set(&calibration_timer, CLOCK_SECOND*0.1);
@@ -677,6 +711,20 @@ PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
                         triumviLEDOFF();
                         etimer_set(&calibration_timer, CLOCK_SECOND*0.1);
                     }
+                }
+            break;
+
+            case STATE_AMP_CALIBRATION_LED_OFF:
+                if (etimer_expired(&calibration_timer)){
+                    if (batteryPackIsAttached()){
+                        batteryPackLEDOff(BATTERY_PACK_LED_GREEN);
+                        batteryPackVoltageEn(SENSE_DISABLE);
+                    }
+                    triumviLEDOFF();
+                    // start measurement process
+                    operation_mode = MODE_NORMAL;
+                    process_start(&triumviProcess, NULL);
+                    break;
                 }
             break;
         }
@@ -836,25 +884,35 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                         sampleCount++;
                         inaGain = inaGainArr[inaGainIdx];
                         #ifdef POLYFIT
-                        switch (inaGain){
-                            case 2:
-                                avgPower = (int)((float)avgPower*PGAIN2_D1 + PGAIN2_D0);
-                            break;
-                            case 3:
-                                avgPower = (int)((float)avgPower*PGAIN3_D1 + PGAIN3_D0);
-                            break;
-                            case 5:
-                                avgPower = (int)((float)avgPower*PGAIN5_D1 + PGAIN5_D0);
-                            break;
-                            case 9:
-                                avgPower = (int)((float)avgPower*PGAIN9_D1 + PGAIN9_D0);
-                            break;
-                            case 17:
-                                if (avgPower>50)
-                                    avgPower = (int)((float)avgPower*PGAIN17_D1 + PGAIN17_D0);
-                            break;
-                            default:
-                            break;
+                        numerator   = REG(flash_addr+(inaGainIdx*16)+4+(MAX_INA_GAIN_IDX+1)*16);
+                        denumerator = REG(flash_addr+(inaGainIdx*16)+8+(MAX_INA_GAIN_IDX+1)*16);
+                        offset      = REG(flash_addr+(inaGainIdx*16)+12+(MAX_INA_GAIN_IDX+1)*16);
+                        if (offset != 0xffffffff){
+                            if (avgPower > 50){
+                                avgPower = (int)(((int64_t)avgPower)*numerator/denumerator + offset);
+                            }
+                        }
+                        else{
+                            switch (inaGain){
+                                case 2:
+                                    avgPower = (int)((float)avgPower*PGAIN2_D1 + PGAIN2_D0);
+                                break;
+                                case 3:
+                                    avgPower = (int)((float)avgPower*PGAIN3_D1 + PGAIN3_D0);
+                                break;
+                                case 5:
+                                    avgPower = (int)((float)avgPower*PGAIN5_D1 + PGAIN5_D0);
+                                break;
+                                case 9:
+                                    avgPower = (int)((float)avgPower*PGAIN9_D1 + PGAIN9_D0);
+                                break;
+                                case 17:
+                                    if (avgPower>50)
+                                        avgPower = (int)((float)avgPower*PGAIN17_D1 + PGAIN17_D0);
+                                break;
+                                default:
+                                break;
+                            }
                         }
                         #endif
                         if (triumviStatusReg & POWERFACTOR_STATUSREG){
@@ -1469,18 +1527,33 @@ static void referenceIntCallBack(uint8_t port, uint8_t pin){
     referenceInt = 1;
 }
 
-// unit is mA
-// FIX ME, OVERFLOW!!
 uint16_t currentRMS(uint16_t triumviStatusReg){
     uint16_t i;
     uint32_t result = 0;
+    uint64_t result64 = 0;
     uint16_t length = (triumviStatusReg & EXTERNALVOLT_STATUSREG)? BUF_SIZE2 : BUF_SIZE;
+    uint8_t gain = inaGainArr[inaGainIdx];
 
-    for (i=0; i<length; i++){
-        result += ((adjustedCurrSamples[i]*adjustedCurrSamples[i])>>2);
+    // if IRMS > 4.34 A, 32 bit will overflow with external voltage (228 samples)
+    // For lower gain setting (higher current), use 64 bits
+    #ifdef RSENSE_LOW
+    #define I_OVERFLOW_GAIN_THRESHOLD 5
+    #else
+    #define I_OVERFLOW_GAIN_THRESHOLD 3
+    #endif
+    if (gain <= I_OVERFLOW_GAIN_THRESHOLD){
+        for (i=0; i<length; i++){
+            result64 += (adjustedCurrSamples[i]*adjustedCurrSamples[i]);
+        }
+        result = (uint32_t)(result64/length);
     }
-    result /= length;
-    return (mysqrt(result)<<1);
+    else{
+        for (i=0; i<length; i++){
+            result += (adjustedCurrSamples[i]*adjustedCurrSamples[i]);
+        }
+        result /= length;
+    }
+    return mysqrt(result);
 }
 
 // unit is V
@@ -1496,7 +1569,7 @@ uint16_t voltageRMS(uint16_t triumviStatusReg){
         result /= BUF_SIZE2;
         return mysqrt((uint32_t)result);
     }
-    return 120;
+    return VOLTAGE_NOMINAL;
     
     
 }
