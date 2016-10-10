@@ -1188,18 +1188,33 @@ static void referenceIntCallBack(uint8_t port, uint8_t pin){
     referenceInt = 1;
 }
 
-// unit is mA
-// FIX ME, OVERFLOW!!
 uint16_t currentRMS(uint16_t triumviStatusReg){
     uint16_t i;
     uint32_t result = 0;
+    uint64_t result64 = 0;
     uint16_t length = (triumviStatusReg & EXTERNALVOLT_STATUSREG)? BUF_SIZE2 : BUF_SIZE;
+    uint8_t gain = inaGainArr[inaGainIdx];
 
-    for (i=0; i<length; i++){
-        result += ((adjustedCurrSamples[i]*adjustedCurrSamples[i])>>2);
+    // if IRMS > 4.34 A, 32 bit will overflow with external voltage (228 samples)
+    // For lower gain setting (higher current), use 64 bits
+    #ifdef RSENSE_LOW
+    #define I_OVERFLOW_GAIN_THRESHOLD 5
+    #else
+    #define I_OVERFLOW_GAIN_THRESHOLD 3
+    #endif
+    if (gain <= I_OVERFLOW_GAIN_THRESHOLD){
+        for (i=0; i<length; i++){
+            result64 += (adjustedCurrSamples[i]*adjustedCurrSamples[i]);
+        }
+        result = (uint32_t)(result64/length);
     }
-    result /= length;
-    return (mysqrt(result)<<1);
+    else{
+        for (i=0; i<length; i++){
+            result += (adjustedCurrSamples[i]*adjustedCurrSamples[i]);
+        }
+        result /= length;
+    }
+    return mysqrt(result);
 }
 
 // unit is V
@@ -1228,4 +1243,3 @@ uint16_t mysqrt(uint32_t n){
     }
     return (uint16_t)xn;
 }
-
