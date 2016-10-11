@@ -478,6 +478,11 @@ PROCESS_THREAD(phaseCalibrationProcess, ev, data) {
                     #ifdef AMPLITUDE_CALIBRATION_EN
                     process_start(&amplitudeCalibrationProcess, NULL);
                     #else
+                    #if (defined(DATADUMP) && !defined(DATADUMP2)
+                    GPIO_SET_OUTPUT(GPIO_A_BASE, 0x47);
+                    GPIO_CLR_PIN(GPIO_A_BASE, 0x07);
+                    GPIO_SET_PIN(TRIUMVI_READYn_OUT_GPIO_BASE, 0x1<<TRIUMVI_READYn_OUT_GPIO_PIN); // not ready yet
+                    #endif
                     process_start(&triumviProcess, NULL);
                     #endif
                     triumviLEDOFF();
