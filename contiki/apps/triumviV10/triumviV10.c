@@ -192,9 +192,11 @@ int voltDataTransform(int voltReading, uint16_t voltReference);
 void aps3b12_set_current(uint16_t cu);
 void aps3b12_enable(uint8_t en);
 
+#ifdef AMPLITUDE_CALIBRATION_EN
 // find coefficient for 1st order linear regression
 void linearFit(uint16_t* reading, uint16_t* setting, uint8_t length, 
                 uint32_t* slope_n, uint32_t* slope_d, int* offset);
+#endif
 
 // functions do not use in data dump mode
 static void disable_all_ioc_override();
@@ -214,7 +216,9 @@ static void unitReadyCallBack(uint8_t port, uint8_t pin);
 /*---------------------------------------------------------------------------*/
 PROCESS(startupProcess, "Startup");
 PROCESS(phaseCalibrationProcess, "Phase Calibration");
+#ifdef AMPLITUDE_CALIBRATION_EN
 PROCESS(amplitudeCalibrationProcess, "Amplitude Calibration");
+#endif
 PROCESS(triumviProcess, "Triumvi");
 AUTOSTART_PROCESSES(&startupProcess);
 /*---------------------------------------------------------------------------*/
@@ -467,7 +471,11 @@ PROCESS_THREAD(phaseCalibrationProcess, ev, data) {
             case STATE_CALIBRATION_COMPLETED:
                 if (etimer_expired(&calibration_timer)){
                     operation_mode = MODE_AMPLITUDE_CALIBRATION;
+                    #ifdef AMPLITUDE_CALIBRATION_EN
                     process_start(&amplitudeCalibrationProcess, NULL);
+                    #else
+                    process_start(&triumviProcess, NULL);
+                    #endif
                     triumviLEDOFF();
                     if (batteryPackIsAttached()){
                         batteryPackLEDOff(BATTERY_PACK_LED_GREEN);
@@ -485,6 +493,7 @@ PROCESS_THREAD(phaseCalibrationProcess, ev, data) {
     PROCESS_END();
 }
 
+#ifdef AMPLITUDE_CALIBRATION_EN
 PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
     PROCESS_BEGIN();
 
@@ -733,6 +742,7 @@ PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
     #endif
     PROCESS_END();
 }
+#endif
 
 PROCESS_THREAD(triumviProcess, ev, data) {
     PROCESS_BEGIN();
@@ -835,9 +845,7 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                     triumviStatusReg |= FRAMWRITE_STATUSREG;
                     #endif
 
-                    #ifdef POWERFACTOR_EN
                     triumviStatusReg |= POWERFACTOR_STATUSREG;
-                    #endif
 
                     // Check if configuration board is attached
                     if (batteryPackIsAttached())
@@ -911,49 +919,47 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                             }
                         }
                         #endif
-                        if (triumviStatusReg & POWERFACTOR_STATUSREG){
-                            IRMS = currentRMS(triumviStatusReg);
-                            VRMS = voltageRMS(triumviStatusReg);
-                            #ifdef POLYFIT
-                            numerator   = REG(flash_addr+(inaGainIdx*16)+4);
-                            denumerator = REG(flash_addr+(inaGainIdx*16)+8);
-                            offset      = REG(flash_addr+(inaGainIdx*16)+12);
-                            if (offset != 0xffffffff){
-                                if (IRMS > 0.4){
-                                    IRMS = (uint16_t)((((uint64_t)IRMS)*numerator/denumerator) + offset);
-                                }
+                        IRMS = currentRMS(triumviStatusReg);
+                        VRMS = voltageRMS(triumviStatusReg);
+                        #ifdef POLYFIT
+                        numerator   = REG(flash_addr+(inaGainIdx*16)+4);
+                        denumerator = REG(flash_addr+(inaGainIdx*16)+8);
+                        offset      = REG(flash_addr+(inaGainIdx*16)+12);
+                        if (offset != 0xffffffff){
+                            if (IRMS > 0.4){
+                                IRMS = (uint16_t)((((uint64_t)IRMS)*numerator/denumerator) + offset);
                             }
-                            // use default calibration coef
-                            else{
-                                switch (inaGain){
-                                    case 2:
-                                        IRMS = (int)((float)IRMS*IGAIN2_D1 + IGAIN2_D0);
-                                    break;
-                                    case 3:
-                                        IRMS = (int)((float)IRMS*IGAIN3_D1 + IGAIN3_D0);
-                                    break;
-                                    case 5:
-                                        IRMS = (int)((float)IRMS*IGAIN5_D1 + IGAIN5_D0);
-                                    break;
-                                    case 9:
-                                        IRMS = (int)((float)IRMS*IGAIN9_D1 + IGAIN9_D0);
-                                    break;
-                                    case 17:
-                                        if (IRMS>0.4)
-                                            IRMS = (int)((float)IRMS*IGAIN17_D1 + IGAIN17_D0);
-                                    break;
-                                    default:
-                                    break;
-                                }
-                            }
-                            #endif
-                            if ((IRMS==0) || (avgPower==0))
-                                pf = 0;
-                            else
-                                pf = (float)avgPower/(VRMS*IRMS);
-                            if (pf > 1)
-                                pf = 1;
                         }
+                        // use default calibration coef
+                        else{
+                            switch (inaGain){
+                                case 2:
+                                    IRMS = (int)((float)IRMS*IGAIN2_D1 + IGAIN2_D0);
+                                break;
+                                case 3:
+                                    IRMS = (int)((float)IRMS*IGAIN3_D1 + IGAIN3_D0);
+                                break;
+                                case 5:
+                                    IRMS = (int)((float)IRMS*IGAIN5_D1 + IGAIN5_D0);
+                                break;
+                                case 9:
+                                    IRMS = (int)((float)IRMS*IGAIN9_D1 + IGAIN9_D0);
+                                break;
+                                case 17:
+                                    if (IRMS>0.4)
+                                        IRMS = (int)((float)IRMS*IGAIN17_D1 + IGAIN17_D0);
+                                break;
+                                default:
+                                break;
+                            }
+                        }
+                        #endif
+                        if ((IRMS==0) || (avgPower==0))
+                            pf = 0;
+                        else
+                            pf = (float)avgPower/(VRMS*IRMS);
+                        if (pf > 1)
+                            pf = 1;
                         #ifdef DATADUMP2
                         uint8_t i;
                         //printf("ADC reference: %u\r\n", dcOffset);
@@ -1337,13 +1343,11 @@ void encryptAndTransmit(uint16_t triumviStatusReg, int avgPower, float pf,
 	packData(&packetData[1], nonceCounter);
 	packData(&myNonce[9], nonceCounter);
 	packData(readingBuf, avgPower);
-    if (triumviStatusReg & POWERFACTOR_STATUSREG){
-        packDataHalf(&readingBuf[myPDATA_LEN], (uint16_t)(pf*1000));
-        packDataHalf(&readingBuf[myPDATA_LEN+2], VRMS);
-        packDataHalf(&readingBuf[myPDATA_LEN+4], IRMS);
-        myPDATA_LEN += 6;
-        packetLen += 6;
-    }
+    packDataHalf(&readingBuf[myPDATA_LEN], (uint16_t)(pf*1000));
+    packDataHalf(&readingBuf[myPDATA_LEN+2], VRMS);
+    packDataHalf(&readingBuf[myPDATA_LEN+4], IRMS);
+    myPDATA_LEN += 6;
+    packetLen += 6;
 
 	ccm_auth_encrypt_start(LEN_LEN, 0, myNonce, aData, ADATA_LEN,
 		pData, myPDATA_LEN, MIC_LEN, NULL);
@@ -1587,6 +1591,7 @@ void aps3b12_enable(uint8_t en){
     CC2538_RF_CSP_ISRFOFF();
 }
 
+#ifdef AMPLITUDE_CALIBRATION_EN
 void linearFit(uint16_t* reading, uint16_t* setting, uint8_t length, 
                 uint32_t* slope_n, uint32_t* slope_d, int* offset){
     uint8_t i;
@@ -1602,3 +1607,4 @@ void linearFit(uint16_t* reading, uint16_t* setting, uint8_t length,
     *slope_d = tmp1;
     *offset = settingAvg - (((uint64_t)readingAvg)*tmp0/tmp1);
 }
+#endif

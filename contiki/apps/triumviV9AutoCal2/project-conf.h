@@ -24,6 +24,7 @@
 #endif
 
 //#define FIFTYHZ
+#define AMPLITUDE_CALIBRATION_EN
 #define POWERFACTOR_EN
 #define POLYFIT
 #define RSENSE_LOW // 45.3 ohm sensing resistor

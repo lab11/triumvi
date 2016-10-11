@@ -58,7 +58,7 @@
 
 // number of calibration cycles
 #define CALIBRATION_CYCLES 512
-#define AMP_CALIBRATION_CYCLE 128
+#define AMP_CALIBRATION_CYCLE 64
 
 #define VOLTAGE_NOMINAL 120
 
@@ -196,9 +196,11 @@ int voltDataTransform(int voltReading, uint16_t voltReference);
 void aps3b12_set_current(uint16_t cu);
 void aps3b12_enable(uint8_t en);
 
+#ifdef AMPLITUDE_CALIBRATION_EN
 // find coefficient for 1st order linear regression
 void linearFit(uint16_t* reading, uint16_t* setting, uint8_t length, 
                 uint32_t* slope_n, uint32_t* slope_d, int* offset);
+#endif
 
 // functions do not use in data dump mode
 static void disable_all_ioc_override();
@@ -218,7 +220,9 @@ static void unitReadyCallBack(uint8_t port, uint8_t pin);
 /*---------------------------------------------------------------------------*/
 PROCESS(startupProcess, "Startup");
 PROCESS(phaseCalibrationProcess, "Phase Calibration");
+#ifdef AMPLITUDE_CALIBRATION_EN
 PROCESS(amplitudeCalibrationProcess, "Amplitude Calibration");
+#endif
 PROCESS(triumviProcess, "Triumvi");
 AUTOSTART_PROCESSES(&startupProcess);
 /*---------------------------------------------------------------------------*/
@@ -471,7 +475,11 @@ PROCESS_THREAD(phaseCalibrationProcess, ev, data) {
             case STATE_CALIBRATION_COMPLETED:
                 if (etimer_expired(&calibration_timer)){
                     operation_mode = MODE_AMPLITUDE_CALIBRATION;
+                    #ifdef AMPLITUDE_CALIBRATION_EN
                     process_start(&amplitudeCalibrationProcess, NULL);
+                    #else
+                    process_start(&triumviProcess, NULL);
+                    #endif
                     triumviLEDOFF();
                     if (batteryPackIsAttached()){
                         batteryPackLEDOff(BATTERY_PACK_LED_GREEN);
@@ -489,6 +497,7 @@ PROCESS_THREAD(phaseCalibrationProcess, ev, data) {
     PROCESS_END();
 }
 
+#ifdef AMPLITUDE_CALIBRATION_EN
 PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
     PROCESS_BEGIN();
 
@@ -737,6 +746,7 @@ PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
     #endif
     PROCESS_END();
 }
+#endif
 
 PROCESS_THREAD(triumviProcess, ev, data) {
     PROCESS_BEGIN();
@@ -1598,6 +1608,7 @@ void aps3b12_enable(uint8_t en){
     CC2538_RF_CSP_ISRFOFF();
 }
 
+#ifdef AMPLITUDE_CALIBRATION_EN
 void linearFit(uint16_t* reading, uint16_t* setting, uint8_t length, 
                 uint32_t* slope_n, uint32_t* slope_d, int* offset){
     uint8_t i;
@@ -1613,3 +1624,4 @@ void linearFit(uint16_t* reading, uint16_t* setting, uint8_t length,
     *slope_d = tmp1;
     *offset = settingAvg - (((uint64_t)readingAvg)*tmp0/tmp1);
 }
+#endif

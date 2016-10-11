@@ -18,12 +18,12 @@
 
 //#define AVG_VREF      // calculate the reference by averaging a cycle
 
-#if defined(DATADUMP) || defined(DATADUMP2) || defined(DEBUG_ON)
+#if defined(DATADUMP) || defined(DATADUMP2) || defined(DEBUG_ON) || defined(DATADUMP3)
 #define UART_CONF_ENABLE 1
 #endif
 
 //#define FIFTYHZ
-#define POWERFACTOR_EN
+#define AMPLITUDE_CALIBRATION_EN
 #define POLYFIT
 
 
