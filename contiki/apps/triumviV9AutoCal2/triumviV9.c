@@ -119,8 +119,7 @@ typedef enum {
 
 typedef enum{
     STATE_AMP_STD_LOAD_SET,
-    STATE_AMP_CALIBRATION_IN_PROGRESS,
-    STATE_AMP_CALIBRATION_LED_OFF
+    STATE_AMP_CALIBRATION_IN_PROGRESS
 } triumvi_state_amp_calibration_t;
 
 volatile static triumvi_state_t myState;
@@ -525,10 +524,12 @@ PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
     static uint8_t amp_cal_completed;
     static uint32_t slope_n, slope_d;
     static int offset;
+    static uint8_t increase_current;
     gainSetting_t gainSetting;
     aps_trials = 0;
     current_set_cnt = 0;
     amp_cal_completed = 0;
+    increase_current = 0;
 
     // enable LDO, release power gating
     meterSenseVREn(SENSE_ENABLE);
@@ -553,19 +554,19 @@ PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
                         amp_cal_cnt = 0;
                         if (amp_cal_completed){
                             if (batteryPackIsAttached()){
-                                batteryPackVoltageEn(SENSE_ENABLE);
-                                batteryPackInit();
-                                batteryPackLEDDriverInit();
-                                batteryPackLEDOn(BATTERY_PACK_LED_GREEN);
-                                i2c_disable(I2C_SDA_GPIO_NUM, I2C_SDA_GPIO_PIN, I2C_SCL_GPIO_NUM, I2C_SCL_GPIO_PIN); 
+                                batteryPackLEDOff(BATTERY_PACK_LED_GREEN);
+                                batteryPackVoltageEn(SENSE_DISABLE);
                             }
-                            triumviLEDON();
-                            amplitude_calibration_state = STATE_AMP_CALIBRATION_LED_OFF;
+                            triumviLEDOFF();
+                            // start measurement process
+                            operation_mode = MODE_NORMAL;
+                            process_start(&triumviProcess, NULL);
+                            break;
                         }
                         else{
                             amplitude_calibration_state = STATE_AMP_CALIBRATION_IN_PROGRESS;
+                            etimer_set(&calibration_timer, CLOCK_SECOND*3);
                         }
-                        etimer_set(&calibration_timer, CLOCK_SECOND*3);
                         
                     }
                 }
@@ -663,17 +664,11 @@ PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
                                     rom_util_program_flash((uint32_t*)&offset, flash_addr+(inaGainIdx*16)+12+(MAX_INA_GAIN_IDX+1)*16, 4);
                                     current_set_cnt = 0;
                                 }
-
-                                currentSetting += 250;
-                                // calibration completed
-                                if (currentSetting > MAX_CURRENT_SETTING){
-                                    currentSetting = 2000;
-                                    amp_cal_completed = 1;
+                                else{
+                                    current_set_cnt += 1;
                                 }
+                                increase_current = 1;
                                 amp_cal_cnt = 0;
-                                current_set_cnt += 1;
-                                etimer_set(&calibration_timer, CLOCK_SECOND*1);
-                                amplitude_calibration_state = STATE_AMP_STD_LOAD_SET;
                             }
                             else{
                                 if ((prevInaGainIdx<=MAX_INA_GAIN_IDX) && (amp_cal_cnt==1) && (inaGainIdx != prevInaGainIdx) && (current_set_cnt > 1)){
@@ -709,16 +704,30 @@ PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
                         }
                         // it has been alreay written, advances current setting
                         else{
+                            increase_current = 1;
+                        }
+                        if (increase_current){
                             currentSetting += 250;
                             // calibration completed
                             if (currentSetting > MAX_CURRENT_SETTING){
                                 currentSetting = 2000;
                                 amp_cal_completed = 1;
+                                if (batteryPackIsAttached()){
+                                    batteryPackVoltageEn(SENSE_ENABLE);
+                                    batteryPackInit();
+                                    batteryPackLEDDriverInit();
+                                    batteryPackLEDOn(BATTERY_PACK_LED_GREEN);
+                                    i2c_disable(I2C_SDA_GPIO_NUM, I2C_SDA_GPIO_PIN, I2C_SCL_GPIO_NUM, I2C_SCL_GPIO_PIN); 
+                                }
+                                triumviLEDON();
                             }
                             etimer_set(&calibration_timer, CLOCK_SECOND*1);
                             amplitude_calibration_state = STATE_AMP_STD_LOAD_SET;
+                            increase_current = 0;
                         }
-                        triumviLEDOFF();
+                        if (amp_cal_completed==0){
+                            triumviLEDOFF();
+                        }
                         
                     }
                     else{
@@ -728,18 +737,7 @@ PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
                 }
             break;
 
-            case STATE_AMP_CALIBRATION_LED_OFF:
-                if (etimer_expired(&calibration_timer)){
-                    if (batteryPackIsAttached()){
-                        batteryPackLEDOff(BATTERY_PACK_LED_GREEN);
-                        batteryPackVoltageEn(SENSE_DISABLE);
-                    }
-                    triumviLEDOFF();
-                    // start measurement process
-                    operation_mode = MODE_NORMAL;
-                    process_start(&triumviProcess, NULL);
-                    break;
-                }
+            default:
             break;
         }
     }
