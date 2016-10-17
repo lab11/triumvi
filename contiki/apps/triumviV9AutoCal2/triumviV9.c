@@ -67,7 +67,7 @@
 #define MAX_CURRENT_SETTING_PER_GAIN 16
 
 // maximum achievable setting for APS3B12, unit is mA
-#define MAX_CURRENT_SETTING 8500 
+#define MAX_CURRENT_SETTING 8750
 
 // phase lock threshold
 #define PHASE_VARIANCE_THRESHOLD 15
@@ -90,7 +90,7 @@
 #define APS3B12_CURRENT_INFO 3
 #define APS3B12_TRIALS 10
 
-#define DIFF_THRESHOLD 5
+#define DIFF_THRESHOLD 10
 
 #include "calibration_coef.h"
 
