@@ -9,6 +9,7 @@
 #define SPI_MASTER_GET_DATA 0x02
 #define SPI_MASTER_RADIO_ON 0x03
 #define SPI_MASTER_RADIO_OFF 0x04
+#define SPI_RF_PACKET_SEND 0x05
 
 #define MAX_SPI_LENGTH 128
 
@@ -49,7 +50,7 @@ uint8_t spi_packet_parse(spi_packet_t* rx_packet, uint8_t* data_ptr){
     break;
 
     default:
-      rx_packet->spi_payload_length = data_ptr[1]-1;
+      rx_packet->spi_payload_length = (data_ptr[1]-1);
       for (i=0; i<rx_packet->spi_payload_length; i++)
         rx_packet->spi_payload[i] = data_ptr[2+i];
     break;
