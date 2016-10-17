@@ -23,6 +23,7 @@
 #include "triumvi.h"
 #include "sx1509b.h"
 #include "ad5274.h"
+#include "simple_network_driver.h"
 #include "dev/rom-util.h"
 
 #include <stdio.h>
@@ -84,7 +85,12 @@
 #define APS3B12_PACKET_ID 31
 #define APS3B12_ENABLE 1
 #define APS3B12_SET_CURRENT 2
+#define APS3B12_READ 3
+#define APS3B12_READ_CURRENT 0
+#define APS3B12_CURRENT_INFO 3
 #define APS3B12_TRIALS 10
+
+#define DIFF_THRESHOLD 5
 
 #include "calibration_coef.h"
 
@@ -119,7 +125,9 @@ typedef enum {
 
 typedef enum{
     STATE_AMP_STD_LOAD_SET,
-    STATE_AMP_CALIBRATION_IN_PROGRESS
+    STATE_AMP_CALIBRATION_IN_PROGRESS,
+    STATE_AMP_STD_LOAD_RECEIVE,
+    STATE_AMP_STD_LOAD_VERIFY
 } triumvi_state_amp_calibration_t;
 
 volatile static triumvi_state_t myState;
@@ -150,6 +158,7 @@ volatile uint8_t inaGainIdx;
 volatile uint8_t allInitsAreReadyInt;
 
 static uint8_t aps_trials;
+volatile int aps3b12_current_value; 
 
 /* End of global variables */
 
@@ -196,9 +205,11 @@ void aps3b12_set_current(uint16_t cu);
 void aps3b12_enable(uint8_t en);
 
 #ifdef AMPLITUDE_CALIBRATION_EN
+void aps3b12_read_current();
 // find coefficient for 1st order linear regression
 void linearFit(uint16_t* reading, uint16_t* setting, uint8_t length, 
                 uint32_t* slope_n, uint32_t* slope_d, int* offset);
+void rf_rx_handler();
 #endif
 
 // functions do not use in data dump mode
@@ -221,6 +232,7 @@ PROCESS(startupProcess, "Startup");
 PROCESS(phaseCalibrationProcess, "Phase Calibration");
 #ifdef AMPLITUDE_CALIBRATION_EN
 PROCESS(amplitudeCalibrationProcess, "Amplitude Calibration");
+PROCESS(rf_received_process, "rf receive");
 #endif
 PROCESS(triumviProcess, "Triumvi");
 AUTOSTART_PROCESSES(&startupProcess);
@@ -505,6 +517,9 @@ PROCESS_THREAD(phaseCalibrationProcess, ev, data) {
 PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
     PROCESS_BEGIN();
 
+    simple_network_set_callback(&rf_rx_handler);
+    process_start(&rf_received_process, NULL);
+
     static uint16_t currentSetting = 250; // starts with 250 mA
     triumviLEDON();
     etimer_set(&calibration_timer, CLOCK_SECOND*5);
@@ -525,6 +540,7 @@ PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
     static uint32_t slope_n, slope_d;
     static int offset;
     static uint8_t increase_current;
+    static uint32_t diff;
     gainSetting_t gainSetting;
     aps_trials = 0;
     current_set_cnt = 0;
@@ -564,11 +580,46 @@ PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
                             break;
                         }
                         else{
-                            amplitude_calibration_state = STATE_AMP_CALIBRATION_IN_PROGRESS;
-                            etimer_set(&calibration_timer, CLOCK_SECOND*3);
+                            aps3b12_read_current();
+                            etimer_set(&calibration_timer, CLOCK_SECOND*5);
+                            amplitude_calibration_state = STATE_AMP_STD_LOAD_RECEIVE;
                         }
                         
                     }
+                }
+            break;
+
+            case STATE_AMP_STD_LOAD_RECEIVE:
+                // timer expired, did not received data
+                if (etimer_expired(&calibration_timer)) {
+                    amplitude_calibration_state = STATE_AMP_STD_LOAD_SET;
+                    etimer_set(&calibration_timer, CLOCK_SECOND*1);
+                }
+                else{
+                    CC2538_RF_CSP_ISRFOFF();
+                    amplitude_calibration_state = STATE_AMP_STD_LOAD_VERIFY;
+                }
+            break;
+
+            case STATE_AMP_STD_LOAD_VERIFY:
+                if (etimer_expired(&calibration_timer)) {
+                    if (aps3b12_current_value > currentSetting){
+                        diff = aps3b12_current_value - currentSetting;
+                    }
+                    else if (aps3b12_current_value < currentSetting){
+                        diff = currentSetting - aps3b12_current_value;
+                    }
+                    else{
+                        diff = 0;
+                    }
+                    if (diff < DIFF_THRESHOLD){
+                        currentSetting = aps3b12_current_value;
+                        amplitude_calibration_state = STATE_AMP_CALIBRATION_IN_PROGRESS;
+                    }
+                    else{
+                        amplitude_calibration_state = STATE_AMP_STD_LOAD_SET;
+                    }
+                    etimer_set(&calibration_timer, CLOCK_SECOND*1);
                 }
             break;
 
@@ -747,6 +798,37 @@ PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
     GPIO_CLR_PIN(GPIO_A_BASE, 0x07);
     GPIO_SET_PIN(TRIUMVI_READYn_OUT_GPIO_BASE, 0x1<<TRIUMVI_READYn_OUT_GPIO_PIN); // not ready yet
     #endif
+    PROCESS_END();
+}
+#endif
+
+#ifdef AMPLITUDE_CALIBRATION_EN
+PROCESS_THREAD(rf_received_process, ev, data) {
+    PROCESS_BEGIN();
+
+    uint8_t *header_ptr;
+    uint8_t *data_ptr;
+    uint8_t data_length;
+    uint8_t header_length;
+
+    while(1){
+        PROCESS_YIELD();
+        triumviLEDToggle();
+        // Get data from radio buffer and parse it
+        header_length = packetbuf_hdrlen();
+        header_ptr = packetbuf_hdrptr();                                   
+        data_length = packetbuf_datalen();                               
+        data_ptr = packetbuf_dataptr();                                  
+
+        if (data_ptr[0] == APS3B12_PACKET_ID){
+            if (data_ptr[1] == APS3B12_CURRENT_INFO){
+                aps3b12_current_value = ((data_ptr[2] << 24) | (data_ptr[3] << 16) 
+                        | (data_ptr[4] << 8) | data_ptr[5]);
+                process_poll(&amplitudeCalibrationProcess);
+            }
+        }
+
+    }
     PROCESS_END();
 }
 #endif
@@ -1612,6 +1694,17 @@ void aps3b12_enable(uint8_t en){
 }
 
 #ifdef AMPLITUDE_CALIBRATION_EN
+
+void aps3b12_read_current(){
+    uint8_t pkt[4] = {APS3B12_PACKET_ID, APS3B12_READ, APS3B12_READ_CURRENT, 0x0};
+    packetbuf_copyfrom(pkt, 4);
+    cc2538_on_and_transmit();
+}
+
+void rf_rx_handler(){
+    process_poll(&rf_received_process);
+}   
+
 void linearFit(uint16_t* reading, uint16_t* setting, uint8_t length, 
                 uint32_t* slope_n, uint32_t* slope_d, int* offset){
     uint8_t i;
