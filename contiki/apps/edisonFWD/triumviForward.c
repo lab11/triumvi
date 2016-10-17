@@ -171,10 +171,12 @@ PROCESS_THREAD(spiProcess, ev, data) {
     PROCESS_BEGIN();
     uint8_t spi_data_fifo[SPIFIFOSIZE];
     uint8_t packetLen;
-    spi_packet_t spi_rx_pkt;
+    static spi_packet_t spi_rx_pkt;
     uint8_t* dma_src_end_addr;
     static uint8_t spi_data_ptr = 0;
     uint8_t proc_idx;
+    static uint8_t rf_pkt_payload[128] = {0};
+    static uint8_t rf_pkt_len = 0;
 
 
     while (1){
@@ -253,6 +255,14 @@ PROCESS_THREAD(spiProcess, ev, data) {
 
                             case SPI_MASTER_RADIO_OFF:
                                 NETSTACK_RADIO.off();
+                                spiInUse = 0;
+                            break;
+
+                            case SPI_RF_PACKET_SEND:
+                                rf_pkt_len = spi_rx_pkt.spi_payload_length;
+                                memcpy(rf_pkt_payload, spi_rx_pkt.spi_payload, rf_pkt_len);
+                                packetbuf_copyfrom(rf_pkt_payload, rf_pkt_len);
+                                cc2538_on_and_transmit();
                                 spiInUse = 0;
                             break;
 
