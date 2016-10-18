@@ -8,6 +8,9 @@
 // No need for UART
 #define STARTUP_CONF_VERBOSE 0
 
+#define NETSTACK_CONF_NETWORK	simple_network_driver
+#define CC2538_RF_CONF_SNIFFER  1
+
 //#ifdef ERASE_FRAM
 //#define RTC_SET
 //#define FRAM_WRITE
