@@ -7,6 +7,7 @@
 
 #define FM25V02_MAX_ADDR 32760
 #define FM25V02_MIN_ADDR 16			// reserve first 16 bytes
+#define FM25CL64B_MAX_ADDR 4095 
 #define FM25V02_WRITE_LOC_ADDR 12	// Addr 12~13
 #define FM25V02_READ_LOC_ADDR 14	// Addr 14~15
 #define READ_PTR_TYPE 0x0

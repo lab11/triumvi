@@ -4,11 +4,11 @@ ifndef CONTIKI
   $(error CONTIKI not defined! You must specify where CONTIKI resides!)
 endif
 
-CONTIKI_TARGET_DIRS = . dev ../../dev/rv3049 ../../dev/fm25v02 ../../net ../../dev/header_parse ../../dev/triumvi ../../dev/sx1509b ../../dev/cc2538i2cs ../../dev/ad5274
+CONTIKI_TARGET_DIRS = . dev ../../dev/rv3049 ../../dev/fm25v02 ../../net ../../dev/header_parse ../../dev/triumvi ../../dev/sx1509b ../../dev/cc2538i2cs ../../dev/ad5274 ../../dev/fm25cl64b
 
 CONTIKI_TARGET_SOURCEFILES += leds.c leds-arch.c
 CONTIKI_TARGET_SOURCEFILES += contiki-main.c
-CONTIKI_TARGET_SOURCEFILES += fm25v02.c rv3049.c
+CONTIKI_TARGET_SOURCEFILES += fm25v02.c rv3049.c fm25cl64b.c
 CONTIKI_TARGET_SOURCEFILES += simple_network_driver.c
 CONTIKI_TARGET_SOURCEFILES += rf-header-parse.c
 CONTIKI_TARGET_SOURCEFILES += sx1509b.c

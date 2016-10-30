@@ -204,11 +204,18 @@
 
 /*---------------------------------------------------------------------------*/
 /**
- * \name FM25LV02 configuration
+ * \name FRAM configuration
  *
  * These values configure which CC2538 pins to use for the FRAM chip.
  * @{
  */
+#define FM25CL64B_HOLD_N_PORT_NUM GPIO_D_NUM
+#define FM25CL64B_HOLD_N_PIN      0
+#define FM25CL64B_WP_N_PORT_NUM   GPIO_D_NUM
+#define FM25CL64B_WP_N_PIN        2
+#define FM25CL64B_CS_N_PORT_NUM   GPIO_D_NUM
+#define FM25CL64B_CS_N_PIN        1
+
 #define FM25V02_HOLD_N_PORT_NUM GPIO_D_NUM
 #define FM25V02_HOLD_N_PIN      0
 #define FM25V02_WP_N_PORT_NUM   GPIO_D_NUM

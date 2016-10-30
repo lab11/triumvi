@@ -5,6 +5,7 @@
 #include "contiki.h"
 #include "clock.c"
 #include "fm25v02.h"
+#include "fm25cl64b.h"
 #include "rv3049.h"
 #include "sx1509b.h"
 #include "triumvi.h"
@@ -13,10 +14,20 @@
 
 uint16_t getReadWritePtr(uint8_t ptrType){
 	uint8_t readBuf[2];
-	if (ptrType==READ_PTR_TYPE)
-		fm25v02_read(FM25V02_READ_LOC_ADDR, 2, readBuf);
-	else
-		fm25v02_read(FM25V02_WRITE_LOC_ADDR, 2, readBuf);
+	if (ptrType==READ_PTR_TYPE){
+        #ifdef FM25CL64B
+        fm25cl64b_read(FM25V02_READ_LOC_ADDR, 2, readBuf);
+        #else
+        fm25v02_read(FM25V02_READ_LOC_ADDR, 2, readBuf);
+        #endif
+    }
+	else {
+        #ifdef FM25CL64B
+        fm25cl64b_read(FM25V02_WRITE_LOC_ADDR, 2, readBuf);
+        #else
+        fm25v02_read(FM25V02_WRITE_LOC_ADDR, 2, readBuf);
+        #endif
+    }
 	uint16_t myPtr = (readBuf[0]<<8 | readBuf[1]);
 	return myPtr;
 }
@@ -26,11 +37,16 @@ void triumviFramPtrClear(){
 	uint8_t writeBuf[2];
 	writeBuf[0] = (FM25V02_MIN_ADDR&0xff00)>>8;
 	writeBuf[1] = FM25V02_MIN_ADDR&0xff;
+    #ifdef FM25CL64B
+	fm25cl64b_write(FM25V02_WRITE_LOC_ADDR, 2, writeBuf);
+	fm25cl64b_write(FM25V02_READ_LOC_ADDR, 2, writeBuf);
+    #else
 	// Dummy read, wake up FRAM
 	fm25v02_dummyWakeup();
 	fm25v02_write(FM25V02_WRITE_LOC_ADDR, 2, writeBuf);
 	fm25v02_write(FM25V02_READ_LOC_ADDR, 2, writeBuf);
 	fm25v02_sleep();
+    #endif
 }
 
 void updatePtr(uint8_t ptrType, uint16_t readWritePtr){
@@ -44,10 +60,18 @@ void updatePtr(uint8_t ptrType, uint16_t readWritePtr){
 	writeBuf[1] = readWritePtr & 0xff;
 
 	if (ptrType==READ_PTR_TYPE){
-		fm25v02_write(FM25V02_READ_LOC_ADDR, 2, writeBuf);
+        #ifdef FM25CL64B
+        fm25cl64b_write(FM25V02_READ_LOC_ADDR, 2, writeBuf);
+        #else
+        fm25v02_write(FM25V02_READ_LOC_ADDR, 2, writeBuf);
+        #endif
 	}
 	else{
-		fm25v02_write(FM25V02_WRITE_LOC_ADDR, 2, writeBuf);
+        #ifdef FM25CL64B
+        fm25cl64b_write(FM25V02_WRITE_LOC_ADDR, 2, writeBuf);
+        #else
+        fm25v02_write(FM25V02_WRITE_LOC_ADDR, 2, writeBuf);
+        #endif
 	}
 }
 
@@ -55,7 +79,9 @@ void updatePtr(uint8_t ptrType, uint16_t readWritePtr){
 // Otherwise, return 0 (success)
 int triumviFramWrite(uint16_t powerReading, rv3049_time_t* rtctime){
 	// Dummy read, wake up FRAM
+    #ifndef FM25CL64B
 	fm25v02_dummyWakeup();
+    #endif
 	uint16_t readPtr = getReadWritePtr(READ_PTR_TYPE);
 	uint16_t writePtr = getReadWritePtr(WRITE_PTR_TYPE);
 	static uint8_t writeBuf[TRIUMVI_RECORD_SIZE] = {0xff};
@@ -66,7 +92,11 @@ int triumviFramWrite(uint16_t powerReading, rv3049_time_t* rtctime){
 	}
 	else{
 		// FRAM is full
+        #ifdef FM25CL64B
+		if ((readPtr==FM25V02_MIN_ADDR) && (writePtr==FM25CL64B_MAX_ADDR)) 
+        #else
 		if ((readPtr==FM25V02_MIN_ADDR) && (writePtr==FM25V02_MAX_ADDR)) 
+        #endif
 			return -1;
 	}
 	writeBuf[0] = (rtctime->year & 0xff0)>>4;
@@ -77,15 +107,23 @@ int triumviFramWrite(uint16_t powerReading, rv3049_time_t* rtctime){
 	writeBuf[5] = rtctime->seconds;
 	writeBuf[6] = (powerReading&0xff00)>>8;
 	writeBuf[7] = powerReading&0xff;
+    #ifdef FM25CL64B
+	fm25cl64b_write(writePtr, TRIUMVI_RECORD_SIZE, writeBuf);
+    #else
 	fm25v02_write(writePtr, TRIUMVI_RECORD_SIZE, writeBuf);
+    #endif
 	updatePtr(WRITE_PTR_TYPE, writePtr);
+    #ifndef FM25CL64B
 	fm25v02_sleep();
+    #endif
 	return 0;
 }
 
 int triumviFramRead(triumviData_t* record){
 	// Dummy read, wake up FRAM
+    #ifndef FM25CL64B
 	fm25v02_dummyWakeup();
+    #endif
 	uint16_t readPtr = getReadWritePtr(READ_PTR_TYPE);
 	uint16_t writePtr = getReadWritePtr(WRITE_PTR_TYPE);
 	static uint8_t readBuf[TRIUMVI_RECORD_SIZE];
@@ -93,7 +131,11 @@ int triumviFramRead(triumviData_t* record){
 	if (readPtr==writePtr){
 		return -1;
 	}
+    #ifdef FM25CL64B
+	fm25cl64b_read(readPtr, TRIUMVI_RECORD_SIZE, readBuf);
+    #else
 	fm25v02_read(readPtr, TRIUMVI_RECORD_SIZE, readBuf);
+    #endif
 	record->year = readBuf[0]<<4 | ((readBuf[1]&0xf0)>>4);
 	record->month = (readBuf[1] & 0xf);
 	record->days = readBuf[2];
@@ -102,7 +144,9 @@ int triumviFramRead(triumviData_t* record){
 	record->seconds = readBuf[5];
 	record->powerReading = ((readBuf[6]<<8) | readBuf[7]);
 	updatePtr(READ_PTR_TYPE, readPtr);
+    #ifndef FM25CL64B
 	fm25v02_sleep();
+    #endif
 	return 0;
 }
 

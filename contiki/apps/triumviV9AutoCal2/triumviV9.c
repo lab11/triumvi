@@ -212,6 +212,10 @@ void linearFit(uint16_t* reading, uint16_t* setting, uint8_t length,
 void rf_rx_handler();
 #endif
 
+#ifdef FRAM_WRITE
+inline void writeFRAM(uint16_t powerRead, rv3049_time_t* rtctime);
+#endif
+
 // functions do not use in data dump mode
 static void disable_all_ioc_override();
 
@@ -1537,6 +1541,14 @@ int sampleAndCalculate(uint16_t triumviStatusReg){
     return -1;
 }
 
+#ifdef FRAM_WRITE
+inline void writeFRAM(uint16_t powerRead, rv3049_time_t* rtctime){
+	reenableSPI();
+	rv3049_read_time(rtctime);
+	triumviFramWrite(powerRead, rtctime);
+	disableSPI();
+}
+#endif
 
 void disablePOT(){
     meterSenseConfig(CURRENT, SENSE_DISABLE);

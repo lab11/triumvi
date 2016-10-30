@@ -37,6 +37,7 @@
 #define PDATA_LEN 0x05
 
 #define VERSION10
+#define FM25CL64B
 
 // Use custom address for this address
 // make ID=c0:98:e5:54:52:a0:00:01

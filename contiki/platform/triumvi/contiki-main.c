@@ -37,6 +37,7 @@
 #include "dev/ccm.h"
 #include "spi.h"
 #include "fm25v02.h"
+#include "fm25cl64b.h"
 #include "rv3049.h"
 
 #include <stdint.h>
@@ -110,8 +111,12 @@ main(void)
   watchdog_init();
   //button_sensor_init();
   spi_init();
+  #ifdef FM25CL64B
+  fm25cl64b_init();
+  #else
   fm25v02_init();
   fm25v02_sleep();
+  #endif
   rv3049_init();
 	crypto_init();
 	REG(AES_CTRL_ALG_SEL) = 0x00000000; // reset AES module
