@@ -224,10 +224,16 @@ void meterSenseConfig(uint8_t type, uint8_t en){
 			GPIO_CLR_PIN(V_MEAS_EN_GPIO_BASE, 0x1<<V_MEAS_EN_GPIO_PIN);
 	}
 	else{
-		if (en==SENSE_ENABLE)
+		if (en==SENSE_ENABLE){
 			GPIO_SET_PIN(I_MEAS_EN_GPIO_BASE, 0x1<<I_MEAS_EN_GPIO_PIN);
-		else
+            GPIO_SET_PIN(GPIO_PORT_TO_BASE(FM25V02_HOLD_N_PORT_NUM), 
+                        0x1<<FM25V02_HOLD_N_PIN);
+        }
+		else{
 			GPIO_CLR_PIN(I_MEAS_EN_GPIO_BASE, 0x1<<I_MEAS_EN_GPIO_PIN);
+            GPIO_CLR_PIN(GPIO_PORT_TO_BASE(FM25V02_HOLD_N_PORT_NUM), 
+                        0x1<<FM25V02_HOLD_N_PIN);
+        }
 	}
 }
 

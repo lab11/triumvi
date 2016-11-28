@@ -310,6 +310,19 @@ PROCESS_THREAD(phaseCalibrationProcess, ev, data) {
     meterSenseConfig(VOLTAGE, SENSE_ENABLE);
     meterSenseConfig(CURRENT, SENSE_ENABLE);
 
+    /* Test for analog mux
+    while (1){
+        PROCESS_YIELD();
+        if (etimer_expired(&calibration_timer)){
+            triumviLEDOFF();
+            ad5274_init();
+            ad5274_ctrl_reg_write(AD5274_REG_RDAC_RP);
+            setINAGain(1);
+            i2c_disable(AD527X_SDA_GPIO_NUM, AD527X_SDA_GPIO_PIN, AD527X_SCL_GPIO_NUM, AD527X_SCL_GPIO_PIN); 
+        }
+    }
+    End of test */
+
 
     while (1){
         PROCESS_YIELD();
@@ -1620,14 +1633,7 @@ uint16_t currentRMS(uint16_t triumviStatusReg){
     uint16_t length = (triumviStatusReg & EXTERNALVOLT_STATUSREG)? BUF_SIZE2 : BUF_SIZE;
     uint8_t gain = inaGainArr[inaGainIdx];
 
-    // if IRMS > 4.34 A, 32 bit will overflow with external voltage (228 samples)
-    // For lower gain setting (higher current), use 64 bits
-    #ifdef RSENSE_LOW
-    #define I_OVERFLOW_GAIN_THRESHOLD 5
-    #else
-    #define I_OVERFLOW_GAIN_THRESHOLD 3
-    #endif
-    if (gain <= I_OVERFLOW_GAIN_THRESHOLD){
+    if (gain <= 5){
         for (i=0; i<length; i++){
             result64 += (adjustedCurrSamples[i]*adjustedCurrSamples[i]);
         }

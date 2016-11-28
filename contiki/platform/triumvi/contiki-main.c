@@ -111,6 +111,10 @@ main(void)
   watchdog_init();
   //button_sensor_init();
   spi_init();
+  // clear analog mux sel pin to prevent turn on internal diode
+  #ifdef VERSION10
+  GPIO_CLR_PIN(GPIO_PORT_TO_BASE(FM25V02_HOLD_N_PORT_NUM), 0x1<<FM25V02_HOLD_N_PIN);
+  #endif
   #ifdef FM25CL64B
   fm25cl64b_init();
   #else
