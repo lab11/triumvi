@@ -37,10 +37,10 @@ y = POSITION_START_Y
 # label_specs['x_count']  = 9
 
 label_specs = {}
-label_specs['offset_x'] = 39
+label_specs['offset_x'] = 38
 label_specs['gap_x']    = 0
 label_specs['width_x']  = 72
-label_specs['offset_y'] = 34
+label_specs['offset_y'] = 31
 label_specs['gap_y']    = 8.5
 label_specs['height_y'] = 54
 label_specs['y_count']  = 9
