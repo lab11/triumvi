@@ -9,14 +9,14 @@ import sys
 import svgutils.transform as sg
 
 import sh
-from sh import pdftk
 from sh import pdf2svg
+from sh import rsvg_convert
 
 # MAIN_LABEL_PDF = 'case_label.pdf'
 # MAIN_LABEL_SVG = 'case_label.svg'
 
-MAIN_LABEL_PDF = 'test.pdf'
-MAIN_LABEL_SVG = 'test.svg'
+MAIN_LABEL_PDF = 'logo.pdf'
+MAIN_LABEL_SVG = 'logo.svg'
 
 TRIUMVI_ID = 'C0:98:E5:54:52:A0:'
 
@@ -37,7 +37,7 @@ y = POSITION_START_Y
 # label_specs['x_count']  = 9
 
 label_specs = {}
-label_specs['offset_x'] = 34.5
+label_specs['offset_x'] = 39
 label_specs['gap_x']    = 0
 label_specs['width_x']  = 72
 label_specs['offset_y'] = 34
