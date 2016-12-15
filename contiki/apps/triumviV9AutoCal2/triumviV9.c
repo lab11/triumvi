@@ -316,7 +316,6 @@ PROCESS_THREAD(phaseCalibrationProcess, ev, data) {
     meterSenseConfig(VOLTAGE, SENSE_ENABLE);
     meterSenseConfig(CURRENT, SENSE_ENABLE);
 
-
     while (1){
         PROCESS_YIELD();
         switch (calibration_state){
@@ -524,7 +523,7 @@ PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
     simple_network_set_callback(&rf_rx_handler);
     process_start(&rf_received_process, NULL);
 
-    static uint16_t currentSetting = 250; // starts with 250 mA
+    static uint16_t currentSetting = 1000; // starts with 1000 mA
     triumviLEDON();
     etimer_set(&calibration_timer, CLOCK_SECOND*5);
     static triumvi_state_amp_calibration_t amplitude_calibration_state = STATE_AMP_STD_LOAD_SET;
@@ -765,7 +764,7 @@ PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
                             currentSetting += 250;
                             // calibration completed
                             if (currentSetting > MAX_CURRENT_SETTING){
-                                currentSetting = 2000;
+                                currentSetting = 1000;
                                 amp_cal_completed = 1;
                                 if (batteryPackIsAttached()){
                                     batteryPackVoltageEn(SENSE_ENABLE);
