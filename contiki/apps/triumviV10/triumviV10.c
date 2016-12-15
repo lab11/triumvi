@@ -90,6 +90,8 @@
 
 #include "calibration_coef.h"
 
+//#define TEST
+
 const uint8_t inaGainArr[6] = {1, 2, 3, 5, 9, 17};
 
 typedef enum {
@@ -310,18 +312,20 @@ PROCESS_THREAD(phaseCalibrationProcess, ev, data) {
     meterSenseConfig(VOLTAGE, SENSE_ENABLE);
     meterSenseConfig(CURRENT, SENSE_ENABLE);
 
-    /* Test for analog mux
+    /* Test for analog mux */
+    #ifdef TEST
     while (1){
         PROCESS_YIELD();
         if (etimer_expired(&calibration_timer)){
-            triumviLEDOFF();
             ad5274_init();
             ad5274_ctrl_reg_write(AD5274_REG_RDAC_RP);
-            setINAGain(1);
+            triumviLEDOFF();
+            setINAGain(17);
             i2c_disable(AD527X_SDA_GPIO_NUM, AD527X_SDA_GPIO_PIN, AD527X_SCL_GPIO_NUM, AD527X_SCL_GPIO_PIN); 
         }
     }
-    End of test */
+    #endif
+    /* End of test */
 
 
     while (1){
@@ -361,7 +365,7 @@ PROCESS_THREAD(phaseCalibrationProcess, ev, data) {
             case STATE_CALIBRATION_IN_PROGRESS:
                 if (etimer_expired(&calibration_timer)){
                     triumviLEDON();
-
+                    
                     // Enable digital pot
                     ad5274_init();
                     ad5274_ctrl_reg_write(AD5274_REG_RDAC_RP);
@@ -489,6 +493,7 @@ PROCESS_THREAD(phaseCalibrationProcess, ev, data) {
                         }
                     }
                     else{
+                        triumviLEDOFF();
                         etimer_set(&calibration_timer, CLOCK_SECOND*1);
                     }
                 }
@@ -530,7 +535,7 @@ PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
     simple_network_set_callback(&rf_rx_handler);
     process_start(&rf_received_process, NULL);
 
-    static uint16_t currentSetting = 250; // starts with 250 mA
+    static uint16_t currentSetting = 1000; // starts with 1000 mA
     triumviLEDON();
     etimer_set(&calibration_timer, CLOCK_SECOND*5);
     static triumvi_state_amp_calibration_t amplitude_calibration_state = STATE_AMP_STD_LOAD_SET;
@@ -771,7 +776,7 @@ PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
                             currentSetting += 250;
                             // calibration completed
                             if (currentSetting > MAX_CURRENT_SETTING){
-                                currentSetting = 2000;
+                                currentSetting = 1000;
                                 amp_cal_completed = 1;
                                 if (batteryPackIsAttached()){
                                     batteryPackVoltageEn(SENSE_ENABLE);
