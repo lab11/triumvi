@@ -76,8 +76,10 @@ rv3049_read_time(rv3049_time_t* time)
   SPI_FLUSH();
 
   // Read a null byte here. Not exactly sure why.
-  // Triumvi v8 doesn't need this
-  //SPI_READ(buf[0]);
+  // Triumvi v8 doesn't need this, but v10 need this
+  #ifdef VERSION10
+  SPI_READ(buf[0]);
+  #endif
 
   // Then actually read the clock
   for (i=0; i<RV3049_READ_LEN_TIME; i++) {
