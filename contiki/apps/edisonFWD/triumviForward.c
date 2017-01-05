@@ -17,6 +17,7 @@
 #include "dev/crypto.h"
 #include "dev/ccm.h"
 #include "dev/udma.h"
+#include "softwareRTC.c"
 
 
 /* spi interface */
@@ -62,6 +63,11 @@ static uint8_t resetCnt = 0;
 
 static spiState_t spiState = SPI_WAIT;
 
+static struct etimer software_RTC_timer;
+#define SOFTWARE_RTC_TICK 1
+#define TRIUMVI_RTC 172
+#define TRIUMVI_RTC_SET 255
+#define TRIUMVI_RTC_REQ 254
 
 /*---------------------------------------------------------------------------*/
 /* Function prototypes */
@@ -75,6 +81,7 @@ static void spiFIFOcallBack();
 PROCESS(mainProcess, "Main Process");
 PROCESS(decryptProcess, "Decrypt Process");
 PROCESS(spiProcess, "SPI Process");
+PROCESS(rtcProcess, "Software RTC Process");
 AUTOSTART_PROCESSES(&mainProcess);
 /*---------------------------------------------------------------------------*/
 PROCESS_THREAD(mainProcess, ev, data) {
@@ -133,6 +140,7 @@ PROCESS_THREAD(mainProcess, ev, data) {
     
     process_start(&decryptProcess, NULL);
     process_start(&spiProcess, NULL);
+    process_start(&rtcProcess, NULL);
 
 
     while (1){
@@ -177,6 +185,7 @@ PROCESS_THREAD(spiProcess, ev, data) {
     uint8_t proc_idx;
     static uint8_t rf_pkt_payload[128] = {0};
     static uint8_t rf_pkt_len = 0;
+    static myTime_t receivedTime;
 
 
     while (1){
@@ -266,6 +275,17 @@ PROCESS_THREAD(spiProcess, ev, data) {
                                 spiInUse = 0;
                             break;
 
+                            case SPI_MASTER_SET_TIME:
+                                receivedTime.year   = spi_rx_pkt.spi_payload[0] + 2000;
+                                receivedTime.month  = spi_rx_pkt.spi_payload[1];
+                                receivedTime.day    = spi_rx_pkt.spi_payload[2];
+                                receivedTime.hours  = spi_rx_pkt.spi_payload[3];
+                                receivedTime.minutes= spi_rx_pkt.spi_payload[4];
+                                receivedTime.seconds= spi_rx_pkt.spi_payload[5];
+                                setTime(&receivedTime);
+                                spiInUse = 0;
+                            break;
+
                             default:
                                 spiInUse = 0;
                             break;
@@ -297,6 +317,7 @@ PROCESS_THREAD(decryptProcess, ev, data) {
     uint8_t *data_ptr;
     uint8_t data_length;
     uint8_t header_length;
+    static uint8_t rtc_data_pkt[8];
 
     while(1){
         PROCESS_YIELD();
@@ -313,8 +334,21 @@ PROCESS_THREAD(decryptProcess, ev, data) {
         data_length = packetbuf_datalen();                               
         data_ptr = packetbuf_dataptr();                                  
 
+        // check for time request packet
+        if ((data_length==2) && (data_ptr[0]==TRIUMVI_RTC) && (data_ptr[1]==TRIUMVI_RTC_REQ)){
+            rtc_data_pkt[0] = TRIUMVI_RTC;
+            rtc_data_pkt[1] = TRIUMVI_RTC_SET;
+            rtc_data_pkt[2] = (currentTime.year - 2000);
+            rtc_data_pkt[3] = currentTime.month;
+            rtc_data_pkt[4] = currentTime.day;
+            rtc_data_pkt[5] = currentTime.hours;
+            rtc_data_pkt[6] = currentTime.minutes;
+            rtc_data_pkt[7] = currentTime.seconds;
+            packetbuf_copyfrom(rtc_data_pkt, 8);
+            cc2538_on_and_transmit();
+        }
         // RX buffer is not full
-        if (triumviRXBufFull==0){
+        else if (triumviRXBufFull==0){
             triumviRXPackets[triumviAvailIDX].length = data_length + header_length;
             memcpy(triumviRXPackets[triumviAvailIDX].payload, header_ptr, header_length);
             memcpy(triumviRXPackets[triumviAvailIDX].payload+header_length, data_ptr, data_length);
@@ -336,6 +370,25 @@ PROCESS_THREAD(decryptProcess, ev, data) {
         leds_off(LEDS_RED);
         #endif
         process_poll(&mainProcess);
+    }
+    PROCESS_END();
+}
+
+PROCESS_THREAD(rtcProcess, ev, data) {
+    PROCESS_BEGIN();
+    etimer_set(&software_RTC_timer, CLOCK_SECOND*SOFTWARE_RTC_TICK);
+    currentTime.year = 2000;
+    currentTime.month = 1;
+    currentTime.day = 1;
+    currentTime.hours = 0;
+    currentTime.minutes = 0;
+    currentTime.seconds = 0;
+    while(1) {
+        PROCESS_YIELD();
+        if (etimer_expired(&software_RTC_timer)){
+            advanceTime(SOFTWARE_RTC_TICK);
+            etimer_restart(&software_RTC_timer);
+        }
     }
     PROCESS_END();
 }

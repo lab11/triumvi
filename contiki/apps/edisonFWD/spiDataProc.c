@@ -4,12 +4,13 @@
 // REQ_DATA doesn't need length
 // GET_DATA requires length
 
-#define SPI_MASTER_REQ_DATA 0x00
-#define SPI_MASTER_DUMMY 0x01
-#define SPI_MASTER_GET_DATA 0x02
-#define SPI_MASTER_RADIO_ON 0x03
-#define SPI_MASTER_RADIO_OFF 0x04
-#define SPI_RF_PACKET_SEND 0x05
+#define SPI_MASTER_REQ_DATA     0x00
+#define SPI_MASTER_DUMMY        0x01
+#define SPI_MASTER_GET_DATA     0x02
+#define SPI_MASTER_RADIO_ON     0x03
+#define SPI_MASTER_RADIO_OFF    0x04
+#define SPI_RF_PACKET_SEND      0x05
+#define SPI_MASTER_SET_TIME     0x06
 
 #define MAX_SPI_LENGTH 128
 
