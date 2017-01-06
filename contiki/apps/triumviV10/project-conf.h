@@ -39,6 +39,9 @@
 #define VERSION10
 #define FM25CL64B
 
+#define RTC_ENABLE
+#define RTC_SET // set RTC at program time
+
 // Use custom address for this address
 // make ID=c0:98:e5:54:52:a0:00:01
 #define IEEE_ADDR_CONF_USE_SECONDARY_LOCATION 1

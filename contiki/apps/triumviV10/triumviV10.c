@@ -37,6 +37,7 @@
 #define BATTERYPACK_STATUSREG  0x0040
 #define FRAMWRITE_STATUSREG    0x0008
 #define POWERFACTOR_STATUSREG  0x0004
+#define TIMESTAMP_STATUSREG    0x0002
 
 #define FLASH_BASE 0x200000
 #define FLASH_SIZE 0x80000 //rom_util_get_flash_size()
@@ -88,6 +89,13 @@
 
 #define DIFF_THRESHOLD 10
 
+#ifdef RTC_ENABLE
+#define TRIUMVI_RTC 0xac
+#define TRIUMVI_RTC_SET 0xff
+#define TRIUMVI_RTC_REQ 0xfe
+static rv3049_time_t rtcTime;
+#endif
+
 #include "calibration_coef.h"
 
 //#define TEST
@@ -107,6 +115,9 @@ typedef enum {
 } gainSetting_t;
 
 typedef enum {
+    #ifdef RTC_ENABLE
+    STATE_READ_RTC_TIME,
+    #endif
     STATE_INIT,
     STATE_WAITING_VOLTAGE_STABLE,
     STATE_WAITING_COMPARATOR_STABLE,
@@ -816,7 +827,7 @@ PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
 }
 #endif
 
-#ifdef AMPLITUDE_CALIBRATION_EN
+#if defined(AMPLITUDE_CALIBRATION_EN) || defined(RTC_ENABLE)
 PROCESS_THREAD(rf_received_process, ev, data) {
     PROCESS_BEGIN();
 
@@ -834,6 +845,22 @@ PROCESS_THREAD(rf_received_process, ev, data) {
         data_length = packetbuf_datalen();                               
         data_ptr = packetbuf_dataptr();                                  
 
+        #ifdef RTC_ENABLE
+        if (data_ptr[0] == TRIUMVI_RTC){
+            if ((data_ptr[1] == TRIUMVI_RTC_SET)&&(data_length==8)){
+                triumviLEDToggle();
+                rtcTime.year    = data_ptr[2] + 2000;
+                rtcTime.month   = data_ptr[3];
+                rtcTime.days    = data_ptr[4];
+                rtcTime.hours   = data_ptr[5];
+                rtcTime.minutes = data_ptr[6];
+                rtcTime.seconds = data_ptr[7];
+                rv3049_set_time(&rtcTime);
+                process_poll(&triumviProcess);
+                CC2538_RF_CSP_ISRFOFF();
+            }
+        }
+        #endif
         if (data_ptr[0] == APS3B12_PACKET_ID){
             if (data_ptr[1] == APS3B12_CURRENT_INFO){
                 aps3b12_current_value = ((data_ptr[2] << 24) | (data_ptr[3] << 16) 
@@ -841,7 +868,6 @@ PROCESS_THREAD(rf_received_process, ev, data) {
                 process_poll(&amplitudeCalibrationProcess);
             }
         }
-
     }
     PROCESS_END();
 }
@@ -879,11 +905,32 @@ PROCESS_THREAD(triumviProcess, ev, data) {
     int offset;
 
     rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND, 1, &rtimerEvent, NULL);
+
+    #ifdef RTC_ENABLE
+    static uint8_t rtc_pkt[2] = {TRIUMVI_RTC, TRIUMVI_RTC_REQ};
+    myState = STATE_READ_RTC_TIME;
+    #else
     myState = STATE_INIT;
+    #endif
 
     while(1){
         PROCESS_YIELD();
         switch (myState){
+            #ifdef RTC_ENABLE
+            case STATE_READ_RTC_TIME:
+                rv3049_read_time(&rtcTime);
+                // time is not correct, ask gateway for correct time
+                if (rtcTime.year < 2000){
+                    packetbuf_copyfrom(rtc_pkt, 2);
+                    cc2538_on_and_transmit();
+                }
+                else{
+                    myState = STATE_INIT;
+                    rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*1, 1, &rtimerEvent, NULL);
+                }
+            break;
+            #endif
+
             // initialization state, check READYn is low before moving forward
             case STATE_INIT:
                 rdy = 0;
@@ -949,6 +996,10 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                     #endif
 
                     triumviStatusReg |= POWERFACTOR_STATUSREG;
+
+                    #ifdef RTC_ENABLE
+                    triumviStatusReg |= TIMESTAMP_STATUSREG;
+                    #endif
 
                     // Check if configuration board is attached
                     if (batteryPackIsAttached())
@@ -1125,7 +1176,11 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                     i2c_disable(I2C_SDA_GPIO_NUM, I2C_SDA_GPIO_PIN, 
                                 I2C_SCL_GPIO_NUM, I2C_SCL_GPIO_PIN); 
                     rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*backOffTime, 1, &rtimerEvent, NULL);
+                    #ifdef RTC_ENABLE
+                    myState = STATE_READ_RTC_TIME;
+                    #else
                     myState = STATE_INIT;
+                    #endif
                 }
             break;
 
@@ -1138,7 +1193,11 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                     #else
                     rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*backOffTime, 1, &rtimerEvent, NULL);
                     #endif
+                    #ifdef RTC_ENABLE
+                    myState = STATE_READ_RTC_TIME;
+                    #else
                     myState = STATE_INIT;
+                    #endif
                 }
             break;
 
@@ -1420,11 +1479,12 @@ gainSetting_t gainCtrl(uint16_t* adcSamples, uint8_t externalVolt){
 
 void encryptAndTransmit(uint16_t triumviStatusReg, int avgPower, float pf, 
         uint16_t VRMS, uint16_t IRMS, uint8_t* myNonce, uint32_t nonceCounter){
-	// 1 byte Identifier, 4 bytes nonce, 5~13 bytes payload, 4 byte MIC
-	static uint8_t packetData[22];
+	// 1 byte Identifier, 4 bytes nonce, 5~19 bytes payload, 4 byte MIC
+	static uint8_t packetData[28];
 	// 4 bytes reading, 1 byte status reg, 
     // (1 bytes panel ID, 1 bytes circuit ID, 2 bytes PF, 2 bytes VRMS, 2 bytes IRMS optional)
-	static uint8_t readingBuf[13];
+    // (6 bytes time stamp (yy, mm, dd, hh, mm, ss) optional)
+	static uint8_t readingBuf[19];
 	uint8_t* aData = myNonce;
 	uint8_t* pData = readingBuf;
 	uint8_t myMic[8] = {0x0};
@@ -1451,6 +1511,19 @@ void encryptAndTransmit(uint16_t triumviStatusReg, int avgPower, float pf,
     packDataHalf(&readingBuf[myPDATA_LEN+4], IRMS);
     myPDATA_LEN += 6;
     packetLen += 6;
+
+    #ifdef RTC_ENABLE
+    if (triumviStatusReg & TIMESTAMP_STATUSREG){
+        readingBuf[myPDATA_LEN] = (rtcTime.year - 2000);
+        readingBuf[myPDATA_LEN+1] = rtcTime.month;
+        readingBuf[myPDATA_LEN+2] = rtcTime.days;
+        readingBuf[myPDATA_LEN+3] = rtcTime.hours;
+        readingBuf[myPDATA_LEN+4] = rtcTime.minutes;
+        readingBuf[myPDATA_LEN+5] = rtcTime.seconds;
+        myPDATA_LEN += 6;
+        packetLen += 6;
+    }
+    #endif
 
 	ccm_auth_encrypt_start(LEN_LEN, 0, myNonce, aData, ADATA_LEN,
 		pData, myPDATA_LEN, MIC_LEN, NULL);
