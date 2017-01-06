@@ -129,14 +129,19 @@ typedef enum {
     STATE_STD_LOAD_ACTIVATATION,
     STATE_STD_LOAD_SET,
     STATE_CALIBRATION_IN_PROGRESS,
-    STATE_CALIBRATION_COMPLETED
+    #ifdef RTC_ENABLE
+    STATE_CALIBRATION_SET_RTC,
+    #endif
+    STATE_CALIBRATION_COMPLETED,
+    STATE_CALIBRATION_NULL
 } triumvi_state_calibration_t;
 
 typedef enum{
     STATE_AMP_STD_LOAD_SET,
     STATE_AMP_CALIBRATION_IN_PROGRESS,
     STATE_AMP_STD_LOAD_RECEIVE,
-    STATE_AMP_STD_LOAD_VERIFY
+    STATE_AMP_STD_LOAD_VERIFY,
+    STATE_AMP_NULL
 } triumvi_state_amp_calibration_t;
 
 volatile static triumvi_state_t myState;
@@ -165,6 +170,10 @@ volatile uint8_t backOffTime;
 volatile uint8_t backOffHistory;
 volatile uint8_t inaGainIdx;
 volatile uint8_t allInitsAreReadyInt;
+volatile uint8_t rfReceivedInt;
+#ifdef RTC_ENABLE
+volatile uint8_t rtc_packet_received;
+#endif
 
 static uint8_t aps_trials;
 volatile int aps3b12_current_value; 
@@ -256,7 +265,9 @@ PROCESS_THREAD(startupProcess, ev, data) {
     PROCESS_BEGIN();
 
     random_init(0);
-    CC2538_RF_CSP_ISRFOFF();
+
+    simple_network_set_callback(&rf_rx_handler);
+    process_start(&rf_received_process, NULL);
 
     #ifdef ERASE_FRAM
     fm25v02_eraseAll();
@@ -312,6 +323,11 @@ PROCESS_THREAD(phaseCalibrationProcess, ev, data) {
     uint32_t tmp = 0;
     #endif
     static uint32_t timerExp, currentTime;
+    #ifdef RTC_ENABLE
+    static uint8_t rtc_pkt[2] = {TRIUMVI_RTC, TRIUMVI_RTC_REQ};
+    rtc_packet_received = 0;
+    #endif
+    rfReceivedInt = 0;
     aps_trials = 0;
 
     rom_util_page_erase(flash_addr, FLASH_ERASE_SIZE);
@@ -498,7 +514,11 @@ PROCESS_THREAD(phaseCalibrationProcess, ev, data) {
                             }
 
                             // advances state
+                            #ifdef RTC_ENABLE
+                            calibration_state = STATE_CALIBRATION_SET_RTC;
+                            #else
                             calibration_state = STATE_CALIBRATION_COMPLETED;
+                            #endif
                             etimer_set(&calibration_timer, CLOCK_SECOND*3);
                             #endif // end of DATADUMP
                         }
@@ -510,41 +530,59 @@ PROCESS_THREAD(phaseCalibrationProcess, ev, data) {
                 }
             break;
 
+            #ifdef RTC_ENABLE
+            case STATE_CALIBRATION_SET_RTC:
+                if (etimer_expired(&calibration_timer)){
+                    if (rtc_packet_received){
+                        rtc_packet_received = 0;
+                        calibration_state = STATE_CALIBRATION_COMPLETED;
+                    }
+                    else{
+                        packetbuf_copyfrom(rtc_pkt, 2);
+                        cc2538_on_and_transmit();
+                    }
+                    etimer_set(&calibration_timer, CLOCK_SECOND*0.5);
+                }
+            break;
+            #endif
+
             case STATE_CALIBRATION_COMPLETED:
                 if (etimer_expired(&calibration_timer)){
-                    operation_mode = MODE_AMPLITUDE_CALIBRATION;
                     #ifdef AMPLITUDE_CALIBRATION_EN
                     process_start(&amplitudeCalibrationProcess, NULL);
+                    operation_mode = MODE_AMPLITUDE_CALIBRATION;
                     #else
                     #ifndef DATADUMP2
                     GPIO_SET_OUTPUT(GPIO_A_BASE, 0x47);
                     GPIO_CLR_PIN(GPIO_A_BASE, 0x47);
                     #endif
                     process_start(&triumviProcess, NULL);
+                    operation_mode = MODE_NORMAL;
                     #endif
                     triumviLEDOFF();
                     if (batteryPackIsAttached()){
                         batteryPackLEDOff(BATTERY_PACK_LED_GREEN);
                         batteryPackVoltageEn(SENSE_DISABLE);
                     }
-                    break;
+                    calibration_state = STATE_CALIBRATION_NULL;
                 }
+            break;
+
+            case STATE_CALIBRATION_NULL:
             break;
 
             default:
             break;
         }
     }
-
     PROCESS_END();
+
 }
 
 #ifdef AMPLITUDE_CALIBRATION_EN
 PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
     PROCESS_BEGIN();
 
-    simple_network_set_callback(&rf_rx_handler);
-    process_start(&rf_received_process, NULL);
 
     static uint16_t currentSetting = 1000; // starts with 1000 mA
     triumviLEDON();
@@ -601,9 +639,13 @@ PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
                             }
                             triumviLEDOFF();
                             // start measurement process
-                            operation_mode = MODE_NORMAL;
                             process_start(&triumviProcess, NULL);
-                            break;
+                            #ifndef DATADUMP2
+                            GPIO_SET_OUTPUT(GPIO_A_BASE, 0x47);
+                            GPIO_CLR_PIN(GPIO_A_BASE, 0x47);
+                            #endif
+                            operation_mode = MODE_NORMAL;
+                            amplitude_calibration_state = STATE_AMP_NULL;
                         }
                         else{
                             aps3b12_read_current();
@@ -814,16 +856,15 @@ PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
                 }
             break;
 
+            case STATE_AMP_NULL:
+            break;
+
             default:
             break;
         }
     }
-
-    #ifndef DATADUMP2
-    GPIO_SET_OUTPUT(GPIO_A_BASE, 0x47);
-    GPIO_CLR_PIN(GPIO_A_BASE, 0x47);
-    #endif
     PROCESS_END();
+
 }
 #endif
 
@@ -838,17 +879,17 @@ PROCESS_THREAD(rf_received_process, ev, data) {
 
     while(1){
         PROCESS_YIELD();
-        triumviLEDToggle();
+        //triumviLEDToggle();
         // Get data from radio buffer and parse it
-        header_length = packetbuf_hdrlen();
-        header_ptr = packetbuf_hdrptr();                                   
-        data_length = packetbuf_datalen();                               
-        data_ptr = packetbuf_dataptr();                                  
+        if (rfReceivedInt==1){ 
+            rfReceivedInt = 0;
+            header_length = packetbuf_hdrlen();
+            header_ptr = packetbuf_hdrptr();                                   
+            data_length = packetbuf_datalen();                               
+            data_ptr = packetbuf_dataptr();                                  
 
-        #ifdef RTC_ENABLE
-        if (data_ptr[0] == TRIUMVI_RTC){
-            if ((data_ptr[1] == TRIUMVI_RTC_SET)&&(data_length==8)){
-                triumviLEDToggle();
+            #ifdef RTC_ENABLE
+            if ((data_ptr[0] == TRIUMVI_RTC) && (data_ptr[1] == TRIUMVI_RTC_SET)&&(data_length==8)){
                 rtcTime.year    = data_ptr[2] + 2000;
                 rtcTime.month   = data_ptr[3];
                 rtcTime.days    = data_ptr[4];
@@ -856,16 +897,19 @@ PROCESS_THREAD(rf_received_process, ev, data) {
                 rtcTime.minutes = data_ptr[6];
                 rtcTime.seconds = data_ptr[7];
                 rv3049_set_time(&rtcTime);
-                process_poll(&triumviProcess);
+                if (operation_mode==MODE_NORMAL){
+                    process_poll(&triumviProcess);
+                }
                 CC2538_RF_CSP_ISRFOFF();
+                rtc_packet_received = 1;
             }
-        }
-        #endif
-        if (data_ptr[0] == APS3B12_PACKET_ID){
-            if (data_ptr[1] == APS3B12_CURRENT_INFO){
-                aps3b12_current_value = ((data_ptr[2] << 24) | (data_ptr[3] << 16) 
-                        | (data_ptr[4] << 8) | data_ptr[5]);
-                process_poll(&amplitudeCalibrationProcess);
+            #endif
+            if (data_ptr[0] == APS3B12_PACKET_ID){
+                if (data_ptr[1] == APS3B12_CURRENT_INFO){
+                    aps3b12_current_value = ((data_ptr[2] << 24) | (data_ptr[3] << 16) 
+                            | (data_ptr[4] << 8) | data_ptr[5]);
+                    process_poll(&amplitudeCalibrationProcess);
+                }
             }
         }
     }
@@ -920,7 +964,7 @@ PROCESS_THREAD(triumviProcess, ev, data) {
             case STATE_READ_RTC_TIME:
                 rv3049_read_time(&rtcTime);
                 // time is not correct, ask gateway for correct time
-                if (rtcTime.year < 2000){
+                if (rtcTime.year == 2000){
                     packetbuf_copyfrom(rtc_pkt, 2);
                     cc2538_on_and_transmit();
                 }
@@ -1778,6 +1822,7 @@ void aps3b12_read_current(){
 
 void rf_rx_handler(){
     process_poll(&rf_received_process);
+    rfReceivedInt = 1;
 }   
 
 void linearFit(uint16_t* reading, uint16_t* setting, uint8_t length, 

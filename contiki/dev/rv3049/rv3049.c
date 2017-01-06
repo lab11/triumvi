@@ -49,6 +49,18 @@ rv3049_init()
   spi_cs_init(RV3049_CS_PORT_NUM, RV3049_CS_PIN);
   SPI_CS_CLR(RV3049_CS_PORT_NUM, RV3049_CS_PIN);
 
+  spi_set_mode(SSI_CR0_FRF_MOTOROLA, 0, SSI_CR0_SPH, 8);
+
+  SPI_CS_SET(RV3049_CS_PORT_NUM, RV3049_CS_PIN);
+
+  // write to control_status register
+  SPI_WRITE(RV3049_SET_WRITE_BIT((RV3049_PAGE_ADDR_CONTROL+0x03)));
+
+  // clear control_status register
+  SPI_WRITE(0x00);
+
+  SPI_CS_CLR(RV3049_CS_PORT_NUM, RV3049_CS_PIN);
+
   // Write the initial values
   #ifdef RTC_SET
   {
