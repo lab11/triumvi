@@ -897,9 +897,6 @@ PROCESS_THREAD(rf_received_process, ev, data) {
                 rtcTime.minutes = data_ptr[6];
                 rtcTime.seconds = data_ptr[7];
                 rv3049_set_time(&rtcTime);
-                if (operation_mode==MODE_NORMAL){
-                    process_poll(&triumviProcess);
-                }
                 CC2538_RF_CSP_ISRFOFF();
                 rtc_packet_received = 1;
             }
@@ -962,15 +959,30 @@ PROCESS_THREAD(triumviProcess, ev, data) {
         switch (myState){
             #ifdef RTC_ENABLE
             case STATE_READ_RTC_TIME:
-                rv3049_read_time(&rtcTime);
-                // time is not correct, ask gateway for correct time
-                if (rtcTime.year == 2000){
-                    packetbuf_copyfrom(rtc_pkt, 2);
-                    cc2538_on_and_transmit();
-                }
-                else{
+                if (rTimerExpired==1){
+                    rTimerExpired = 0;
+                    rv3049_read_time(&rtcTime);
+                    // RTC losts its time, ask gateway for correct time
+                    if (rtcTime.year == 2000){
+                        rtc_packet_received = 0;
+                        packetbuf_copyfrom(rtc_pkt, 2);
+                        cc2538_on_and_transmit();
+
+                        // stays on for 2.5 ms to receive correct time
+                        ungate_gpt(GPTIMER_1);
+                        REG(SYSTICK_STCTRL) &= (~SYSTICK_STCTRL_INTEN);
+                        timerExp = get_event_time(GPTIMER_1, GPTIMER_SUBTIMER_A) - 40000;
+                        do {
+                            currentTime = get_event_time(GPTIMER_1, GPTIMER_SUBTIMER_A);
+                        }
+                        while ((currentTime > timerExp) && (rtc_packet_received==0));
+                        REG(SYSTICK_STCTRL) |= SYSTICK_STCTRL_INTEN;
+                        gate_gpt(GPTIMER_1);
+                        CC2538_RF_CSP_ISRFOFF();
+
+                    }
                     myState = STATE_INIT;
-                    rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*1, 1, &rtimerEvent, NULL);
+                    rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.5, 1, &rtimerEvent, NULL);
                 }
             break;
             #endif
