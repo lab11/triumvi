@@ -49,17 +49,6 @@ rv3049_init()
   spi_cs_init(RV3049_CS_PORT_NUM, RV3049_CS_PIN);
   SPI_CS_CLR(RV3049_CS_PORT_NUM, RV3049_CS_PIN);
 
-  spi_set_mode(SSI_CR0_FRF_MOTOROLA, 0, SSI_CR0_SPH, 8);
-
-  SPI_CS_SET(RV3049_CS_PORT_NUM, RV3049_CS_PIN);
-
-  // write to control_status register
-  SPI_WRITE(RV3049_SET_WRITE_BIT((RV3049_PAGE_ADDR_CONTROL+0x03)));
-
-  // clear control_status register
-  SPI_WRITE(0x00);
-
-  SPI_CS_CLR(RV3049_CS_PORT_NUM, RV3049_CS_PIN);
 
   // Write the initial values
   #ifdef RTC_SET
@@ -141,4 +130,35 @@ rv3049_set_time(rv3049_time_t* time)
   SPI_CS_CLR(RV3049_CS_PORT_NUM, RV3049_CS_PIN);
 
   return 0;
+}
+
+
+uint8_t rv3049_read_register(uint8_t page, uint8_t addr){
+    uint8_t spi_buf;
+    spi_set_mode(SSI_CR0_FRF_MOTOROLA, 0, SSI_CR0_SPH, 8);
+    SPI_CS_SET(RV3049_CS_PORT_NUM, RV3049_CS_PIN);
+    SPI_WRITE(RV3049_SET_READ_BIT(page+addr));
+    SPI_FLUSH();
+
+    // 1st byte is the same as last byte from previous read
+    // I guess it might be a silicon bug
+    SPI_READ(spi_buf);
+
+    // this read returns the correct value
+    SPI_READ(spi_buf);
+
+    SPI_CS_CLR(RV3049_CS_PORT_NUM, RV3049_CS_PIN);
+    return spi_buf;
+}
+
+void rv3049_write_register(uint8_t page, uint8_t addr, uint8_t val){
+    spi_set_mode(SSI_CR0_FRF_MOTOROLA, 0, SSI_CR0_SPH, 8);
+
+    SPI_CS_SET(RV3049_CS_PORT_NUM, RV3049_CS_PIN);
+
+    SPI_WRITE(RV3049_SET_WRITE_BIT(page+addr));
+
+    SPI_WRITE(val);
+
+    SPI_CS_CLR(RV3049_CS_PORT_NUM, RV3049_CS_PIN);
 }

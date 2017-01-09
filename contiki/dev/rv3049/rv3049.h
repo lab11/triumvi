@@ -15,8 +15,8 @@
 
 #define RV3049_WRITE_LEN_TIME 7
 
-#define RV3049_SET_READ_BIT(command) (0x80 | command)
-#define RV3049_SET_WRITE_BIT(command) (0x7F & command)
+#define RV3049_SET_READ_BIT(command) (0x80 | (command))
+#define RV3049_SET_WRITE_BIT(command) (0x7F & (command))
 
 #define BCD_TO_BINARY(v) ((v & 0x0F) + (((v & 0x10)>>4)*10) + (((v & 0x20)>>5)*20) + (((v & 0x40)>>6)*40))
 
@@ -58,5 +58,7 @@ typedef struct {
 void rv3049_init();
 int rv3049_read_time(rv3049_time_t* time);
 int rv3049_set_time(rv3049_time_t* time);
+uint8_t rv3049_read_register(uint8_t page, uint8_t addr);
+void rv3049_write_register(uint8_t page, uint8_t addr, uint8_t val);
 
 #endif

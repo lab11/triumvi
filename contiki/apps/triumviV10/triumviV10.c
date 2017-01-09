@@ -334,6 +334,9 @@ PROCESS_THREAD(phaseCalibrationProcess, ev, data) {
     triumviLEDON();
     etimer_set(&calibration_timer, CLOCK_SECOND*10);
 
+    // enable 5k ohm trickle charge resistor
+    rv3049_write_register(RV3049_PAGE_ADDR_EEPROM_CTRL, 0x00, 0x22);
+
     // enable LDO, release power gating
     meterSenseVREn(SENSE_ENABLE);
     meterSenseConfig(VOLTAGE, SENSE_ENABLE);
@@ -533,14 +536,15 @@ PROCESS_THREAD(phaseCalibrationProcess, ev, data) {
             #ifdef RTC_ENABLE
             case STATE_CALIBRATION_SET_RTC:
                 if (etimer_expired(&calibration_timer)){
-                    if (rtc_packet_received){
-                        rtc_packet_received = 0;
+                    if ((rtc_packet_received) && (rtcTime.year > 2000)){
                         calibration_state = STATE_CALIBRATION_COMPLETED;
+                        rv3049_write_register(RV3049_PAGE_ADDR_CONTROL, 0x03, 0x00);
                     }
                     else{
                         packetbuf_copyfrom(rtc_pkt, 2);
                         cc2538_on_and_transmit();
                     }
+                    rtc_packet_received = 0;
                     etimer_set(&calibration_timer, CLOCK_SECOND*0.5);
                 }
             break;
@@ -558,6 +562,8 @@ PROCESS_THREAD(phaseCalibrationProcess, ev, data) {
                     #endif
                     process_start(&triumviProcess, NULL);
                     operation_mode = MODE_NORMAL;
+                    // enable 80k trickle charge resistor
+                    rv3049_write_register(RV3049_PAGE_ADDR_EEPROM_CTRL, 0x00, 0x82);
                     #endif
                     triumviLEDOFF();
                     if (batteryPackIsAttached()){
@@ -646,6 +652,8 @@ PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
                             #endif
                             operation_mode = MODE_NORMAL;
                             amplitude_calibration_state = STATE_AMP_NULL;
+                            // enable 80k trickle charge resistor
+                            rv3049_write_register(RV3049_PAGE_ADDR_EEPROM_CTRL, 0x00, 0x82);
                         }
                         else{
                             aps3b12_read_current();
@@ -950,6 +958,8 @@ PROCESS_THREAD(triumviProcess, ev, data) {
     #ifdef RTC_ENABLE
     static uint8_t rtc_pkt[2] = {TRIUMVI_RTC, TRIUMVI_RTC_REQ};
     myState = STATE_READ_RTC_TIME;
+    static uint8_t spi_buf;
+    rtc_packet_received = 0;
     #else
     myState = STATE_INIT;
     #endif
@@ -962,9 +972,10 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                 if (rTimerExpired==1){
                     rTimerExpired = 0;
                     rv3049_read_time(&rtcTime);
-                    // RTC losts its time, ask gateway for correct time
-                    if (rtcTime.year == 2000){
-                        rtc_packet_received = 0;
+                    spi_buf = rv3049_read_register(RV3049_PAGE_ADDR_CONTROL, 0x03);
+                    // PON Bit in control_status register. if this bit is set,
+                    // Time is corrupted, ask gateway for correct time
+                    if (spi_buf & 0x20){
                         packetbuf_copyfrom(rtc_pkt, 2);
                         cc2538_on_and_transmit();
 
@@ -979,6 +990,11 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                         REG(SYSTICK_STCTRL) |= SYSTICK_STCTRL_INTEN;
                         gate_gpt(GPTIMER_1);
                         CC2538_RF_CSP_ISRFOFF();
+                        // if time is received from gateway, clear PON bit
+                        if (rtc_packet_received==1){
+                            rtc_packet_received = 0;
+                            rv3049_write_register(RV3049_PAGE_ADDR_CONTROL, 0x03, 0x00);
+                        }
 
                     }
                     myState = STATE_INIT;
