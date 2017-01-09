@@ -144,10 +144,20 @@ typedef enum{
     STATE_AMP_NULL
 } triumvi_state_amp_calibration_t;
 
-volatile static triumvi_state_t myState;
+typedef struct{
+    int avgPower;
+    uint8_t triumviStatusReg;
+    uint8_t circuitID;
+    uint8_t panelID;
+    float pf;
+    uint16_t VRMS;
+    uint16_t IRMS;
+} triumvi_record_t;
+
 
 /* global variables */
 
+volatile static triumvi_state_t myState;
 const uint32_t flash_addr = FLASH_BASE - 2*FLASH_ERASE_SIZE + FLASH_SIZE;
 volatile uint32_t flash_data;
 
@@ -209,12 +219,10 @@ void sampleCurrentVoltageWaveform();
 // power gate to current sensing, disable POT
 void disablePOT();
 // encrypt data using AES, and wirelessly transmit packet
-void encryptAndTransmit(uint16_t triumviStatusReg, int avgPower, float pf, 
-        uint16_t VRMS, uint16_t IRMS, uint8_t* myNonce, uint32_t nonceCounter);
+void encryptAndTransmit(triumvi_record_t* thisSample, 
+                        uint8_t* myNonce, uint32_t nonceCounter);
 // split a uint32_t into 4 uint8_t
-void packData(uint8_t* dest, int reading);
-// split a uint16_t into 2 uint8_t
-void packDataHalf(uint8_t* dest, uint16_t reading);
+void packData(uint8_t* dest, int reading, uint8_t len);
 
 int currentDataTransform(int currentReading, uint8_t externalVolt);
 int voltDataTransform(int voltReading, uint16_t voltReference);
@@ -227,6 +235,9 @@ void aps3b12_read_current();
 // find coefficient for 1st order linear regression
 void linearFit(uint16_t* reading, uint16_t* setting, uint8_t length, 
                 uint32_t* slope_n, uint32_t* slope_d, int* offset);
+#endif
+
+#if defined(AMPLITUDE_CALIBRATION_EN) || defined(RTC_ENABLE)
 void rf_rx_handler();
 #endif
 
@@ -880,10 +891,10 @@ PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
 PROCESS_THREAD(rf_received_process, ev, data) {
     PROCESS_BEGIN();
 
-    uint8_t *header_ptr;
+    //uint8_t *header_ptr;
     uint8_t *data_ptr;
     uint8_t data_length;
-    uint8_t header_length;
+    //uint8_t header_length;
 
     while(1){
         PROCESS_YIELD();
@@ -891,8 +902,8 @@ PROCESS_THREAD(rf_received_process, ev, data) {
         // Get data from radio buffer and parse it
         if (rfReceivedInt==1){ 
             rfReceivedInt = 0;
-            header_length = packetbuf_hdrlen();
-            header_ptr = packetbuf_hdrptr();                                   
+            //header_length = packetbuf_hdrlen();
+            //header_ptr = packetbuf_hdrptr();                                   
             data_length = packetbuf_datalen();                               
             data_ptr = packetbuf_dataptr();                                  
 
@@ -924,6 +935,8 @@ PROCESS_THREAD(rf_received_process, ev, data) {
 
 PROCESS_THREAD(triumviProcess, ev, data) {
     PROCESS_BEGIN();
+
+    static triumvi_record_t triumvi_record;
     // packet preprocessing
     static uint8_t extAddr[8];
     NETSTACK_RADIO.get_object(RADIO_PARAM_64BIT_ADDR, extAddr, 8);
@@ -1055,6 +1068,7 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                     // Bit 6:5: Three Phase Slave Selected
                     // 00 --> non, 01 --> Master, 10 --> slave 1, 11 --> slave2
                     // Bit 4: FRAM WRITE Enabled
+                    // Bit 2: RTC Enable
                     // Note: bit 6 & 7 cannot be set simultaneously
                     triumviStatusReg = 0x0000;
                     if (externalVoltSel())
@@ -1211,8 +1225,18 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                             batteryPackVoltageEn(SENSE_ENABLE);
                             sx1509b_init();
                             sx1509b_high_voltage_input_enable(SX1509B_PORTA, 0x1, SX1509B_HIGH_INPUT_ENABLE);
+                            triumvi_record.panelID = batteryPackReadPanelID();
+                            triumvi_record.circuitID = batteryPackReadCircuitID();
+                            batteryPackVoltageEn(SENSE_DISABLE);
+                            i2c_disable(I2C_SDA_GPIO_NUM, I2C_SDA_GPIO_PIN, 
+                                        I2C_SCL_GPIO_NUM, I2C_SCL_GPIO_PIN); 
                         }
-                        encryptAndTransmit(triumviStatusReg, avgPower, pf, (inaGain<<8)|VRMS, IRMS, myNonce, nonceCounter);
+                        triumvi_record.avgPower = avgPower;
+                        triumvi_record.triumviStatusReg = (uint8_t)(triumviStatusReg & 0xff);
+                        triumvi_record.IRMS = IRMS;
+                        triumvi_record.VRMS = (inaGain<<8)|VRMS;
+                        triumvi_record.pf = pf;
+                        encryptAndTransmit(&triumvi_record, myNonce, nonceCounter);
                         #endif
                         // First sample, blinks battery pack blue LED
                         if (batteryPackIsUSBAttached() &&
@@ -1549,8 +1573,8 @@ gainSetting_t gainCtrl(uint16_t* adcSamples, uint8_t externalVolt){
     return res;
 }
 
-void encryptAndTransmit(uint16_t triumviStatusReg, int avgPower, float pf, 
-        uint16_t VRMS, uint16_t IRMS, uint8_t* myNonce, uint32_t nonceCounter){
+void encryptAndTransmit(triumvi_record_t* thisSample, 
+                        uint8_t* myNonce, uint32_t nonceCounter){
 	// 1 byte Identifier, 4 bytes nonce, 5~19 bytes payload, 4 byte MIC
 	static uint8_t packetData[28];
 	// 4 bytes reading, 1 byte status reg, 
@@ -1565,27 +1589,24 @@ void encryptAndTransmit(uint16_t triumviStatusReg, int avgPower, float pf,
 	uint16_t randBackOff;
 
 	packetData[0] = TRIUMVI_PKT_IDENTIFIER;
-	if (triumviStatusReg & BATTERYPACK_STATUSREG){
-		readingBuf[myPDATA_LEN] = batteryPackReadPanelID();
-		readingBuf[myPDATA_LEN+1] = batteryPackReadCircuitID();
-		myPDATA_LEN += 2;
-		packetLen += 2;
-        batteryPackVoltageEn(SENSE_DISABLE);
-        i2c_disable(I2C_SDA_GPIO_NUM, I2C_SDA_GPIO_PIN, 
-                    I2C_SCL_GPIO_NUM, I2C_SCL_GPIO_PIN); 
+	if (thisSample->triumviStatusReg & BATTERYPACK_STATUSREG){
+        readingBuf[myPDATA_LEN] = thisSample->panelID;
+        readingBuf[myPDATA_LEN+1] = thisSample->circuitID;
+        myPDATA_LEN += 2;
+        packetLen += 2;
 	}
-	readingBuf[4] = triumviStatusReg;
-	packData(&packetData[1], nonceCounter);
-	packData(&myNonce[9], nonceCounter);
-	packData(readingBuf, avgPower);
-    packDataHalf(&readingBuf[myPDATA_LEN], (uint16_t)(pf*1000));
-    packDataHalf(&readingBuf[myPDATA_LEN+2], VRMS);
-    packDataHalf(&readingBuf[myPDATA_LEN+4], IRMS);
+	readingBuf[4] = thisSample->triumviStatusReg;
+	packData(&packetData[1], nonceCounter, 4);
+	packData(&myNonce[9], nonceCounter, 4);
+	packData(readingBuf, thisSample->avgPower, 4);
+    packData(&readingBuf[myPDATA_LEN], (uint16_t)(thisSample->pf*1000), 2);
+    packData(&readingBuf[myPDATA_LEN+2], thisSample->VRMS, 2);
+    packData(&readingBuf[myPDATA_LEN+4], thisSample->IRMS, 2);
     myPDATA_LEN += 6;
     packetLen += 6;
 
     #ifdef RTC_ENABLE
-    if (triumviStatusReg & TIMESTAMP_STATUSREG){
+    if (thisSample->triumviStatusReg & TIMESTAMP_STATUSREG){
         readingBuf[myPDATA_LEN] = (rtcTime.year - 2000);
         readingBuf[myPDATA_LEN+1] = rtcTime.month;
         readingBuf[myPDATA_LEN+2] = rtcTime.days;
@@ -1709,19 +1730,13 @@ int voltDataTransform(int voltReading, uint16_t voltReference){
     return (voltReading - voltReference)*VOLTAGE_SCALING;
 }
 
-void packData(uint8_t* dest, int reading){
-	uint8_t i;
-	for (i=0; i<4; i++){
-		dest[i] = (reading&(0xff<<(i<<3)))>>(i<<3);
-	}
+void packData(uint8_t* dest, int reading, uint8_t len){
+    uint8_t i;
+    for (i=0; i<len; i++){
+        dest[i] = (reading&(0xff<<(i<<3)))>>(i<<3);
+    }
 }
 
-void packDataHalf(uint8_t* dest, uint16_t data){
-	uint8_t i;
-	for (i=0; i<2; i++){
-		dest[i] = (data&(0xff<<(i<<3)))>>(i<<3);
-	}
-}
 
 void sampleCurrentVoltageWaveform(){
 	uint16_t sampleCnt = 0;
@@ -1840,18 +1855,19 @@ void aps3b12_enable(uint8_t en){
     CC2538_RF_CSP_ISRFOFF();
 }
 
-#ifdef AMPLITUDE_CALIBRATION_EN
+#if defined(AMPLITUDE_CALIBRATION_EN) || defined(RTC_ENABLE)
+void rf_rx_handler(){
+    process_poll(&rf_received_process);
+    rfReceivedInt = 1;
+}   
+#endif
 
+#ifdef AMPLITUDE_CALIBRATION_EN
 void aps3b12_read_current(){
     uint8_t pkt[4] = {APS3B12_PACKET_ID, APS3B12_READ, APS3B12_READ_CURRENT, 0x0};
     packetbuf_copyfrom(pkt, 4);
     cc2538_on_and_transmit();
 }
-
-void rf_rx_handler(){
-    process_poll(&rf_received_process);
-    rfReceivedInt = 1;
-}   
 
 void linearFit(uint16_t* reading, uint16_t* setting, uint8_t length, 
                 uint32_t* slope_n, uint32_t* slope_d, int* offset){
