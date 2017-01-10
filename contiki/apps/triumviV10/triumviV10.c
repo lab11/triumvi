@@ -144,16 +144,6 @@ typedef enum{
     STATE_AMP_NULL
 } triumvi_state_amp_calibration_t;
 
-typedef struct{
-    int avgPower;
-    uint8_t triumviStatusReg;
-    uint8_t circuitID;
-    uint8_t panelID;
-    float pf;
-    uint16_t VRMS;
-    uint16_t IRMS;
-} triumvi_record_t;
-
 
 /* global variables */
 
@@ -199,13 +189,6 @@ volatile int aps3b12_current_value;
 int cycleProduct(uint16_t* adcSamples, uint16_t offset, uint16_t currentRef);
 // return the phase has maximum correlation
 uint16_t phaseMatchFilter(uint16_t* adcSamples, uint16_t* currentAVG);
-// return variance of phase offsets 
-uint16_t getVariance(uint16_t* data, uint16_t length);
-
-// return mean(data)
-uint16_t getAverage(uint16_t* data, uint16_t length);
-// return mean(data)
-uint16_t getAverage32(int* data, uint16_t length);
 // gain control, adjust gain if necessary
 gainSetting_t gainCtrl(uint16_t* adcSamples, uint8_t externalVolt);
 // initialize GPIO, peripherals
@@ -221,8 +204,6 @@ void disablePOT();
 // encrypt data using AES, and wirelessly transmit packet
 void encryptAndTransmit(triumvi_record_t* thisSample, 
                         uint8_t* myNonce, uint32_t nonceCounter);
-// split a uint32_t into 4 uint8_t
-void packData(uint8_t* dest, int reading, uint8_t len);
 
 int currentDataTransform(int currentReading, uint8_t externalVolt);
 int voltDataTransform(int voltReading, uint16_t voltReference);
@@ -242,7 +223,7 @@ void rf_rx_handler();
 #endif
 
 #ifdef FRAM_WRITE
-inline void writeFRAM(uint16_t powerRead, rv3049_time_t* rtctime);
+void writeFRAM(triumvi_record_t* thisSample, rv3049_time_t* rtctime);
 #endif
 
 // functions do not use in data dump mode
@@ -250,7 +231,6 @@ static void disable_all_ioc_override();
 
 
 uint16_t currentRMS(uint16_t triumviStatusReg);
-uint16_t mysqrt(uint32_t n);
 uint16_t voltageRMS(uint16_t triumviStatusReg);
 
 // ISRs
@@ -1343,38 +1323,6 @@ int cycleProduct(uint16_t* adcSamples, uint16_t offset, uint16_t currentRef){
     return product;
 }
 
-// return average value
-uint16_t getAverage(uint16_t* data, uint16_t length){
-    uint16_t i;
-    uint32_t sum = 0;
-    for (i=0; i<length; i++)
-        sum += data[i];
-    return (uint16_t)(sum/length);
-}
-
-// return average value
-uint16_t getAverage32(int* data, uint16_t length){
-    uint16_t i;
-    uint32_t sum = 0;
-    for (i=0; i<length; i++)
-        sum += data[i];
-    return (uint16_t)(sum/length);
-}
-
-// calculate variance of phase offset array 
-uint16_t getVariance(uint16_t* data, uint16_t length){
-    uint16_t i;
-    uint16_t avg = getAverage(data, length);
-    int sqr;
-    uint16_t variance = 0;
-    for (i=0; i<length; i++){
-        sqr = data[i] - avg;
-        variance += (sqr*sqr);
-    }
-    variance /= length;
-    return variance;
-}
-
 // Fine tune to 3.002 degree / sample
 void sampleCurrentWaveform(){
 	uint16_t sampleCnt = 0;
@@ -1705,10 +1653,9 @@ int sampleAndCalculate(uint16_t triumviStatusReg){
 }
 
 #ifdef FRAM_WRITE
-inline void writeFRAM(uint16_t powerRead, rv3049_time_t* rtctime){
+void writeFRAM(triumvi_record_t* thisSample, rv3049_time_t* rtctime){
 	reenableSPI();
-	rv3049_read_time(rtctime);
-	triumviFramWrite(powerRead, rtctime);
+	triumviFramWrite(thisSample, rtctime);
 	disableSPI();
 }
 #endif
@@ -1730,12 +1677,6 @@ int voltDataTransform(int voltReading, uint16_t voltReference){
     return (voltReading - voltReference)*VOLTAGE_SCALING;
 }
 
-void packData(uint8_t* dest, int reading, uint8_t len){
-    uint8_t i;
-    for (i=0; i<len; i++){
-        dest[i] = (reading&(0xff<<(i<<3)))>>(i<<3);
-    }
-}
 
 
 void sampleCurrentVoltageWaveform(){
@@ -1829,15 +1770,6 @@ uint16_t voltageRMS(uint16_t triumviStatusReg){
     return VOLTAGE_NOMINAL;
     
     
-}
-
-uint16_t mysqrt(uint32_t n){
-    uint32_t xn = n;
-    uint8_t i;
-    for (i=0; i<20; i++){
-        xn = (xn + n/xn)/2;
-    }
-    return (uint16_t)xn;
 }
 
 void aps3b12_set_current(uint16_t cu){

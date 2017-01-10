@@ -10,144 +10,146 @@
 #include "sx1509b.h"
 #include "triumvi.h"
 #include "ad5274.h"
+#include "ioc.h"
+
+#define TRIUMVI_RECORD_SIZE 22  // size of each record, 6 bytes time, 15 bytes power, 1 byte reserved
+
+#if defined(FM25V02)
+#define FRAM_DATA_MAX_LOC_ADDR 32730
+int (*fram_write)(uint16_t, uint16_t, uint8_t*) = &fm25v02_write;
+int (*fram_read)(uint16_t, uint16_t, uint8_t*) = &fm25v02_read;
+#elif defined(FM25CL64B)
+#define FRAM_DATA_MAX_LOC_ADDR 4064
+int (*fram_write)(uint16_t, uint16_t, uint8_t*) = &fm25cl64b_write;
+int (*fram_read)(uint16_t, uint16_t, uint8_t*) = &fm25cl64b_read;
+#endif
+#define FRAM_DATA_MIN_LOC_ADDR 16
+#define FRAM_WRITE_PTR_LOC_ADDR 12	// Addr 12~13
+#define FRAM_READ_PTR_LOC_ADDR 14	// Addr 14~15
+#define READ_PTR_TYPE 0x0
+#define WRITE_PTR_TYPE 0x1
 
 
 uint16_t getReadWritePtr(uint8_t ptrType){
-	uint8_t readBuf[2];
-	if (ptrType==READ_PTR_TYPE){
-        #ifdef FM25CL64B
-        fm25cl64b_read(FM25V02_READ_LOC_ADDR, 2, readBuf);
-        #else
-        fm25v02_read(FM25V02_READ_LOC_ADDR, 2, readBuf);
-        #endif
-    }
-	else {
-        #ifdef FM25CL64B
-        fm25cl64b_read(FM25V02_WRITE_LOC_ADDR, 2, readBuf);
-        #else
-        fm25v02_read(FM25V02_WRITE_LOC_ADDR, 2, readBuf);
-        #endif
-    }
-	uint16_t myPtr = (readBuf[0]<<8 | readBuf[1]);
-	return myPtr;
+    uint8_t readBuf[2];
+    uint16_t destAddr = (ptrType==READ_PTR_TYPE)? FRAM_READ_PTR_LOC_ADDR : FRAM_WRITE_PTR_LOC_ADDR; 
+    (*fram_read)(destAddr, 2, readBuf);
+    uint16_t myPtr = (readBuf[0]<<8 | readBuf[1]);
+    return myPtr;
 }
 
 void triumviFramPtrClear(){
-	// using Big Endianness
-	uint8_t writeBuf[2];
-	writeBuf[0] = (FM25V02_MIN_ADDR&0xff00)>>8;
-	writeBuf[1] = FM25V02_MIN_ADDR&0xff;
-    #ifdef FM25CL64B
-	fm25cl64b_write(FM25V02_WRITE_LOC_ADDR, 2, writeBuf);
-	fm25cl64b_write(FM25V02_READ_LOC_ADDR, 2, writeBuf);
-    #else
-	// Dummy read, wake up FRAM
-	fm25v02_dummyWakeup();
-	fm25v02_write(FM25V02_WRITE_LOC_ADDR, 2, writeBuf);
-	fm25v02_write(FM25V02_READ_LOC_ADDR, 2, writeBuf);
-	fm25v02_sleep();
+    // using Big Endianness
+    uint8_t writeBuf[2];
+    writeBuf[0] = (FRAM_DATA_MIN_LOC_ADDR&0xff00)>>8;
+    writeBuf[1] = FRAM_DATA_MIN_LOC_ADDR&0xff;
+    #ifdef FM25V02
+    fm25v02_dummyWakeup();
+    #endif
+    (*fram_write)(FRAM_WRITE_PTR_LOC_ADDR, 2, writeBuf);
+    (*fram_write)(FRAM_READ_PTR_LOC_ADDR, 2, writeBuf);
+    #ifdef FM25V02
+    fm25v02_sleep();
     #endif
 }
 
 void updatePtr(uint8_t ptrType, uint16_t readWritePtr){
-	if (readWritePtr < FM25V02_MAX_ADDR)
-		readWritePtr += TRIUMVI_RECORD_SIZE;
-	else
-		readWritePtr = FM25V02_MIN_ADDR;
+    if (readWritePtr < FRAM_DATA_MAX_LOC_ADDR){
+        readWritePtr += TRIUMVI_RECORD_SIZE;
+    } else{
+        readWritePtr = FRAM_DATA_MIN_LOC_ADDR;
+    }
 
-	uint8_t writeBuf[2];
-	writeBuf[0] = (readWritePtr & 0xff00)>>8;
-	writeBuf[1] = readWritePtr & 0xff;
-
-	if (ptrType==READ_PTR_TYPE){
-        #ifdef FM25CL64B
-        fm25cl64b_write(FM25V02_READ_LOC_ADDR, 2, writeBuf);
-        #else
-        fm25v02_write(FM25V02_READ_LOC_ADDR, 2, writeBuf);
-        #endif
-	}
-	else{
-        #ifdef FM25CL64B
-        fm25cl64b_write(FM25V02_WRITE_LOC_ADDR, 2, writeBuf);
-        #else
-        fm25v02_write(FM25V02_WRITE_LOC_ADDR, 2, writeBuf);
-        #endif
-	}
+    uint8_t writeBuf[2];
+    writeBuf[0] = (readWritePtr & 0xff00)>>8;
+    writeBuf[1] = readWritePtr & 0xff;
+    uint16_t destAddr = (ptrType==READ_PTR_TYPE)? FRAM_READ_PTR_LOC_ADDR : FRAM_WRITE_PTR_LOC_ADDR; 
+    (*fram_write)(destAddr, 2, writeBuf);
 }
 
 // Write record into FRAM, return -1 if FRAM is full
 // Otherwise, return 0 (success)
-int triumviFramWrite(uint16_t powerReading, rv3049_time_t* rtctime){
-	// Dummy read, wake up FRAM
-    #ifndef FM25CL64B
-	fm25v02_dummyWakeup();
+int triumviFramWrite(triumvi_record_t* thisSample, rv3049_time_t* rtctime){
+    // Dummy read, wake up FRAM
+    #ifdef FM25V02
+    fm25v02_dummyWakeup();
     #endif
-	uint16_t readPtr = getReadWritePtr(READ_PTR_TYPE);
-	uint16_t writePtr = getReadWritePtr(WRITE_PTR_TYPE);
-	static uint8_t writeBuf[TRIUMVI_RECORD_SIZE] = {0xff};
-	if (writePtr < readPtr){
-		// FRAM is full
-		if (readPtr == (writePtr + TRIUMVI_RECORD_SIZE))
-			return -1;
-	}
-	else{
-		// FRAM is full
-        #ifdef FM25CL64B
-		if ((readPtr==FM25V02_MIN_ADDR) && (writePtr==FM25CL64B_MAX_ADDR)) 
-        #else
-		if ((readPtr==FM25V02_MIN_ADDR) && (writePtr==FM25V02_MAX_ADDR)) 
-        #endif
-			return -1;
-	}
-	writeBuf[0] = (rtctime->year & 0xff0)>>4;
-	writeBuf[1] = ((rtctime->year & 0xf)<<4) | ((uint8_t)rtctime->month & 0xf);
-	writeBuf[2] = rtctime->days;
-	writeBuf[3] = rtctime->hours;
-	writeBuf[4] = rtctime->minutes;
-	writeBuf[5] = rtctime->seconds;
-	writeBuf[6] = (powerReading&0xff00)>>8;
-	writeBuf[7] = powerReading&0xff;
-    #ifdef FM25CL64B
-	fm25cl64b_write(writePtr, TRIUMVI_RECORD_SIZE, writeBuf);
-    #else
-	fm25v02_write(writePtr, TRIUMVI_RECORD_SIZE, writeBuf);
+    uint16_t readPtr = getReadWritePtr(READ_PTR_TYPE);
+    uint16_t writePtr = getReadWritePtr(WRITE_PTR_TYPE);
+    static uint8_t writeBuf[TRIUMVI_RECORD_SIZE] = {0xff};
+    if (writePtr < readPtr){
+        // FRAM is full
+        if (readPtr == (writePtr + TRIUMVI_RECORD_SIZE)){
+            return -1;
+        }
+    } else {
+        // FRAM is full
+        if ((readPtr==FRAM_DATA_MIN_LOC_ADDR ) && (writePtr==FRAM_DATA_MAX_LOC_ADDR )){
+            return -1;
+        }
+    }
+    // triumvi_record_t 
+    packData(&writeBuf[0], thisSample->avgPower, 4); // 0~3
+    writeBuf[4] = thisSample->triumviStatusReg;
+    writeBuf[5] = thisSample->panelID;
+    writeBuf[6] = thisSample->circuitID;
+    packData(&writeBuf[7], thisSample->pf, 4); 
+    packData(&writeBuf[11], thisSample->VRMS, 2); 
+    packData(&writeBuf[13], thisSample->IRMS, 2); 
+    writeBuf[15] = 0x00; // reserved byte, 0 for now
+    // rv3049_time_t
+    writeBuf[16] = (rtctime->year - 2000);
+    writeBuf[17] = rtctime->month;
+    writeBuf[18] = rtctime->days;
+    writeBuf[19] = rtctime->hours;
+    writeBuf[20] = rtctime->minutes;
+    writeBuf[21] = rtctime->seconds;
+
+    (*fram_write)(writePtr, TRIUMVI_RECORD_SIZE, writeBuf);
+    updatePtr(WRITE_PTR_TYPE, writePtr);
+
+    #ifndef FM25V02
+    fm25v02_sleep();
     #endif
-	updatePtr(WRITE_PTR_TYPE, writePtr);
-    #ifndef FM25CL64B
-	fm25v02_sleep();
-    #endif
-	return 0;
+    return 0;
 }
 
 int triumviFramRead(triumviData_t* record){
-	// Dummy read, wake up FRAM
+    // Dummy read, wake up FRAM
+    #ifdef FM25V02
+    fm25v02_dummyWakeup();
+    #endif
+    uint16_t readPtr = getReadWritePtr(READ_PTR_TYPE);
+    uint16_t writePtr = getReadWritePtr(WRITE_PTR_TYPE);
+    static uint8_t readBuf[TRIUMVI_RECORD_SIZE];
+    // FRAM is empty
+    if (readPtr==writePtr){
+        return -1;
+    }
+    (*fram_read)(readPtr, TRIUMVI_RECORD_SIZE, readBuf);
+
+    // triumvi_record_t
+    record->sample.avgPower = (readBuf[3]<<24 | readBuf[2]<<16 | readBuf[1]<<8 | readBuf[0]);
+    record->sample.triumviStatusReg = readBuf[4];
+    record->sample.panelID = readBuf[5];
+    record->sample.circuitID = readBuf[6];
+    record->sample.pf = (readBuf[10]<<24 | readBuf[9]<<16 | readBuf[8]<<8 | readBuf[7]);
+    record->sample.VRMS = (readBuf[12]<<8 | readBuf[11]);
+    record->sample.IRMS = (readBuf[14]<<8 | readBuf[13]);
+
+    // time stamp
+    record->year = readBuf[16] + 2000;
+    record->month = readBuf[17];
+    record->days = readBuf[18];
+    record->hours = readBuf[19];
+    record->minutes = readBuf[20];
+    record->seconds = readBuf[21];
+
+    updatePtr(READ_PTR_TYPE, readPtr);
     #ifndef FM25CL64B
-	fm25v02_dummyWakeup();
+    fm25v02_sleep();
     #endif
-	uint16_t readPtr = getReadWritePtr(READ_PTR_TYPE);
-	uint16_t writePtr = getReadWritePtr(WRITE_PTR_TYPE);
-	static uint8_t readBuf[TRIUMVI_RECORD_SIZE];
-	// FRAM is empty
-	if (readPtr==writePtr){
-		return -1;
-	}
-    #ifdef FM25CL64B
-	fm25cl64b_read(readPtr, TRIUMVI_RECORD_SIZE, readBuf);
-    #else
-	fm25v02_read(readPtr, TRIUMVI_RECORD_SIZE, readBuf);
-    #endif
-	record->year = readBuf[0]<<4 | ((readBuf[1]&0xf0)>>4);
-	record->month = (readBuf[1] & 0xf);
-	record->days = readBuf[2];
-	record->hours = readBuf[3];
-	record->minutes = readBuf[4];
-	record->seconds = readBuf[5];
-	record->powerReading = ((readBuf[6]<<8) | readBuf[7]);
-	updatePtr(READ_PTR_TYPE, readPtr);
-    #ifndef FM25CL64B
-	fm25v02_sleep();
-    #endif
-	return 0;
+    return 0;
 }
 
 inline void triumviLEDinit(){
@@ -558,5 +560,53 @@ void batteryPackLEDIntensitySet(uint8_t leds, uint8_t iOnVal){
 	sx1509b_led_driver_set_ION(pin, iOnVal);
 }
 
+
+uint16_t mysqrt(uint32_t n){
+    uint32_t xn = n;
+    uint8_t i;
+    for (i=0; i<20; i++){
+        xn = (xn + n/xn)/2;
+    }
+    return (uint16_t)xn;
+}
+
+// return average value
+uint16_t getAverage(uint16_t* data, uint16_t length){
+    uint16_t i;
+    uint32_t sum = 0;
+    for (i=0; i<length; i++)
+        sum += data[i];
+    return (uint16_t)(sum/length);
+}
+
+// return average value
+uint16_t getAverage32(int* data, uint16_t length){
+    uint16_t i;
+    uint32_t sum = 0;
+    for (i=0; i<length; i++)
+        sum += data[i];
+    return (uint16_t)(sum/length);
+}
+
+// calculate variance of phase offset array 
+uint16_t getVariance(uint16_t* data, uint16_t length){
+    uint16_t i;
+    uint16_t avg = getAverage(data, length);
+    int sqr;
+    uint16_t variance = 0;
+    for (i=0; i<length; i++){
+        sqr = data[i] - avg;
+        variance += (sqr*sqr);
+    }
+    variance /= length;
+    return variance;
+}
+
+void packData(uint8_t* dest, int src, uint8_t len){
+    uint8_t i;
+    for (i=0; i<len; i++){
+        dest[i] = (src&(0xff<<(i<<3)))>>(i<<3);
+    }
+}
 
 

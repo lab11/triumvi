@@ -116,15 +116,15 @@ main(void)
   #ifdef VERSION10
   GPIO_CLR_PIN(GPIO_PORT_TO_BASE(FM25V02_HOLD_N_PORT_NUM), 0x1<<FM25V02_HOLD_N_PIN);
   #endif
-  #ifdef FM25CL64B
+  #if defined(FM25CL64B)
   fm25cl64b_init();
-  #else
+  #elif defined(FM25V02)
   fm25v02_init();
   fm25v02_sleep();
   #endif
   rv3049_init();
-	crypto_init();
-	REG(AES_CTRL_ALG_SEL) = 0x00000000; // reset AES module
+  crypto_init();
+  REG(AES_CTRL_ALG_SEL) = 0x00000000; // reset AES module
 
   /*
    * Character I/O Initialization.
