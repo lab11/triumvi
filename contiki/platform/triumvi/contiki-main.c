@@ -107,7 +107,6 @@ main(void)
   leds_init();
 
   process_init();
-  CC2538_RF_CSP_ISRFOFF();
 
   watchdog_init();
   //button_sensor_init();

@@ -222,10 +222,6 @@ void linearFit(uint16_t* reading, uint16_t* setting, uint8_t length,
 void rf_rx_handler();
 #endif
 
-#ifdef FRAM_WRITE
-void writeFRAM(triumvi_record_t* thisSample, rv3049_time_t* rtctime);
-#endif
-
 // functions do not use in data dump mode
 static void disable_all_ioc_override();
 
@@ -254,15 +250,13 @@ AUTOSTART_PROCESSES(&startupProcess);
 // Startup process, check flash
 PROCESS_THREAD(startupProcess, ev, data) {
     PROCESS_BEGIN();
+    
+    CC2538_RF_CSP_ISRFOFF();
 
     random_init(0);
 
     simple_network_set_callback(&rf_rx_handler);
     process_start(&rf_received_process, NULL);
-
-    #ifdef ERASE_FRAM
-    fm25v02_eraseAll();
-    #endif
 
     // Initialize peripherals
     meterInit();
@@ -927,6 +921,7 @@ PROCESS_THREAD(triumviProcess, ev, data) {
     memcpy(myNonce, extAddr, 8);
     static uint32_t nonceCounter = 0;
     aes_load_keys(aesKey, AES_KEY_STORE_SIZE_KEY_SIZE_128, 1, 0);
+    uint16_t rand0, rand1;
 
 	static int avgPower;
     uint8_t rdy;
@@ -1190,12 +1185,7 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                         printf("INA Gain: %u\r\n", inaGain);
                         printf("IRMS: %u\r\n", IRMS);
                         printf("Average Power: %u\r\n", avgPower);
-                        // Write data into FRAM
-                        #elif defined(FRAM_WRITE)
-                        writeFRAM((uint16_t)(avgPower/1000), &rtctime);
                         #else
-                        
-                        uint16_t rand0, rand1;
                         rand0 = random_rand();
                         rand1 = random_rand();
                         nonceCounter = (rand0<<16) | rand1;
@@ -1216,6 +1206,10 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                         triumvi_record.IRMS = IRMS;
                         triumvi_record.VRMS = (inaGain<<8)|VRMS;
                         triumvi_record.pf = pf;
+                        // Write data into FRAM
+                        #ifdef FRAM_WRITE
+                        triumviFramWrite(triumvi_record, rtctime);
+                        #endif
                         encryptAndTransmit(&triumvi_record, myNonce, nonceCounter);
                         #endif
                         // First sample, blinks battery pack blue LED
@@ -1651,14 +1645,6 @@ int sampleAndCalculate(uint16_t triumviStatusReg){
     }
     return -1;
 }
-
-#ifdef FRAM_WRITE
-void writeFRAM(triumvi_record_t* thisSample, rv3049_time_t* rtctime){
-	reenableSPI();
-	triumviFramWrite(thisSample, rtctime);
-	disableSPI();
-}
-#endif
 
 void disablePOT(){
     meterSenseConfig(CURRENT, SENSE_DISABLE);

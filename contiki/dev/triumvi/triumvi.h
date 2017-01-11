@@ -5,6 +5,22 @@
 #include "rv3049.h"
 #include "ioc.h"
 
+#if defined(FM25V02)
+#define FRAM_DATA_MAX_LOC_ADDR 32730
+int (*fram_write)(uint16_t, uint16_t, uint8_t*);
+int (*fram_read)(uint16_t, uint16_t, uint8_t*);
+#elif defined(FM25CL64B)
+#define FRAM_DATA_MAX_LOC_ADDR 4064
+int (*fram_write)(uint16_t, uint16_t, uint8_t*);
+int (*fram_read)(uint16_t, uint16_t, uint8_t*);
+#endif
+#define TRIUMVI_RECORD_SIZE 22  // size of each record, 6 bytes time, 15 bytes power, 1 byte reserved
+#define FRAM_DATA_MIN_LOC_ADDR 16
+#define FRAM_WRITE_PTR_LOC_ADDR 12	// Addr 12~13
+#define FRAM_READ_PTR_LOC_ADDR 14	// Addr 14~15
+#define READ_PTR_TYPE 0x0
+#define WRITE_PTR_TYPE 0x1
+
 #define VOLTAGE 0x0
 #define CURRENT 0x1
 #define SENSE_ENABLE 0x1
