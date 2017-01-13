@@ -46,8 +46,8 @@
 // Adjusted (DC removal) ADC sample thresholds
 #define UPPERTHRESHOLD0  400 // upper threshold for gain == 17
 #define UPPERTHRESHOLD1  500 // upper threshold for gain == 3, 5, 9
-#define UPPERTHRESHOLD2  700 // upper threshold for gain == 2
-#define LOWERTHRESHOLD  185  // lower threshold
+#define UPPERTHRESHOLD2  500 // upper threshold for gain == 2
+#define LOWERTHRESHOLD  200  // lower threshold
 
 // number of samples per cycle
 #define BUF_SIZE 120        // sample current only, 11-bit resolution, 1 cycles
@@ -65,12 +65,17 @@
 
 // maximum achievable setting for APS3B12, unit is mA
 #define MAX_CURRENT_SETTING 8750
+// step size for each setting
+#define APS3B12_STEP_SIZE 250
+// start current setting
+#define APS3B12_START_CURRENT 750
 
 // phase lock threshold
 #define PHASE_VARIANCE_THRESHOLD 15
 
 // INA gain indices
-#define MAX_INA_GAIN_IDX 5
+//#define MAX_INA_GAIN_IDX 5 
+#define MAX_INA_GAIN_IDX 3
 #define MIN_INA_GAIN_IDX 0
 
 // voltage isolation filter offset
@@ -100,7 +105,8 @@ static rv3049_time_t rtcTime;
 
 //#define TEST
 
-const uint8_t inaGainArr[6] = {1, 2, 3, 5, 9, 17};
+//const uint8_t inaGainArr[6] = {1, 2, 3, 5, 9, 17};
+const uint8_t inaGainArr[4] = {1, 5, 9, 17};
 
 typedef enum {
     MODE_PHASE_CALIBRATION,
@@ -178,6 +184,7 @@ volatile uint8_t rtc_packet_received;
 static uint8_t aps_trials;
 volatile int aps3b12_current_value; 
 
+
 /* End of global variables */
 
 #include "sineTable.h"
@@ -238,6 +245,7 @@ static void unitReadyCallBack(uint8_t port, uint8_t pin);
 
 /*---------------------------------------------------------------------------*/
 PROCESS(startupProcess, "Startup");
+PROCESS(framCheckProecss, "COPY Data from FRAM");
 PROCESS(phaseCalibrationProcess, "Phase Calibration");
 #ifdef AMPLITUDE_CALIBRATION_EN
 PROCESS(amplitudeCalibrationProcess, "Amplitude Calibration");
@@ -261,12 +269,6 @@ PROCESS_THREAD(startupProcess, ev, data) {
     // Initialize peripherals
     meterInit();
     
-    // Erase FRAM
-    if (isButtonPressed()){
-        triumviFramPtrClear();
-        triumviLEDON();
-    }
-    
     // Disable sensing frontend
     disablePOT();
     meterSenseConfig(VOLTAGE, SENSE_DISABLE);
@@ -277,7 +279,7 @@ PROCESS_THREAD(startupProcess, ev, data) {
 
     // non-calibrated device
     if (flash_data==0xffffffff){
-        process_start(&phaseCalibrationProcess, NULL);
+        process_start(&framCheckProecss, NULL);
         operation_mode = MODE_PHASE_CALIBRATION;
     }
     // calibrated device, load phase offset and dc offset
@@ -289,6 +291,102 @@ PROCESS_THREAD(startupProcess, ev, data) {
     }
     PROCESS_END();
 }
+
+PROCESS_THREAD(framCheckProecss, ev, data) {
+    PROCESS_BEGIN();
+    rom_util_page_erase(flash_addr, FLASH_ERASE_SIZE);
+    triumviLEDON();
+    etimer_set(&calibration_timer, CLOCK_SECOND*10);
+    static uint8_t calDataValid;
+    static linearFitCalData_t linearFitCalibrationData;
+    static phaseOffsetCalData_t phaseData;
+    uint32_t tmp;
+    uint8_t i;
+    uint32_t slope_n, slope_d;
+    int offset;
+
+    // enable LDO, release power gating
+    // This is critical here for V10 to access FRAM
+    meterSenseVREn(SENSE_ENABLE);
+    meterSenseConfig(VOLTAGE, SENSE_ENABLE);
+    meterSenseConfig(CURRENT, SENSE_ENABLE);
+
+    /* Test for analog mux */
+    #ifdef TEST
+    while (1){
+        PROCESS_YIELD();
+        if (etimer_expired(&calibration_timer)){
+            ad5274_init();
+            ad5274_ctrl_reg_write(AD5274_REG_RDAC_RP);
+            triumviLEDOFF();
+            setINAGain(1);
+            i2c_disable(AD527X_SDA_GPIO_NUM, AD527X_SDA_GPIO_PIN, AD527X_SCL_GPIO_NUM, AD527X_SCL_GPIO_PIN); 
+        }
+    }
+    #endif
+    /* End of test */
+
+    while (1){
+        PROCESS_YIELD();
+        if (etimer_expired(&calibration_timer)){
+            // Erase FRAM
+            if (isButtonPressed()){
+                triumviLEDOFF();
+                triumviFramPtrClear();
+                triumviLEDON();
+                process_start(&phaseCalibrationProcess, NULL);
+            } else {
+                calDataValid = triumviFramCalibrateDataValidRead();
+                // data is valid, copy from FRAM
+                if (calDataValid & 0x01){
+                    // read phase/dc offset calibration data
+                    triumviFramCalibrateDataPhaseRead(&phaseData);
+                    // write phase/dc offset calibration data
+                    tmp = (phaseData.dc_Offset<<16) | phaseData.phase_Offset;
+                    rom_util_program_flash(&tmp, flash_addr, 4);
+                    phaseOffset = phaseData.phase_Offset;
+                    dcOffset = phaseData.dc_Offset;
+                    // write current, power linear fit data
+                    for (i=0; i<7; i++){
+                        if (calDataValid & (0x01<<(i+1))){
+                            // read current fit data
+                            linearFitCalibrationData.type = CURRENT_FIT_TYPE;
+                            linearFitCalibrationData.gain_idx = i;
+                            triumviFramCalibrateDataFitRead(&linearFitCalibrationData);
+                            slope_n = linearFitCalibrationData.numerator;
+                            slope_d = linearFitCalibrationData.denumerator;
+                            offset = linearFitCalibrationData.offset;
+                            // write current fit data
+                            rom_util_program_flash((uint32_t*)&slope_n, flash_addr+(i*16)+4, 4);
+                            rom_util_program_flash((uint32_t*)&slope_d, flash_addr+(i*16)+8, 4);
+                            rom_util_program_flash((uint32_t*)&offset, flash_addr+(i*16)+12, 4);
+                            // read power fit data
+                            linearFitCalibrationData.type = POWER_FIT_TYPE;
+                            linearFitCalibrationData.gain_idx = i;
+                            triumviFramCalibrateDataFitRead(&linearFitCalibrationData);
+                            slope_n = linearFitCalibrationData.numerator;
+                            slope_d = linearFitCalibrationData.denumerator;
+                            offset = linearFitCalibrationData.offset;
+                            // write power fit data
+                            rom_util_program_flash((uint32_t*)&slope_n, flash_addr+(i*16)+4+(MAX_INA_GAIN_IDX+1)*16, 4);
+                            rom_util_program_flash((uint32_t*)&slope_d, flash_addr+(i*16)+8+(MAX_INA_GAIN_IDX+1)*16, 4);
+                            rom_util_program_flash((uint32_t*)&offset, flash_addr+(i*16)+12+(MAX_INA_GAIN_IDX+1)*16, 4);
+                        }
+                    }
+                    process_start(&triumviProcess, NULL);
+                    operation_mode = MODE_NORMAL;
+                    
+                // no valid data in FRAM, start calibration process
+                } else{
+                    process_start(&phaseCalibrationProcess, NULL);
+                }
+            }
+            break;
+        }
+    }
+    PROCESS_END();
+}
+
 
 PROCESS_THREAD(phaseCalibrationProcess, ev, data) {
     PROCESS_BEGIN();
@@ -314,8 +412,8 @@ PROCESS_THREAD(phaseCalibrationProcess, ev, data) {
     #endif
     rfReceivedInt = 0;
     aps_trials = 0;
+    static phaseOffsetCalData_t phaseData;
 
-    rom_util_page_erase(flash_addr, FLASH_ERASE_SIZE);
     triumviLEDON();
     etimer_set(&calibration_timer, CLOCK_SECOND*10);
 
@@ -327,21 +425,7 @@ PROCESS_THREAD(phaseCalibrationProcess, ev, data) {
     meterSenseConfig(VOLTAGE, SENSE_ENABLE);
     meterSenseConfig(CURRENT, SENSE_ENABLE);
 
-    /* Test for analog mux */
-    #ifdef TEST
-    while (1){
-        PROCESS_YIELD();
-        if (etimer_expired(&calibration_timer)){
-            ad5274_init();
-            ad5274_ctrl_reg_write(AD5274_REG_RDAC_RP);
-            triumviLEDOFF();
-            setINAGain(17);
-            i2c_disable(AD527X_SDA_GPIO_NUM, AD527X_SDA_GPIO_PIN, AD527X_SCL_GPIO_NUM, AD527X_SCL_GPIO_PIN); 
-        }
-    }
-    #endif
-    /* End of test */
-
+    (*fram_erase_all)();
 
     while (1){
         PROCESS_YIELD();
@@ -443,10 +527,6 @@ PROCESS_THREAD(phaseCalibrationProcess, ev, data) {
                             #ifdef DATADUMP
                             etimer_set(&calibration_timer, CLOCK_SECOND*1);
                             #else
-                            meterSenseVREn(SENSE_DISABLE);
-                            meterSenseConfig(VOLTAGE, SENSE_DISABLE);
-                            meterSenseConfig(CURRENT, SENSE_DISABLE);
-
                             variance = getVariance(phaseOffset_array, CALIBRATION_CYCLES);
                             // cannot lock phase, check if the phase across 360
                             if (variance > PHASE_VARIANCE_THRESHOLD){
@@ -483,12 +563,12 @@ PROCESS_THREAD(phaseCalibrationProcess, ev, data) {
                             #ifdef DEBUG_ON
                             printf("phase offset: %u\r\n", phaseOffset);
                             printf("dc offset: %u\r\n", dcOffset);
-                            printf("variance: %u\r\n", variance);
-                            //for (i=0; i<CALIBRATION_CYCLES; i++){
-                            //    printf("phase Offset %u: %u\r\n", i, phaseOffset_array[i]);
-                            //}
+                            printf("variance: %lu\r\n", variance);
                             #endif
 
+                            phaseData.dc_Offset = dcOffset;
+                            phaseData.phase_Offset = phaseOffset;
+                            triumviFramCalibrateDataPhaseWrite(&phaseData);
                             // write to flash
                             tmp = (dcOffset<<16) | phaseOffset;
                             rom_util_program_flash(&tmp, flash_addr, 4);
@@ -509,6 +589,10 @@ PROCESS_THREAD(phaseCalibrationProcess, ev, data) {
                             #endif
                             etimer_set(&calibration_timer, CLOCK_SECOND*3);
                             #endif // end of DATADUMP
+
+                            meterSenseVREn(SENSE_DISABLE);
+                            meterSenseConfig(VOLTAGE, SENSE_DISABLE);
+                            meterSenseConfig(CURRENT, SENSE_DISABLE);
                         }
                     }
                     else{
@@ -541,10 +625,8 @@ PROCESS_THREAD(phaseCalibrationProcess, ev, data) {
                     process_start(&amplitudeCalibrationProcess, NULL);
                     operation_mode = MODE_AMPLITUDE_CALIBRATION;
                     #else
-                    #ifndef DATADUMP2
                     GPIO_SET_OUTPUT(GPIO_A_BASE, 0x47);
                     GPIO_CLR_PIN(GPIO_A_BASE, 0x47);
-                    #endif
                     process_start(&triumviProcess, NULL);
                     operation_mode = MODE_NORMAL;
                     // enable 80k trickle charge resistor
@@ -575,7 +657,7 @@ PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
     PROCESS_BEGIN();
 
 
-    static uint16_t currentSetting = 1000; // starts with 1000 mA
+    static uint16_t currentSetting = APS3B12_START_CURRENT; // starts with 1000 mA
     triumviLEDON();
     etimer_set(&calibration_timer, CLOCK_SECOND*5);
     static triumvi_state_amp_calibration_t amplitude_calibration_state = STATE_AMP_STD_LOAD_SET;
@@ -601,6 +683,7 @@ PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
     current_set_cnt = 0;
     amp_cal_completed = 0;
     increase_current = 0;
+    static linearFitCalData_t calData;
 
     // enable LDO, release power gating
     meterSenseVREn(SENSE_ENABLE);
@@ -630,11 +713,9 @@ PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
                             }
                             triumviLEDOFF();
                             // start measurement process
-                            process_start(&triumviProcess, NULL);
-                            #ifndef DATADUMP2
                             GPIO_SET_OUTPUT(GPIO_A_BASE, 0x47);
                             GPIO_CLR_PIN(GPIO_A_BASE, 0x47);
-                            #endif
+                            process_start(&triumviProcess, NULL);
                             operation_mode = MODE_NORMAL;
                             amplitude_calibration_state = STATE_AMP_NULL;
                             // enable 80k trickle charge resistor
@@ -749,7 +830,7 @@ PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
                                 printf("IRMS Reading: %u\r\n", read_current[current_set_cnt]);
                                 #endif
 
-                                if (((current_set_cnt == MAX_CURRENT_SETTING_PER_GAIN) || (currentSetting == MAX_CURRENT_SETTING)) && (current_set_cnt > 1)){
+                                if (((current_set_cnt == MAX_CURRENT_SETTING_PER_GAIN) || (currentSetting >= MAX_CURRENT_SETTING)) && (current_set_cnt > 1)){
                                     linearFit(read_current, current_setting, current_set_cnt, &slope_n, &slope_d, &offset);
                                     #ifdef DATADUMP3
                                     printf("B\r\n");
@@ -762,6 +843,13 @@ PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
                                     rom_util_program_flash((uint32_t*)&slope_n, flash_addr+(inaGainIdx*16)+4, 4);
                                     rom_util_program_flash((uint32_t*)&slope_d, flash_addr+(inaGainIdx*16)+8, 4);
                                     rom_util_program_flash((uint32_t*)&offset, flash_addr+(inaGainIdx*16)+12, 4);
+                                    calData.type = CURRENT_FIT_TYPE;
+                                    calData.numerator = slope_n;
+                                    calData.denumerator = slope_d;
+                                    calData.offset = offset;
+                                    calData.gain_idx = inaGainIdx;
+                                    triumviFramCalibrateDataFitWrite(&calData);
+
                                     // power correction
                                     linearFit(read_power, current_setting, current_set_cnt, &slope_n, &slope_d, &offset);
                                     offset *= VOLTAGE_NOMINAL;
@@ -774,6 +862,12 @@ PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
                                     rom_util_program_flash((uint32_t*)&slope_n, flash_addr+(inaGainIdx*16)+4+(MAX_INA_GAIN_IDX+1)*16, 4);
                                     rom_util_program_flash((uint32_t*)&slope_d, flash_addr+(inaGainIdx*16)+8+(MAX_INA_GAIN_IDX+1)*16, 4);
                                     rom_util_program_flash((uint32_t*)&offset, flash_addr+(inaGainIdx*16)+12+(MAX_INA_GAIN_IDX+1)*16, 4);
+                                    calData.type = POWER_FIT_TYPE;
+                                    calData.numerator = slope_n;
+                                    calData.denumerator = slope_d;
+                                    calData.offset = offset;
+                                    calData.gain_idx = inaGainIdx;
+                                    triumviFramCalibrateDataFitWrite(&calData);
                                     current_set_cnt = 0;
                                 }
                                 else{
@@ -796,6 +890,13 @@ PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
                                     rom_util_program_flash((uint32_t*)&slope_n, flash_addr+(prevInaGainIdx*16)+4, 4);
                                     rom_util_program_flash((uint32_t*)&slope_d, flash_addr+(prevInaGainIdx*16)+8, 4);
                                     rom_util_program_flash((uint32_t*)&offset, flash_addr+(prevInaGainIdx*16)+12, 4);
+                                    calData.type = CURRENT_FIT_TYPE;
+                                    calData.numerator = slope_n;
+                                    calData.denumerator = slope_d;
+                                    calData.offset = offset;
+                                    calData.gain_idx = prevInaGainIdx;
+                                    triumviFramCalibrateDataFitWrite(&calData);
+
                                     // power correction
                                     linearFit(read_power, current_setting, current_set_cnt, &slope_n, &slope_d, &offset);
                                     offset *= VOLTAGE_NOMINAL;
@@ -808,6 +909,12 @@ PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
                                     rom_util_program_flash((uint32_t*)&slope_n, flash_addr+(prevInaGainIdx*16)+4+(MAX_INA_GAIN_IDX+1)*16, 4);
                                     rom_util_program_flash((uint32_t*)&slope_d, flash_addr+(prevInaGainIdx*16)+8+(MAX_INA_GAIN_IDX+1)*16, 4);
                                     rom_util_program_flash((uint32_t*)&offset, flash_addr+(prevInaGainIdx*16)+12+(MAX_INA_GAIN_IDX+1)*16, 4);
+                                    calData.type = POWER_FIT_TYPE;
+                                    calData.numerator = slope_n;
+                                    calData.denumerator = slope_d;
+                                    calData.offset = offset;
+                                    calData.gain_idx = prevInaGainIdx;
+                                    triumviFramCalibrateDataFitWrite(&calData);
                                     current_set_cnt = 0;
                                 }
                                 etimer_set(&calibration_timer, CLOCK_SECOND*0.1);
@@ -819,9 +926,8 @@ PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
                             increase_current = 1;
                         }
                         if (increase_current){
-                            currentSetting += 250;
                             // calibration completed
-                            if (currentSetting > MAX_CURRENT_SETTING){
+                            if (currentSetting >= MAX_CURRENT_SETTING){
                                 currentSetting = 1000;
                                 amp_cal_completed = 1;
                                 if (batteryPackIsAttached()){
@@ -832,6 +938,9 @@ PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
                                     i2c_disable(I2C_SDA_GPIO_NUM, I2C_SDA_GPIO_PIN, I2C_SCL_GPIO_NUM, I2C_SCL_GPIO_PIN); 
                                 }
                                 triumviLEDON();
+                            }
+                            else{
+                                currentSetting += APS3B12_STEP_SIZE;
                             }
                             etimer_set(&calibration_timer, CLOCK_SECOND*1);
                             amplitude_calibration_state = STATE_AMP_STD_LOAD_SET;
@@ -928,7 +1037,7 @@ PROCESS_THREAD(triumviProcess, ev, data) {
 
     uint16_t triumviStatusReg;
 
-    float pf;
+    uint16_t pf;
     static uint16_t VRMS, IRMS;
     uint16_t inaGain;
 
@@ -1172,9 +1281,9 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                         if ((IRMS==0) || (avgPower==0))
                             pf = 0;
                         else
-                            pf = (float)avgPower/(VRMS*IRMS);
-                        if (pf > 1)
-                            pf = 1;
+                            pf = (uint16_t)((avgPower*1000)/(VRMS*IRMS));
+                        if (pf > 1000)
+                            pf = 1000;
                         #ifdef DATADUMP2
                         uint8_t i;
                         //printf("ADC reference: %u\r\n", dcOffset);
@@ -1443,7 +1552,8 @@ void meterInit(){
 	rTimerExpired = 0;
 	referenceInt = 0;
     allInitsAreReadyInt = 0;
-    inaGainIdx = 4; // G = 9
+    //inaGainIdx = 4; // G = 9
+    inaGainIdx = 2; // G = 9
 
 	backOffTime = 4;
 	backOffHistory = 0;
@@ -1541,7 +1651,7 @@ void encryptAndTransmit(triumvi_record_t* thisSample,
 	packData(&packetData[1], nonceCounter, 4);
 	packData(&myNonce[9], nonceCounter, 4);
 	packData(readingBuf, thisSample->avgPower, 4);
-    packData(&readingBuf[myPDATA_LEN], (uint16_t)(thisSample->pf*1000), 2);
+    packData(&readingBuf[myPDATA_LEN], thisSample->pf, 2);
     packData(&readingBuf[myPDATA_LEN+2], thisSample->VRMS, 2);
     packData(&readingBuf[myPDATA_LEN+4], thisSample->IRMS, 2);
     myPDATA_LEN += 6;

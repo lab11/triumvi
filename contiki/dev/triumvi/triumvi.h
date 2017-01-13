@@ -6,18 +6,27 @@
 #include "ioc.h"
 
 #if defined(FM25V02)
-#define FRAM_DATA_MAX_LOC_ADDR 32730
+#define FRAM_DATA_MAX_LOC_ADDR 32732
 int (*fram_write)(uint16_t, uint16_t, uint8_t*);
 int (*fram_read)(uint16_t, uint16_t, uint8_t*);
 #elif defined(FM25CL64B)
-#define FRAM_DATA_MAX_LOC_ADDR 4064
+#define FRAM_DATA_MAX_LOC_ADDR 8152
 int (*fram_write)(uint16_t, uint16_t, uint8_t*);
 int (*fram_read)(uint16_t, uint16_t, uint8_t*);
 #endif
-#define TRIUMVI_RECORD_SIZE 22  // size of each record, 6 bytes time, 15 bytes power, 1 byte reserved
-#define FRAM_DATA_MIN_LOC_ADDR 16
+void (*fram_erase_all)();
+#define TRIUMVI_RECORD_SIZE 20  // size of each record, 6 bytes time, 13 bytes power, 1 byte reserved
 #define FRAM_WRITE_PTR_LOC_ADDR 12	// Addr 12~13
 #define FRAM_READ_PTR_LOC_ADDR 14	// Addr 14~15
+#define FRAM_CALIBRATION_DATA_VALID_LOC_ADDR 16         // 1 byte, 7 bits idx, 1 bits valid
+#define FRAM_CALIBRATION_DATA_PHASE_OFFSET_LOC_ADDR 18  // 4 bytes
+#define FRAM_CALIBRATION_DATA_I_FIT_LOC_ADDR 22         // 4 bytes, 22 + 24*idx
+#define FRAM_CALIBRATION_DATA_P_FIT_LOC_ADDR 34         // 4 bytes, 34 + 24*idx
+
+#define CURRENT_FIT_TYPE 0x0
+#define POWER_FIT_TYPE 0x1
+
+#define FRAM_DATA_MIN_LOC_ADDR 192
 #define READ_PTR_TYPE 0x0
 #define WRITE_PTR_TYPE 0x1
 
@@ -30,12 +39,16 @@ int (*fram_read)(uint16_t, uint16_t, uint8_t*);
 #define BATTERY_PACK_LED_GREEN 0x04
 #define BATTERY_PACK_LED_BLUE 0x02
 
+#if defined(FM25V02) || defined(FM25CL64B)
+#define FRAM_ENABLE
+#endif
+
 typedef struct{
     int avgPower;
     uint8_t triumviStatusReg;
     uint8_t panelID;
     uint8_t circuitID;
-    float pf;
+    uint16_t pf;
     uint16_t VRMS;
     uint16_t IRMS;
 } triumvi_record_t;
@@ -51,9 +64,31 @@ typedef struct {
 	uint8_t seconds;
 } triumviData_t;
 
+typedef struct {
+    uint8_t type;
+    uint32_t numerator;
+    uint32_t denumerator;
+    int offset;
+    uint8_t gain_idx;
+} linearFitCalData_t;
+
+typedef struct {
+    uint16_t dc_Offset;
+    uint16_t phase_Offset;
+} phaseOffsetCalData_t;
+
+#ifdef FRAM_ENABLE
 int triumviFramWrite(triumvi_record_t* thisSample, rv3049_time_t* rtctime);
 int triumviFramRead(triumviData_t* record);
 void triumviFramPtrClear();
+// clear data valid flag
+void triumviFramCalibrateDataValidClear();
+uint8_t triumviFramCalibrateDataValidRead();
+void triumviFramCalibrateDataPhaseWrite(phaseOffsetCalData_t* calData);
+void triumviFramCalibrateDataPhaseRead(phaseOffsetCalData_t* calData);
+void triumviFramCalibrateDataFitWrite(linearFitCalData_t* calData);
+void triumviFramCalibrateDataFitRead(linearFitCalData_t* calData);
+#endif
 
 void triumviLEDinit();
 void triumviLEDON();

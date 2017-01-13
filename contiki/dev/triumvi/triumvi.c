@@ -12,14 +12,71 @@
 #include "ad5274.h"
 #include "ioc.h"
 
+// FRAM hold pin shares the same pin as analog switch in version 10
+// This imposes a problem that FRAM can only be accessed when the sensing
+// frontend is enabled and gain is not set to 1.
 
 #if defined(FM25V02)
 int (*fram_write)(uint16_t, uint16_t, uint8_t*) = &fm25v02_write;
 int (*fram_read)(uint16_t, uint16_t, uint8_t*) = &fm25v02_read;
+void (*fram_erase_all)() = &fm25v02_eraseAll;
 #elif defined(FM25CL64B)
 int (*fram_write)(uint16_t, uint16_t, uint8_t*) = &fm25cl64b_write;
 int (*fram_read)(uint16_t, uint16_t, uint8_t*) = &fm25cl64b_read;
+void (*fram_erase_all)() = &fm25cl64b_eraseAll;
 #endif
+
+#ifdef FRAM_ENABLE
+void triumviFramCalibrateDataValidClear(){
+    uint8_t writeBuf = 0x00;
+    (*fram_write)(FRAM_CALIBRATION_DATA_VALID_LOC_ADDR, 1, &writeBuf);
+}
+
+uint8_t triumviFramCalibrateDataValidRead(){
+    uint8_t readBuf;
+    (*fram_read)(FRAM_CALIBRATION_DATA_VALID_LOC_ADDR, 1, &readBuf);
+    return readBuf;
+}
+
+void triumviFramCalibrateDataPhaseWrite(phaseOffsetCalData_t* calData){
+    uint8_t writeBuf[4];
+    uint8_t valid = 0x01;
+    packData(&writeBuf[0], calData->dc_Offset, 2);
+    packData(&writeBuf[2], calData->phase_Offset, 2);
+    (*fram_write)(FRAM_CALIBRATION_DATA_PHASE_OFFSET_LOC_ADDR, 4, writeBuf);
+    (*fram_write)(FRAM_CALIBRATION_DATA_VALID_LOC_ADDR, 1, &valid);
+}
+
+void triumviFramCalibrateDataPhaseRead(phaseOffsetCalData_t* calData){
+    uint8_t readBuf[4];
+    (*fram_read)(FRAM_CALIBRATION_DATA_PHASE_OFFSET_LOC_ADDR, 4, readBuf);
+    calData->dc_Offset = (readBuf[1]<<8 | readBuf[0]);
+    calData->phase_Offset = (readBuf[3]<<8 | readBuf[2]);
+}
+
+void triumviFramCalibrateDataFitWrite(linearFitCalData_t* calData){
+    uint8_t writeBuf[12];
+    uint16_t addr = (calData->type==CURRENT_FIT_TYPE)? FRAM_CALIBRATION_DATA_I_FIT_LOC_ADDR : FRAM_CALIBRATION_DATA_P_FIT_LOC_ADDR; 
+    uint8_t valid;
+    valid = triumviFramCalibrateDataValidRead();
+    addr += calData->gain_idx*24;
+    packData(&writeBuf[0], calData->numerator, 4);
+    packData(&writeBuf[4], calData->denumerator, 4);
+    packData(&writeBuf[8], calData->offset, 4);
+    (*fram_write)(addr, 12, writeBuf);
+    valid |= 1<<((calData->gain_idx)+1);
+    (*fram_write)(FRAM_CALIBRATION_DATA_VALID_LOC_ADDR, 1, &valid);
+}
+
+void triumviFramCalibrateDataFitRead(linearFitCalData_t* calData){
+    uint8_t readBuf[12];
+    uint16_t addr = (calData->type==CURRENT_FIT_TYPE)? FRAM_CALIBRATION_DATA_I_FIT_LOC_ADDR : FRAM_CALIBRATION_DATA_P_FIT_LOC_ADDR; 
+    addr += calData->gain_idx*24;
+    (*fram_read)(addr, 12, readBuf);
+    calData->numerator = (readBuf[3]<<24 | readBuf[2]<<16 | readBuf[1]<<8 | readBuf[0]);
+    calData->denumerator = (readBuf[7]<<24 | readBuf[6]<<16 | readBuf[5]<<8 | readBuf[4]);
+    calData->offset = (readBuf[11]<<24 | readBuf[10]<<16 | readBuf[9]<<8 | readBuf[8]);
+}
 
 uint16_t getReadWritePtr(uint8_t ptrType){
     uint8_t readBuf[2];
@@ -84,17 +141,17 @@ int triumviFramWrite(triumvi_record_t* thisSample, rv3049_time_t* rtctime){
     writeBuf[4] = thisSample->triumviStatusReg;
     writeBuf[5] = thisSample->panelID;
     writeBuf[6] = thisSample->circuitID;
-    packData(&writeBuf[7], thisSample->pf, 4); 
-    packData(&writeBuf[11], thisSample->VRMS, 2); 
-    packData(&writeBuf[13], thisSample->IRMS, 2); 
-    writeBuf[15] = 0x00; // reserved byte, 0 for now
+    packData(&writeBuf[7], thisSample->pf, 2); 
+    packData(&writeBuf[9], thisSample->VRMS, 2); 
+    packData(&writeBuf[11], thisSample->IRMS, 2); 
+    writeBuf[13] = 0x00; // reserved byte, 0 for now
     // rv3049_time_t
-    writeBuf[16] = (rtctime->year - 2000);
-    writeBuf[17] = rtctime->month;
-    writeBuf[18] = rtctime->days;
-    writeBuf[19] = rtctime->hours;
-    writeBuf[20] = rtctime->minutes;
-    writeBuf[21] = rtctime->seconds;
+    writeBuf[14] = (rtctime->year - 2000);
+    writeBuf[15] = rtctime->month;
+    writeBuf[16] = rtctime->days;
+    writeBuf[17] = rtctime->hours;
+    writeBuf[18] = rtctime->minutes;
+    writeBuf[19] = rtctime->seconds;
 
     (*fram_write)(writePtr, TRIUMVI_RECORD_SIZE, writeBuf);
     updatePtr(WRITE_PTR_TYPE, writePtr);
@@ -124,17 +181,17 @@ int triumviFramRead(triumviData_t* record){
     record->sample.triumviStatusReg = readBuf[4];
     record->sample.panelID = readBuf[5];
     record->sample.circuitID = readBuf[6];
-    record->sample.pf = (readBuf[10]<<24 | readBuf[9]<<16 | readBuf[8]<<8 | readBuf[7]);
-    record->sample.VRMS = (readBuf[12]<<8 | readBuf[11]);
-    record->sample.IRMS = (readBuf[14]<<8 | readBuf[13]);
+    record->sample.pf = (readBuf[8]<<8 | readBuf[7]);
+    record->sample.VRMS = (readBuf[10]<<8 | readBuf[9]);
+    record->sample.IRMS = (readBuf[12]<<8 | readBuf[11]);
 
     // time stamp
-    record->year = readBuf[16] + 2000;
-    record->month = readBuf[17];
-    record->days = readBuf[18];
-    record->hours = readBuf[19];
-    record->minutes = readBuf[20];
-    record->seconds = readBuf[21];
+    record->year = readBuf[14] + 2000;
+    record->month = readBuf[15];
+    record->days = readBuf[16];
+    record->hours = readBuf[17];
+    record->minutes = readBuf[18];
+    record->seconds = readBuf[19];
 
     updatePtr(READ_PTR_TYPE, readPtr);
     #ifndef FM25CL64B
@@ -142,6 +199,7 @@ int triumviFramRead(triumviData_t* record){
     #endif
     return 0;
 }
+#endif
 
 inline void triumviLEDinit(){
 	GPIO_SET_OUTPUT(LED_RED_BASE, LED_RED_MASK);
@@ -303,7 +361,7 @@ void setINAGain(uint8_t gain){
             #ifdef VERSION9
             // shutdown --> Rg of INA 333 open
             ad5274_shutdown(0x1);
-            #else
+            #elif defined(VERSION10)
             // This pin is shared with mux enable 
             GPIO_CLR_PIN(GPIO_PORT_TO_BASE(FM25V02_HOLD_N_PORT_NUM), 
                         0x1<<FM25V02_HOLD_N_PIN);
