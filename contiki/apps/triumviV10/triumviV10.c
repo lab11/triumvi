@@ -45,9 +45,10 @@
 
 // Adjusted (DC removal) ADC sample thresholds
 #define UPPERTHRESHOLD0  400 // upper threshold for gain == 17
-#define UPPERTHRESHOLD1  500 // upper threshold for gain == 3, 5, 9
-#define UPPERTHRESHOLD2  500 // upper threshold for gain == 2
-#define LOWERTHRESHOLD  200  // lower threshold
+#define UPPERTHRESHOLD1  500 // upper threshold for gain == 9
+#define UPPERTHRESHOLD2  500 // upper threshold for gain == 5
+#define LOWERTHRESHOLD0  80 // lower threshold for gain == 1
+#define LOWERTHRESHOLD1  200 // lower threshold for others
 
 // number of samples per cycle
 #define BUF_SIZE 120        // sample current only, 11-bit resolution, 1 cycles
@@ -106,7 +107,7 @@ static rv3049_time_t rtcTime;
 //#define TEST
 
 //const uint8_t inaGainArr[6] = {1, 2, 3, 5, 9, 17};
-const uint8_t inaGainArr[4] = {1, 5, 9, 17};
+const uint8_t inaGainArr[MAX_INA_GAIN_IDX+1] = {1, 5, 9, 17};
 
 typedef enum {
     MODE_PHASE_CALIBRATION,
@@ -319,7 +320,7 @@ PROCESS_THREAD(framCheckProecss, ev, data) {
             ad5274_init();
             ad5274_ctrl_reg_write(AD5274_REG_RDAC_RP);
             triumviLEDOFF();
-            setINAGain(1);
+            setINAGain(2);
             i2c_disable(AD527X_SDA_GPIO_NUM, AD527X_SDA_GPIO_PIN, AD527X_SCL_GPIO_NUM, AD527X_SCL_GPIO_PIN); 
         }
     }
@@ -1552,8 +1553,7 @@ void meterInit(){
 	rTimerExpired = 0;
 	referenceInt = 0;
     allInitsAreReadyInt = 0;
-    //inaGainIdx = 4; // G = 9
-    inaGainIdx = 2; // G = 9
+    inaGainIdx = MAX_INA_GAIN_IDX-1; // G = 9
 
 	backOffTime = 4;
 	backOffHistory = 0;
@@ -1565,7 +1565,7 @@ gainSetting_t gainCtrl(uint16_t* adcSamples, uint8_t externalVolt){
     uint16_t i;
     uint16_t upperThreshold = (inaGainIdx==MAX_INA_GAIN_IDX)? UPPERTHRESHOLD0 : 
                               (inaGainIdx==1)? UPPERTHRESHOLD2 : UPPERTHRESHOLD1;
-    uint16_t lowerThreshold = LOWERTHRESHOLD;
+    uint16_t lowerThreshold = (inaGainIdx==MIN_INA_GAIN_IDX)? LOWERTHRESHOLD0 : LOWERTHRESHOLD1; 
     uint16_t length = BUF_SIZE;
     uint16_t currentRef;
     int currentCal;

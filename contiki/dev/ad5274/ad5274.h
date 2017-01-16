@@ -21,6 +21,7 @@
 
 #define AD5274_REG_TP_PROG_EN   0x01
 #define AD5274_REG_RDAC_RP      0x02
+#define AD5274_REG_RES_PORM_DIS 0x04
 
 void ad5274_init();
 
