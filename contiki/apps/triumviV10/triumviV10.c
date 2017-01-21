@@ -1058,6 +1058,7 @@ PROCESS_THREAD(triumviProcess, ev, data) {
     myState = STATE_READ_RTC_TIME;
     static uint8_t spi_buf;
     rtc_packet_received = 0;
+    static uint8_t rtcTimeCorrect;
     #else
     myState = STATE_INIT;
     #endif
@@ -1069,6 +1070,7 @@ PROCESS_THREAD(triumviProcess, ev, data) {
             case STATE_READ_RTC_TIME:
                 if (rTimerExpired==1){
                     rTimerExpired = 0;
+                    rtcTimeCorrect = 0;
                     rv3049_read_time(&rtcTime);
                     spi_buf = rv3049_read_register(RV3049_PAGE_ADDR_CONTROL, 0x03);
                     // PON Bit in control_status register. if this bit is set,
@@ -1091,9 +1093,12 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                         // if time is received from gateway, clear PON bit
                         if (rtc_packet_received==1){
                             rtc_packet_received = 0;
+                            rtcTimeCorrect = 1;
                             rv3049_write_register(RV3049_PAGE_ADDR_CONTROL, 0x03, 0x00);
                         }
 
+                    } else{
+                        rtcTimeCorrect = 1;
                     }
                     myState = STATE_INIT;
                     rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.5, 1, &rtimerEvent, NULL);
@@ -1169,7 +1174,9 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                     triumviStatusReg |= POWERFACTOR_STATUSREG;
 
                     #ifdef RTC_ENABLE
-                    triumviStatusReg |= TIMESTAMP_STATUSREG;
+                    if (rtcTimeCorrect==1){
+                        triumviStatusReg |= TIMESTAMP_STATUSREG;
+                    }
                     #endif
 
                     // Check if configuration board is attached
