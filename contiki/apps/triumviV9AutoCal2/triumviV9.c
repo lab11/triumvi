@@ -1084,7 +1084,7 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                     spi_buf = rv3049_read_register(RV3049_PAGE_ADDR_CONTROL, 0x03);
                     // PON Bit in control_status register. if this bit is set,
                     // Time is corrupted, ask gateway for correct time
-                    if (spi_buf & 0x20){
+                    if ((spi_buf & 0x20) || (rtcTime.year < 2017)){
                         packetbuf_copyfrom(rtc_pkt, 2);
                         cc2538_on_and_transmit();
 
