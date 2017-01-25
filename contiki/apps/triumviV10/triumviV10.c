@@ -75,7 +75,6 @@
 #define PHASE_VARIANCE_THRESHOLD 15
 
 // INA gain indices
-//#define MAX_INA_GAIN_IDX 5 
 #define MAX_INA_GAIN_IDX 3
 #define MIN_INA_GAIN_IDX 0
 
@@ -99,6 +98,14 @@
 #define TRIUMVI_RTC 0xac
 #define TRIUMVI_RTC_SET 0xff
 #define TRIUMVI_RTC_REQ 0xfe
+
+// 4 bytes reading, 1 byte status reg, 
+// [1 bytes panel ID, 1 bytes circuit ID]
+// 2 bytes PF, 2 bytes VRMS, 2 bytes IRMS 
+// [6 bytes time stamp (yy, mm, dd, hh, mm, ss)]
+// 5 + 2 + 6 + 6 = 19
+#define PACKET_PAYLOAD_SIZE 19
+
 static rv3049_time_t rtcTime;
 #endif
 
@@ -106,7 +113,6 @@ static rv3049_time_t rtcTime;
 
 //#define TEST
 
-//const uint8_t inaGainArr[6] = {1, 2, 3, 5, 9, 17};
 const uint8_t inaGainArr[MAX_INA_GAIN_IDX+1] = {1, 5, 9, 17};
 
 typedef enum {
@@ -1634,12 +1640,13 @@ gainSetting_t gainCtrl(uint16_t* adcSamples, uint8_t externalVolt){
 
 void encryptAndTransmit(triumvi_record_t* thisSample, 
                         uint8_t* myNonce, uint32_t nonceCounter){
-	// 1 byte Identifier, 4 bytes nonce, 5~19 bytes payload, 4 byte MIC
-	static uint8_t packetData[28];
-	// 4 bytes reading, 1 byte status reg, 
-    // (1 bytes panel ID, 1 bytes circuit ID, 2 bytes PF, 2 bytes VRMS, 2 bytes IRMS optional)
-    // (6 bytes time stamp (yy, mm, dd, hh, mm, ss) optional)
-	static uint8_t readingBuf[19];
+    // 1 byte Identifier, 
+    // 4 bytes nonce, 
+    // packet payload, 
+    // 4 byte MIC
+    // 9 bytes extra
+	static uint8_t packetData[PACKET_PAYLOAD_SIZE+9];
+	static uint8_t readingBuf[PACKET_PAYLOAD_SIZE];
 	uint8_t* aData = myNonce;
 	uint8_t* pData = readingBuf;
 	uint8_t myMic[8] = {0x0};
