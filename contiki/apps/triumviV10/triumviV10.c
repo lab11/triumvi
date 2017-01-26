@@ -106,6 +106,10 @@
 // 5 + 2 + 6 + 6 = 19
 #define PACKET_PAYLOAD_SIZE 19
 
+#define PACKET_WAVEFORM_OVERHEAD 9
+
+#define TRANSMIT_WAVEFORM
+
 static rv3049_time_t rtcTime;
 #endif
 
@@ -221,6 +225,11 @@ void encryptAndTransmit(triumvi_record_t* thisSample,
 
 int currentDataTransform(int currentReading, uint8_t externalVolt);
 int voltDataTransform(int voltReading, uint16_t voltReference);
+#ifdef TRANSMIT_WAVEFORM
+// Send entire waveform
+void waveformTransmit(uint8_t triumviStatusReg);
+#endif
+
 // controlling aps3b12
 void aps3b12_set_current(uint16_t cu);
 void aps3b12_enable(uint8_t en);
@@ -1441,6 +1450,7 @@ int cycleProduct(uint16_t* adcSamples, uint16_t offset, uint16_t currentRef){
 }
 
 // Fine tune to 3.002 degree / sample
+// Ideally, timerVal[1] - timerVal[0] = 266667
 void sampleCurrentWaveform(){
 	uint16_t sampleCnt = 0;
 	uint16_t temp;
@@ -1700,7 +1710,63 @@ void encryptAndTransmit(triumvi_record_t* thisSample,
     //REG(RFCORE_XREG_TXPOWER) = 0xb6;    // set TX power to 0 dBm
 	cc2538_on_and_transmit();
 	CC2538_RF_CSP_ISRFOFF();
+
+    #ifdef TRANSMIT_WAVEFORM
+    // transmit entire waveform
+    waveformTransmit(thisSample->triumviStatusReg);
+    #endif
 }
+
+#ifdef TRANSMIT_WAVEFORM
+void waveformTransmit(uint8_t triumviStatusReg){
+    static uint8_t packetData[PACKET_WAVEFORM_OVERHEAD+((BUF_SIZE*3)>>2)];
+    uint16_t random_packet_id = random_rand();
+    uint8_t half_cycle_size = (triumviStatusReg & EXTERNALVOLT_STATUSREG)? (BUF_SIZE2>>2)+1 : (BUF_SIZE>>1);
+    uint8_t i;
+    uint8_t offset;
+    packetData[0] = TRIUMVI_PKT_WAVE_IDENTIFIER0;
+    packetData[1] = TRIUMVI_PKT_WAVE_IDENTIFIER1;
+    packetData[2] = (random_packet_id & 0xff00)>>8;
+    packetData[3] = random_packet_id & 0xfe; // clear last bit
+    packetData[4] = (triumviStatusReg & EXTERNALVOLT_STATUSREG)? I_TRANSFORM<<1 : I_TRANSFORM;
+    packetData[5] = inaGainArr[inaGainIdx];
+    packetData[6] = (dcOffset & 0xff00)>>8;
+    packetData[7] = dcOffset&0xff;
+    packetData[8] = half_cycle_size;
+    offset = half_cycle_size;
+
+    for (i=0; i<(half_cycle_size>>1); i++){
+        packetData[PACKET_WAVEFORM_OVERHEAD+i*3]   = ((currentADCVal[i*2]&0x0ff0)>>4);
+        packetData[PACKET_WAVEFORM_OVERHEAD+i*3+1] = ((currentADCVal[i*2]&0x000f)<<4) + ((currentADCVal[i*2+1]&0x0f00)>>8);
+        packetData[PACKET_WAVEFORM_OVERHEAD+i*3+2] = currentADCVal[i*2+1]&0x00ff;
+    }
+    packetbuf_copyfrom(packetData, ((half_cycle_size*3)>>1)+PACKET_WAVEFORM_OVERHEAD);
+    cc2538_on_and_transmit();
+    CC2538_RF_CSP_ISRFOFF();
+
+    clock_delay_usec(random_packet_id);
+    clock_delay_usec(random_packet_id);
+
+    // BUF_SIZE2 = 228 (2 cycles, --> 114 / cycle
+    // transmit 114/2+1 in first packet, 114/2-1 in 2nd packet
+    if (triumviStatusReg & EXTERNALVOLT_STATUSREG){
+        packetData[8] = (BUF_SIZE2>>2)-1;
+        half_cycle_size = (BUF_SIZE2>>2)-1;
+    }
+
+    // 2nd packet
+    packetData[3] |= 0x01; // set last bit
+    for (i=0; i<(half_cycle_size>>1); i++){
+        packetData[PACKET_WAVEFORM_OVERHEAD+i*3]   = ((currentADCVal[offset+i*2]&0x0ff0)>>4);
+        packetData[PACKET_WAVEFORM_OVERHEAD+i*3+1] = ((currentADCVal[offset+i*2]&0x000f)<<4) + ((currentADCVal[offset+i*2+1]&0x0f00)>>8);
+        packetData[PACKET_WAVEFORM_OVERHEAD+i*3+2] = currentADCVal[offset+i*2+1]&0x00ff;
+    }
+    packetbuf_copyfrom(packetData, ((half_cycle_size*3)>>1)+PACKET_WAVEFORM_OVERHEAD);
+    cc2538_on_and_transmit();
+    CC2538_RF_CSP_ISRFOFF();
+
+}
+#endif
 
 int sampleAndCalculate(uint16_t triumviStatusReg){
     int tempPower;
