@@ -77,8 +77,8 @@ rv3049_read_time(rv3049_time_t* time)
   SPI_FLUSH();
 
   // Read a null byte here. Not exactly sure why.
-  // Triumvi v8 doesn't need this, but v10 need this
-  #if defined(VERSION9) || defined(VERSION10)
+  // only VERSION8 doesn't need this
+  #ifndef VERSION8
   SPI_READ(buf[0]);
   #endif
 

@@ -222,7 +222,7 @@ inline void triumviLEDToggle(){
 		GPIO_SET_PIN(LED_RED_BASE, LED_RED_MASK);
 }
 
-#if defined(VERSION9) || defined(VERSION10)
+#ifndef VERSION8
 void meterSenseVREn(uint8_t en){
     // enable voltage regulator
     if (en==SENSE_ENABLE)
@@ -355,7 +355,7 @@ void setINAGain(uint8_t gain){
 		default:
 		break;
 	}
-    #else
+    #elif defined(VERSION10)
     switch (gain){
         case 1:
             #ifdef VERSION9
@@ -388,6 +388,42 @@ void setINAGain(uint8_t gain){
             ad5274_rdac_write(64);
         break;
 
+        default:
+        break;
+    }
+    #elif defined(VERSION11)
+    switch (gain){
+        case 1: // disable switch, and set to s1
+            // This pin is shared with mux enable 
+            GPIO_CLR_PIN(GPIO_PORT_TO_BASE(FM25V02_HOLD_N_PORT_NUM), 
+                        0x1<<FM25V02_HOLD_N_PIN);
+            GPIO_CLR_PIN(ADG604_GPIO_BASE, 0x1<<ADG604_A0_PIN);
+            GPIO_CLR_PIN(ADG604_GPIO_BASE, 0x1<<ADG604_A1_PIN);
+        break;
+        case 3: // Select S1
+            GPIO_SET_PIN(GPIO_PORT_TO_BASE(FM25V02_HOLD_N_PORT_NUM), 
+                        0x1<<FM25V02_HOLD_N_PIN);
+            GPIO_CLR_PIN(ADG604_GPIO_BASE, 0x1<<ADG604_A0_PIN);
+            GPIO_CLR_PIN(ADG604_GPIO_BASE, 0x1<<ADG604_A1_PIN);
+        break;
+        case 5: // Select S2
+            GPIO_SET_PIN(GPIO_PORT_TO_BASE(FM25V02_HOLD_N_PORT_NUM), 
+                        0x1<<FM25V02_HOLD_N_PIN);
+            GPIO_SET_PIN(ADG604_GPIO_BASE, 0x1<<ADG604_A0_PIN);
+            GPIO_CLR_PIN(ADG604_GPIO_BASE, 0x1<<ADG604_A1_PIN);
+        break;
+        case 9: // Select S3
+            GPIO_SET_PIN(GPIO_PORT_TO_BASE(FM25V02_HOLD_N_PORT_NUM), 
+                        0x1<<FM25V02_HOLD_N_PIN);
+            GPIO_CLR_PIN(ADG604_GPIO_BASE, 0x1<<ADG604_A0_PIN);
+            GPIO_SET_PIN(ADG604_GPIO_BASE, 0x1<<ADG604_A1_PIN);
+        break;
+        case 17: // Select S4
+            GPIO_SET_PIN(GPIO_PORT_TO_BASE(FM25V02_HOLD_N_PORT_NUM), 
+                        0x1<<FM25V02_HOLD_N_PIN);
+            GPIO_SET_PIN(ADG604_GPIO_BASE, 0x1<<ADG604_A0_PIN);
+            GPIO_SET_PIN(ADG604_GPIO_BASE, 0x1<<ADG604_A1_PIN);
+        break;
         default:
         break;
     }
@@ -429,7 +465,7 @@ inline uint8_t isButtonPressed(){
 		return 1;
 }
 
-#if defined(VERSION9) || defined(VERSION10)
+#ifndef VERSION8
 void batteryPackVoltageEn(uint8_t en){
     if (en==SENSE_ENABLE)
         GPIO_SET_PIN(CONFIG_PWR_SW_GPIO_BASE , 0x1<<CONFIG_PWR_SW_GPIO_PIN);

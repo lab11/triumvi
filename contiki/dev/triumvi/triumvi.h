@@ -95,7 +95,7 @@ void triumviLEDON();
 void triumviLEDOFF();
 void triumviLEDToggle();
 
-#if defined(VERSION9) || defined(VERSION10)
+#ifndef VERSION8 
 // Enable/Disable LDO on Sensing board
 void meterSenseVREn(uint8_t en);
 
@@ -138,7 +138,7 @@ uint8_t externalVoltSel();
 uint8_t isButtonPressed();
 
 // Battery Pack functions
-#if defined(VERSION9) || defined(VERSION10)
+#ifndef VERSION8
 void batteryPackVoltageEn(uint8_t en);
 #endif
 uint8_t batteryPackIsAttached();
