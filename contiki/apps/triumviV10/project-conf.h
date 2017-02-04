@@ -26,15 +26,18 @@
 #endif
 
 //#define FIFTYHZ
-#define AMPLITUDE_CALIBRATION_EN
 #define POLYFIT
 
+//#define TRANSMIT_WAVEFORM
 
 #define TRIUMVI_PKT_IDENTIFIER 0xa0
 #define LEN_LEN 2 // LVal
 #define MIC_LEN 4 // MVal
 #define ADATA_LEN 0x08
 #define PDATA_LEN 0x05
+
+#define TRIUMVI_PKT_WAVE_IDENTIFIER0 0xa1
+#define TRIUMVI_PKT_WAVE_IDENTIFIER1 0x5e
 
 #define VERSION10
 #define FM25CL64B

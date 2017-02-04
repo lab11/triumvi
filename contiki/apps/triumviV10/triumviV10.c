@@ -99,6 +99,9 @@
 #define TRIUMVI_RTC_SET 0xff
 #define TRIUMVI_RTC_REQ 0xfe
 
+static rv3049_time_t rtcTime;
+#endif
+
 // 4 bytes reading, 1 byte status reg, 
 // [1 bytes panel ID, 1 bytes circuit ID]
 // 2 bytes PF, 2 bytes VRMS, 2 bytes IRMS 
@@ -108,12 +111,6 @@
 
 #define PACKET_WAVEFORM_OVERHEAD 9
 
-#define TRANSMIT_WAVEFORM
-
-static rv3049_time_t rtcTime;
-#endif
-
-#include "calibration_coef.h"
 
 //#define TEST
 
@@ -128,7 +125,8 @@ typedef enum {
 typedef enum {
     GAIN_TOO_LOW,
     GAIN_OK,
-    GAIN_TOO_HIGH
+    GAIN_TOO_HIGH,
+    GAIN_ERROR
 } gainSetting_t;
 
 typedef enum {
@@ -234,16 +232,12 @@ void waveformTransmit(uint8_t triumviStatusReg);
 void aps3b12_set_current(uint16_t cu);
 void aps3b12_enable(uint8_t en);
 
-#ifdef AMPLITUDE_CALIBRATION_EN
 void aps3b12_read_current();
 // find coefficient for 1st order linear regression
 void linearFit(uint16_t* reading, uint16_t* setting, uint8_t length, 
                 uint32_t* slope_n, uint32_t* slope_d, int* offset);
-#endif
 
-#if defined(AMPLITUDE_CALIBRATION_EN) || defined(RTC_ENABLE)
 void rf_rx_handler();
-#endif
 
 // functions do not use in data dump mode
 static void disable_all_ioc_override();
@@ -263,10 +257,8 @@ static void unitReadyCallBack(uint8_t port, uint8_t pin);
 PROCESS(startupProcess, "Startup");
 PROCESS(framCheckProecss, "COPY Data from FRAM");
 PROCESS(phaseCalibrationProcess, "Phase Calibration");
-#ifdef AMPLITUDE_CALIBRATION_EN
 PROCESS(amplitudeCalibrationProcess, "Amplitude Calibration");
 PROCESS(rf_received_process, "rf receive");
-#endif
 PROCESS(triumviProcess, "Triumvi");
 AUTOSTART_PROCESSES(&startupProcess);
 /*---------------------------------------------------------------------------*/
@@ -363,7 +355,7 @@ PROCESS_THREAD(framCheckProecss, ev, data) {
                     phaseOffset = phaseData.phase_Offset;
                     dcOffset = phaseData.dc_Offset;
                     // write current, power linear fit data
-                    for (i=0; i<7; i++){
+                    for (i=0; i<MAX_INA_GAIN_IDX+1; i++){
                         if (calDataValid & (0x01<<(i+1))){
                             // read current fit data
                             linearFitCalibrationData.type = CURRENT_FIT_TYPE;
@@ -610,8 +602,17 @@ PROCESS_THREAD(phaseCalibrationProcess, ev, data) {
                             meterSenseConfig(VOLTAGE, SENSE_DISABLE);
                             meterSenseConfig(CURRENT, SENSE_DISABLE);
                         }
-                    }
-                    else{
+                    // The load is off or something is wrong
+                    } else if (gainSetting == GAIN_ERROR){
+                        if (batteryPackIsAttached()){
+                            batteryPackVoltageEn(SENSE_ENABLE);
+                            batteryPackInit();
+                            batteryPackLEDDriverInit();
+                            batteryPackLEDOn(BATTERY_PACK_LED_RED);
+                            i2c_disable(I2C_SDA_GPIO_NUM, I2C_SDA_GPIO_PIN, I2C_SCL_GPIO_NUM, I2C_SCL_GPIO_PIN); 
+                        }
+                        while(1){}
+                    } else{
                         triumviLEDOFF();
                         etimer_set(&calibration_timer, CLOCK_SECOND*1);
                     }
@@ -637,17 +638,8 @@ PROCESS_THREAD(phaseCalibrationProcess, ev, data) {
 
             case STATE_CALIBRATION_COMPLETED:
                 if (etimer_expired(&calibration_timer)){
-                    #ifdef AMPLITUDE_CALIBRATION_EN
                     process_start(&amplitudeCalibrationProcess, NULL);
                     operation_mode = MODE_AMPLITUDE_CALIBRATION;
-                    #else
-                    GPIO_SET_OUTPUT(GPIO_A_BASE, 0x47);
-                    GPIO_CLR_PIN(GPIO_A_BASE, 0x47);
-                    process_start(&triumviProcess, NULL);
-                    operation_mode = MODE_NORMAL;
-                    // enable 80k trickle charge resistor
-                    rv3049_write_register(RV3049_PAGE_ADDR_EEPROM_CTRL, 0x00, 0x82);
-                    #endif
                     triumviLEDOFF();
                     if (batteryPackIsAttached()){
                         batteryPackLEDOff(BATTERY_PACK_LED_GREEN);
@@ -668,7 +660,6 @@ PROCESS_THREAD(phaseCalibrationProcess, ev, data) {
 
 }
 
-#ifdef AMPLITUDE_CALIBRATION_EN
 PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
     PROCESS_BEGIN();
 
@@ -984,9 +975,7 @@ PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
     PROCESS_END();
 
 }
-#endif
 
-#if defined(AMPLITUDE_CALIBRATION_EN) || defined(RTC_ENABLE)
 PROCESS_THREAD(rf_received_process, ev, data) {
     PROCESS_BEGIN();
 
@@ -1030,7 +1019,6 @@ PROCESS_THREAD(rf_received_process, ev, data) {
     }
     PROCESS_END();
 }
-#endif
 
 PROCESS_THREAD(triumviProcess, ev, data) {
     PROCESS_BEGIN();
@@ -1077,6 +1065,7 @@ PROCESS_THREAD(triumviProcess, ev, data) {
     #else
     myState = STATE_INIT;
     #endif
+    uint8_t i;
 
     while(1){
         PROCESS_YIELD();
@@ -1235,70 +1224,30 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                         sampleCount++;
                         inaGain = inaGainArr[inaGainIdx];
                         #ifdef POLYFIT
-                        numerator   = REG(flash_addr+(inaGainIdx*16)+4+(MAX_INA_GAIN_IDX+1)*16);
-                        denumerator = REG(flash_addr+(inaGainIdx*16)+8+(MAX_INA_GAIN_IDX+1)*16);
-                        offset      = REG(flash_addr+(inaGainIdx*16)+12+(MAX_INA_GAIN_IDX+1)*16);
-                        if (offset != 0xffffffff){
-                            if (avgPower > 50){
-                                avgPower = (int)(((int64_t)avgPower)*numerator/denumerator + offset);
-                            }
-                        }
-                        else{
-                            switch (inaGain){
-                                case 2:
-                                    avgPower = (int)((float)avgPower*PGAIN2_D1 + PGAIN2_D0);
-                                break;
-                                case 3:
-                                    avgPower = (int)((float)avgPower*PGAIN3_D1 + PGAIN3_D0);
-                                break;
-                                case 5:
-                                    avgPower = (int)((float)avgPower*PGAIN5_D1 + PGAIN5_D0);
-                                break;
-                                case 9:
-                                    avgPower = (int)((float)avgPower*PGAIN9_D1 + PGAIN9_D0);
-                                break;
-                                case 17:
-                                    if (avgPower>50)
-                                        avgPower = (int)((float)avgPower*PGAIN17_D1 + PGAIN17_D0);
-                                break;
-                                default:
-                                break;
-                            }
+                        // use the calibration coefficient stored in Flash, if the INA gain index is not calibrated, use the nearby coef
+                        i = inaGainIdx;
+                        do {
+                            numerator   = REG(flash_addr+(i*16)+4+(MAX_INA_GAIN_IDX+1)*16);
+                            denumerator = REG(flash_addr+(i*16)+8+(MAX_INA_GAIN_IDX+1)*16);
+                            offset      = REG(flash_addr+(i*16)+12+(MAX_INA_GAIN_IDX+1)*16);
+                            i += 1;
+                        } while (offset == 0xffffffff);
+                        if (avgPower > 50){
+                            avgPower = (int)(((int64_t)avgPower)*numerator/denumerator + offset);
                         }
                         #endif
                         IRMS = currentRMS(triumviStatusReg);
                         VRMS = voltageRMS(triumviStatusReg);
                         #ifdef POLYFIT
-                        numerator   = REG(flash_addr+(inaGainIdx*16)+4);
-                        denumerator = REG(flash_addr+(inaGainIdx*16)+8);
-                        offset      = REG(flash_addr+(inaGainIdx*16)+12);
-                        if (offset != 0xffffffff){
-                            if (IRMS > 0.4){
-                                IRMS = (uint16_t)((((uint64_t)IRMS)*numerator/denumerator) + offset);
-                            }
-                        }
-                        // use default calibration coef
-                        else{
-                            switch (inaGain){
-                                case 2:
-                                    IRMS = (int)((float)IRMS*IGAIN2_D1 + IGAIN2_D0);
-                                break;
-                                case 3:
-                                    IRMS = (int)((float)IRMS*IGAIN3_D1 + IGAIN3_D0);
-                                break;
-                                case 5:
-                                    IRMS = (int)((float)IRMS*IGAIN5_D1 + IGAIN5_D0);
-                                break;
-                                case 9:
-                                    IRMS = (int)((float)IRMS*IGAIN9_D1 + IGAIN9_D0);
-                                break;
-                                case 17:
-                                    if (IRMS>0.4)
-                                        IRMS = (int)((float)IRMS*IGAIN17_D1 + IGAIN17_D0);
-                                break;
-                                default:
-                                break;
-                            }
+                        i = inaGainIdx;
+                        do {
+                            numerator   = REG(flash_addr+(i*16)+4);
+                            denumerator = REG(flash_addr+(i*16)+8);
+                            offset      = REG(flash_addr+(i*16)+12);
+                            i += 1;
+                        } while (offset == 0xffffffff);
+                        if (IRMS > 0.4){
+                            IRMS = (uint16_t)((((uint64_t)IRMS)*numerator/denumerator) + offset);
                         }
                         #endif
                         if ((IRMS==0) || (avgPower==0))
@@ -1643,6 +1592,8 @@ gainSetting_t gainCtrl(uint16_t* adcSamples, uint8_t externalVolt){
             GPIO_SET_PIN(GPIO_PORT_TO_BASE(FM25V02_HOLD_N_PORT_NUM), 0x1<<FM25V02_HOLD_N_PIN);
         inaGainIdx += 1;
         setINAGain(inaGainArr[inaGainIdx]);
+    } else if ((operation_mode==MODE_PHASE_CALIBRATION) && (maxVal < lowerThreshold) && (inaGainIdx==MAX_INA_GAIN_IDX)){
+        res = GAIN_ERROR;
     }
 
     return res;
@@ -1963,14 +1914,11 @@ void aps3b12_enable(uint8_t en){
     CC2538_RF_CSP_ISRFOFF();
 }
 
-#if defined(AMPLITUDE_CALIBRATION_EN) || defined(RTC_ENABLE)
 void rf_rx_handler(){
     process_poll(&rf_received_process);
     rfReceivedInt = 1;
 }   
-#endif
 
-#ifdef AMPLITUDE_CALIBRATION_EN
 void aps3b12_read_current(){
     uint8_t pkt[4] = {APS3B12_PACKET_ID, APS3B12_READ, APS3B12_READ_CURRENT, 0x0};
     packetbuf_copyfrom(pkt, 4);
@@ -1992,4 +1940,3 @@ void linearFit(uint16_t* reading, uint16_t* setting, uint8_t length,
     *slope_d = tmp1;
     *offset = settingAvg - (((uint64_t)readingAvg)*tmp0/tmp1);
 }
-#endif
