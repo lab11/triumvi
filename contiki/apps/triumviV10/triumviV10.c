@@ -421,6 +421,7 @@ PROCESS_THREAD(phaseCalibrationProcess, ev, data) {
     rfReceivedInt = 0;
     aps_trials = 0;
     static phaseOffsetCalData_t phaseData;
+    static uint8_t firstGainError = 0;
 
     triumviLEDON();
     etimer_set(&calibration_timer, CLOCK_SECOND*10);
@@ -604,14 +605,21 @@ PROCESS_THREAD(phaseCalibrationProcess, ev, data) {
                         }
                     // The load is off or something is wrong
                     } else if (gainSetting == GAIN_ERROR){
-                        if (batteryPackIsAttached()){
-                            batteryPackVoltageEn(SENSE_ENABLE);
-                            batteryPackInit();
-                            batteryPackLEDDriverInit();
-                            batteryPackLEDOn(BATTERY_PACK_LED_RED);
-                            i2c_disable(I2C_SDA_GPIO_NUM, I2C_SDA_GPIO_PIN, I2C_SCL_GPIO_NUM, I2C_SCL_GPIO_PIN); 
+                        if (firstGainError==1){
+                            if (batteryPackIsAttached()){
+                                batteryPackVoltageEn(SENSE_ENABLE);
+                                batteryPackInit();
+                                batteryPackLEDDriverInit();
+                                batteryPackLEDOn(BATTERY_PACK_LED_RED);
+                                i2c_disable(I2C_SDA_GPIO_NUM, I2C_SDA_GPIO_PIN, I2C_SCL_GPIO_NUM, I2C_SCL_GPIO_PIN); 
+                            }
+                            while(1){}
+                        } else{
+                            firstGainError = 1;
+                            setINAGain(inaGainArr[MAX_INA_GAIN_IDX-1]);
+                            triumviLEDOFF();
+                            etimer_set(&calibration_timer, CLOCK_SECOND*1);
                         }
-                        while(1){}
                     } else{
                         triumviLEDOFF();
                         etimer_set(&calibration_timer, CLOCK_SECOND*1);
