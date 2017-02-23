@@ -78,6 +78,18 @@ void triumviFramCalibrateDataFitRead(linearFitCalData_t* calData){
     calData->offset = (readBuf[11]<<24 | readBuf[10]<<16 | readBuf[9]<<8 | readBuf[8]);
 }
 
+void triumviFramCounterWrite(uint32_t counterVal){
+    uint8_t writeBuf[4];
+    packData(writeBuf, counterVal, 4);
+    (*fram_write)(FRAM_DATA_MIN_LOC_ADDR-4, 4, writeBuf);
+}
+
+uint32_t triumviFramCounterRead(){
+    uint8_t readBuf[4];
+    (*fram_read)(FRAM_DATA_MIN_LOC_ADDR-4, 4, readBuf);
+    return (readBuf[3]<<24 | readBuf[2]<<16 | readBuf[1]<<8 | readBuf[0]);
+}
+
 uint16_t getReadWritePtr(uint8_t ptrType){
     uint8_t readBuf[2];
     uint16_t destAddr = (ptrType==READ_PTR_TYPE)? FRAM_READ_PTR_LOC_ADDR : FRAM_WRITE_PTR_LOC_ADDR; 
@@ -687,6 +699,10 @@ uint16_t getVariance(uint16_t* data, uint16_t length){
     return variance;
 }
 
+// dest[0] = src&0xff
+// dest[1] = (src&0xff00)>>8
+// dest[2] = (src&0xff0000)>>16
+// dest[3] = (src&0xff000000)>>24
 void packData(uint8_t* dest, int src, uint8_t len){
     uint8_t i;
     for (i=0; i<len; i++){

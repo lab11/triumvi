@@ -88,6 +88,8 @@ void triumviFramCalibrateDataPhaseWrite(phaseOffsetCalData_t* calData);
 void triumviFramCalibrateDataPhaseRead(phaseOffsetCalData_t* calData);
 void triumviFramCalibrateDataFitWrite(linearFitCalData_t* calData);
 void triumviFramCalibrateDataFitRead(linearFitCalData_t* calData);
+void triumviFramCounterWrite(uint32_t counterVal);
+uint32_t triumviFramCounterRead();
 #endif
 
 void triumviLEDinit();
