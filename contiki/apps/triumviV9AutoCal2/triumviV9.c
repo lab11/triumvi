@@ -100,6 +100,14 @@
 #define TRIUMVI_RTC 0xac
 #define TRIUMVI_RTC_SET 0xff
 #define TRIUMVI_RTC_REQ 0xfe
+
+// 4 bytes reading, 1 byte status reg, 
+// [1 bytes panel ID, 1 bytes circuit ID]
+// 2 bytes PF, 2 bytes VRMS, 2 bytes IRMS 
+// [6 bytes time stamp (yy, mm, dd, hh, mm, ss)]
+// 5 + 2 + 6 + 6 = 19
+#define PACKET_PAYLOAD_SIZE 19
+
 static rv3049_time_t rtcTime;
 #endif
 
@@ -1646,12 +1654,13 @@ gainSetting_t gainCtrl(uint16_t* adcSamples, uint8_t externalVolt){
 
 void encryptAndTransmit(triumvi_record_t* thisSample, 
                         uint8_t* myNonce, uint32_t nonceCounter){
-	// 1 byte Identifier, 4 bytes nonce, 5~19 bytes payload, 4 byte MIC
-	static uint8_t packetData[28];
-	// 4 bytes reading, 1 byte status reg, 
-    // (1 bytes panel ID, 1 bytes circuit ID, 2 bytes PF, 2 bytes VRMS, 2 bytes IRMS optional)
-    // (6 bytes time stamp (yy, mm, dd, hh, mm, ss) optional)
-	static uint8_t readingBuf[19];
+    // 1 byte Identifier, 
+    // 4 bytes nonce, 
+    // packet payload, 
+    // 4 byte MIC
+    // 9 bytes extra
+	static uint8_t packetData[PACKET_PAYLOAD_SIZE+9];
+	static uint8_t readingBuf[PACKET_PAYLOAD_SIZE];
 	uint8_t* aData = myNonce;
 	uint8_t* pData = readingBuf;
 	uint8_t myMic[8] = {0x0};

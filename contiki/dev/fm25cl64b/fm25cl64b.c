@@ -20,6 +20,7 @@
 void
 fm25cl64b_init()
 {
+  #if defined(VERSION9) || defined(VERSION10) || defined(VERSION11)
   /* Set the HOLD_N and WP_N pins to outputs and high */
   GPIO_SET_OUTPUT(GPIO_PORT_TO_BASE(FM25CL64B_HOLD_N_PORT_NUM),
                   GPIO_PIN_MASK(FM25CL64B_HOLD_N_PIN));
@@ -33,6 +34,7 @@ fm25cl64b_init()
                GPIO_PIN_MASK(FM25CL64B_HOLD_N_PIN));
   GPIO_SET_PIN(GPIO_PORT_TO_BASE(FM25CL64B_WP_N_PORT_NUM),
                GPIO_PIN_MASK(FM25CL64B_WP_N_PIN));
+  #endif
 
   spi_cs_init(FM25CL64B_CS_N_PORT_NUM, FM25CL64B_CS_N_PIN);
   SPI_CS_SET(FM25CL64B_CS_N_PORT_NUM, FM25CL64B_CS_N_PIN);

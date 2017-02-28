@@ -289,13 +289,21 @@ void meterSenseConfig(uint8_t type, uint8_t en){
 	else{
 		if (en==SENSE_ENABLE){
 			GPIO_SET_PIN(I_MEAS_EN_GPIO_BASE, 0x1<<I_MEAS_EN_GPIO_PIN);
+            #if defined(VERSION10) || defined(VERSION11)
             GPIO_SET_PIN(GPIO_PORT_TO_BASE(FM25V02_HOLD_N_PORT_NUM), 
                         0x1<<FM25V02_HOLD_N_PIN);
+            #elif defined(VERSION12)
+            GPIO_SET_PIN(ADG604_EN_GPIO_BASE, 0x1<<ADG604_EN_PIN);
+            #endif
         }
 		else{
 			GPIO_CLR_PIN(I_MEAS_EN_GPIO_BASE, 0x1<<I_MEAS_EN_GPIO_PIN);
+            #if defined(VERSION10) || defined(VERSION11)
             GPIO_CLR_PIN(GPIO_PORT_TO_BASE(FM25V02_HOLD_N_PORT_NUM), 
                         0x1<<FM25V02_HOLD_N_PIN);
+            #elif defined(VERSION12)
+            GPIO_CLR_PIN(ADG604_EN_GPIO_BASE, 0x1<<ADG604_EN_PIN);
+            #endif
         }
 	}
 }
@@ -367,17 +375,42 @@ void setINAGain(uint8_t gain){
 		default:
 		break;
 	}
+    #elif defined(VERSION9)
+    switch (gain){
+        case 1:
+            // shutdown --> Rg of INA 333 open
+            ad5274_shutdown(0x1);
+        break;
+
+        case 2:
+            ad5274_rdac_write(1023);
+        break;
+
+        case 3:
+            ad5274_rdac_write(512);
+        break;
+        
+        case 5:
+            ad5274_rdac_write(256);
+        break;
+
+        case 9:
+            ad5274_rdac_write(128);
+        break;
+
+        case 17:
+            ad5274_rdac_write(64);
+        break;
+
+        default:
+        break;
+    }
     #elif defined(VERSION10)
     switch (gain){
         case 1:
-            #ifdef VERSION9
-            // shutdown --> Rg of INA 333 open
-            ad5274_shutdown(0x1);
-            #elif defined(VERSION10)
             // This pin is shared with mux enable 
             GPIO_CLR_PIN(GPIO_PORT_TO_BASE(FM25V02_HOLD_N_PORT_NUM), 
                         0x1<<FM25V02_HOLD_N_PIN);
-            #endif
         break;
 
         case 2:
@@ -433,6 +466,31 @@ void setINAGain(uint8_t gain){
         case 17: // Select S4
             GPIO_SET_PIN(GPIO_PORT_TO_BASE(FM25V02_HOLD_N_PORT_NUM), 
                         0x1<<FM25V02_HOLD_N_PIN);
+            GPIO_SET_PIN(ADG604_GPIO_BASE, 0x1<<ADG604_A0_PIN);
+            GPIO_SET_PIN(ADG604_GPIO_BASE, 0x1<<ADG604_A1_PIN);
+        break;
+        default:
+        break;
+    }
+    #elif defined(VERSION12)
+    switch (gain){
+        case 1: // disable switch, and set to s1
+            GPIO_CLR_PIN(ADG604_GPIO_BASE, 0x1<<ADG604_A0_PIN);
+            GPIO_CLR_PIN(ADG604_GPIO_BASE, 0x1<<ADG604_A1_PIN);
+        break;
+        case 3: // Select S1
+            GPIO_CLR_PIN(ADG604_GPIO_BASE, 0x1<<ADG604_A0_PIN);
+            GPIO_CLR_PIN(ADG604_GPIO_BASE, 0x1<<ADG604_A1_PIN);
+        break;
+        case 5: // Select S2
+            GPIO_SET_PIN(ADG604_GPIO_BASE, 0x1<<ADG604_A0_PIN);
+            GPIO_CLR_PIN(ADG604_GPIO_BASE, 0x1<<ADG604_A1_PIN);
+        break;
+        case 9: // Select S3
+            GPIO_CLR_PIN(ADG604_GPIO_BASE, 0x1<<ADG604_A0_PIN);
+            GPIO_SET_PIN(ADG604_GPIO_BASE, 0x1<<ADG604_A1_PIN);
+        break;
+        case 17: // Select S4
             GPIO_SET_PIN(ADG604_GPIO_BASE, 0x1<<ADG604_A0_PIN);
             GPIO_SET_PIN(ADG604_GPIO_BASE, 0x1<<ADG604_A1_PIN);
         break;
