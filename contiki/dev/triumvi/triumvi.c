@@ -297,12 +297,9 @@ void meterSenseConfig(uint8_t type, uint8_t en){
             #endif
         }
 		else{
-			GPIO_CLR_PIN(I_MEAS_EN_GPIO_BASE, 0x1<<I_MEAS_EN_GPIO_PIN);
-            #if defined(VERSION10) || defined(VERSION11)
-            GPIO_CLR_PIN(GPIO_PORT_TO_BASE(FM25V02_HOLD_N_PORT_NUM), 
-                        0x1<<FM25V02_HOLD_N_PIN);
-            #elif defined(VERSION12)
-            GPIO_CLR_PIN(ADG604_EN_GPIO_BASE, 0x1<<ADG604_EN_PIN);
+            GPIO_CLR_PIN(I_MEAS_EN_GPIO_BASE, 0x1<<I_MEAS_EN_GPIO_PIN);
+            #if defined(VERSION10) || defined(VERSION11) || defined(VERSION12)
+            setINAGain(1);
             #endif
         }
 	}
@@ -475,22 +472,27 @@ void setINAGain(uint8_t gain){
     #elif defined(VERSION12)
     switch (gain){
         case 1: // disable switch, and set to s1
+            GPIO_CLR_PIN(ADG604_EN_GPIO_BASE, 0x1<<ADG604_EN_PIN);
             GPIO_CLR_PIN(ADG604_GPIO_BASE, 0x1<<ADG604_A0_PIN);
             GPIO_CLR_PIN(ADG604_GPIO_BASE, 0x1<<ADG604_A1_PIN);
         break;
         case 3: // Select S1
+            GPIO_SET_PIN(ADG604_EN_GPIO_BASE, 0x1<<ADG604_EN_PIN);
             GPIO_CLR_PIN(ADG604_GPIO_BASE, 0x1<<ADG604_A0_PIN);
             GPIO_CLR_PIN(ADG604_GPIO_BASE, 0x1<<ADG604_A1_PIN);
         break;
         case 5: // Select S2
+            GPIO_SET_PIN(ADG604_EN_GPIO_BASE, 0x1<<ADG604_EN_PIN);
             GPIO_SET_PIN(ADG604_GPIO_BASE, 0x1<<ADG604_A0_PIN);
             GPIO_CLR_PIN(ADG604_GPIO_BASE, 0x1<<ADG604_A1_PIN);
         break;
         case 9: // Select S3
+            GPIO_SET_PIN(ADG604_EN_GPIO_BASE, 0x1<<ADG604_EN_PIN);
             GPIO_CLR_PIN(ADG604_GPIO_BASE, 0x1<<ADG604_A0_PIN);
             GPIO_SET_PIN(ADG604_GPIO_BASE, 0x1<<ADG604_A1_PIN);
         break;
         case 17: // Select S4
+            GPIO_SET_PIN(ADG604_EN_GPIO_BASE, 0x1<<ADG604_EN_PIN);
             GPIO_SET_PIN(ADG604_GPIO_BASE, 0x1<<ADG604_A0_PIN);
             GPIO_SET_PIN(ADG604_GPIO_BASE, 0x1<<ADG604_A1_PIN);
         break;
