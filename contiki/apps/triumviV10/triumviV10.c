@@ -38,6 +38,7 @@
 #define FRAMWRITE_STATUSREG    0x0008
 #define POWERFACTOR_STATUSREG  0x0004
 #define TIMESTAMP_STATUSREG    0x0002
+#define COUNTER_STATUSREG      0x0001
 
 #define FLASH_BASE 0x200000
 #define FLASH_SIZE 0x80000 //rom_util_get_flash_size()
@@ -76,6 +77,8 @@
 
 // INA gain indices
 #define MAX_INA_GAIN_IDX 3
+const uint8_t inaGainArr[MAX_INA_GAIN_IDX+1] = {1, 5, 9, 17};
+
 #define MIN_INA_GAIN_IDX 0
 
 // voltage isolation filter offset
@@ -104,17 +107,15 @@ static rv3049_time_t rtcTime;
 
 // 4 bytes reading, 1 byte status reg, 
 // [1 bytes panel ID, 1 bytes circuit ID]
-// 2 bytes PF, 2 bytes VRMS, 2 bytes IRMS 
+// 2 bytes PF, 1 byte inaGain, 1 bytes VRMS, 2 bytes IRMS 
 // [6 bytes time stamp (yy, mm, dd, hh, mm, ss)]
-// 5 + 2 + 6 + 6 = 19
-#define PACKET_PAYLOAD_SIZE 19
+// [4 bytes counter]
+// 5 + 2 + 6 + 6 + 4 = 23
+#define PACKET_PAYLOAD_SIZE 23
 
 #define PACKET_WAVEFORM_OVERHEAD 9
 
-
 //#define TEST
-
-const uint8_t inaGainArr[MAX_INA_GAIN_IDX+1] = {1, 5, 9, 17};
 
 typedef enum {
     MODE_PHASE_CALIBRATION,
@@ -181,7 +182,7 @@ static struct etimer calibration_timer;
 static struct rtimer myRTimer;
 volatile uint8_t rTimerExpired;
 volatile uint8_t referenceInt;
-volatile uint8_t backOffTime;
+volatile float backOffTime;
 volatile uint8_t backOffHistory;
 volatile uint8_t inaGainIdx;
 volatile uint8_t allInitsAreReadyInt;
@@ -303,8 +304,12 @@ PROCESS_THREAD(startupProcess, ev, data) {
 PROCESS_THREAD(framCheckProecss, ev, data) {
     PROCESS_BEGIN();
     rom_util_page_erase(flash_addr, FLASH_ERASE_SIZE);
+    #ifdef TEST
+    etimer_set(&calibration_timer, CLOCK_SECOND>>1);
+    #else
     triumviLEDON();
     etimer_set(&calibration_timer, CLOCK_SECOND*10);
+    #endif
     static uint8_t calDataValid;
     static linearFitCalData_t linearFitCalibrationData;
     static phaseOffsetCalData_t phaseData;
@@ -321,27 +326,41 @@ PROCESS_THREAD(framCheckProecss, ev, data) {
 
     /* Test for analog mux */
     #ifdef TEST
+    static uint8_t button = 0;
     while (1){
         PROCESS_YIELD();
         if (etimer_expired(&calibration_timer)){
             ad5274_init();
             ad5274_ctrl_reg_write(AD5274_REG_RDAC_RP);
-            triumviLEDOFF();
-            setINAGain(2);
+            if (isButtonPressed()){
+                button = 1;
+            } else if (button==1){
+                button = 0;
+                inaGainIdx += 1;
+                if (inaGainIdx>MAX_INA_GAIN_IDX){
+                    inaGainIdx = 0;
+                    triumviLEDON();
+                } else{
+                    triumviLEDOFF();
+                }
+                setINAGain(inaGainArr[inaGainIdx]);
+            }
             i2c_disable(AD527X_SDA_GPIO_NUM, AD527X_SDA_GPIO_PIN, AD527X_SCL_GPIO_NUM, AD527X_SCL_GPIO_PIN); 
         }
     }
     #endif
     /* End of test */
 
+    #ifdef COUNTER_ENABLE
+    // Reset counter
+    triumviFramCounterWrite(0);
+    #endif
+
     while (1){
         PROCESS_YIELD();
         if (etimer_expired(&calibration_timer)){
             // Erase FRAM
             if (isButtonPressed()){
-                triumviLEDOFF();
-                triumviFramPtrClear();
-                triumviLEDON();
                 process_start(&phaseCalibrationProcess, NULL);
             } else {
                 calDataValid = triumviFramCalibrateDataValidRead();
@@ -1144,8 +1163,10 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                     rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.4, 1, &rtimerEvent, NULL);
                     myState = STATE_WAITING_VOLTAGE_STABLE;
                     // consecutive 4 samples, decreases sampling interval
-                    if (((backOffHistory&0x0f)==0x0f)&&(backOffTime>2))
-                        backOffTime = (backOffTime>>1);
+                    if (((backOffHistory&0x0f)==0x0f)&&(backOffTime>1)){
+                        backOffTime /= 2;
+                        backOffHistory &= 0x03;
+                    }
                     backOffHistory = (backOffHistory<<1) | 0x01;
                 }
             break;
@@ -1170,7 +1191,9 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                     // Bit 6:5: Three Phase Slave Selected
                     // 00 --> non, 01 --> Master, 10 --> slave 1, 11 --> slave2
                     // Bit 4: FRAM WRITE Enabled
+                    // Bit 3: Power factor
                     // Bit 2: RTC Enable
+                    // Bit 1: Counter
                     // Note: bit 6 & 7 cannot be set simultaneously
                     triumviStatusReg = 0x0000;
                     if (externalVoltSel())
@@ -1189,6 +1212,10 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                     if (rtcTimeCorrect==1){
                         triumviStatusReg |= TIMESTAMP_STATUSREG;
                     }
+                    #endif
+
+                    #ifdef COUNTER_ENABLE
+                    triumviStatusReg |= COUNTER_STATUSREG;
                     #endif
 
                     // Check if configuration board is attached
@@ -1293,7 +1320,8 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                         triumvi_record.avgPower = avgPower;
                         triumvi_record.triumviStatusReg = (uint8_t)(triumviStatusReg & 0xff);
                         triumvi_record.IRMS = IRMS;
-                        triumvi_record.VRMS = (inaGain<<8)|VRMS;
+                        triumvi_record.VRMS = VRMS;
+                        triumvi_record.inaGain = inaGain;
                         triumvi_record.pf = pf;
                         // Write data into FRAM
                         #ifdef FRAM_WRITE
@@ -1613,6 +1641,7 @@ void encryptAndTransmit(triumvi_record_t* thisSample,
     // 4 bytes nonce, 
     // packet payload, 
     // 4 byte MIC
+    // 1 + 4 + 4 = 9
     // 9 bytes extra
 	static uint8_t packetData[PACKET_PAYLOAD_SIZE+9];
 	static uint8_t readingBuf[PACKET_PAYLOAD_SIZE];
@@ -1622,6 +1651,9 @@ void encryptAndTransmit(triumvi_record_t* thisSample,
 	uint8_t myPDATA_LEN = PDATA_LEN;
 	uint8_t packetLen = 14; // minimum length, 1 byte ID, 4 bytes nonce, 5 bytes payload, 4 byte MIC
 	uint16_t randBackOff;
+    #ifdef COUNTER_ENABLE
+    uint32_t counter_val;
+    #endif
 
 	packetData[0] = TRIUMVI_PKT_IDENTIFIER;
 	if (thisSample->triumviStatusReg & BATTERYPACK_STATUSREG){
@@ -1635,7 +1667,8 @@ void encryptAndTransmit(triumvi_record_t* thisSample,
 	packData(&myNonce[9], nonceCounter, 4);
 	packData(readingBuf, thisSample->avgPower, 4);
     packData(&readingBuf[myPDATA_LEN], thisSample->pf, 2);
-    packData(&readingBuf[myPDATA_LEN+2], thisSample->VRMS, 2);
+    readingBuf[myPDATA_LEN+2] = thisSample->VRMS&0xff; // change this for high power operation
+    readingBuf[myPDATA_LEN+3] = thisSample->inaGain;
     packData(&readingBuf[myPDATA_LEN+4], thisSample->IRMS, 2);
     myPDATA_LEN += 6;
     packetLen += 6;
@@ -1650,6 +1683,19 @@ void encryptAndTransmit(triumvi_record_t* thisSample,
         readingBuf[myPDATA_LEN+5] = rtcTime.seconds;
         myPDATA_LEN += 6;
         packetLen += 6;
+    }
+    #endif
+
+    #ifdef COUNTER_ENABLE
+    if (thisSample->triumviStatusReg & COUNTER_STATUSREG){
+        #if defined(VERSION10) || defined(VERSION11)
+        GPIO_SET_PIN(GPIO_PORT_TO_BASE(FM25V02_HOLD_N_PORT_NUM), 
+            0x1<<FM25V02_HOLD_N_PIN);
+        #endif
+        counter_val = triumviFramCounterRead();
+        packData(&readingBuf[myPDATA_LEN], counter_val, 4);
+        myPDATA_LEN += 4;
+        packetLen += 4;
     }
     #endif
 
@@ -1673,6 +1719,18 @@ void encryptAndTransmit(triumvi_record_t* thisSample,
     #ifdef TRANSMIT_WAVEFORM
     // transmit entire waveform
     waveformTransmit(thisSample->triumviStatusReg);
+    #endif
+
+    #ifdef COUNTER_ENABLE
+    if (thisSample->triumviStatusReg & COUNTER_STATUSREG){
+        counter_val = triumviFramCounterRead();
+        counter_val += 1;
+        triumviFramCounterWrite(counter_val);
+        #if defined(VERSION10) || defined(VERSION11)
+        GPIO_CLR_PIN(GPIO_PORT_TO_BASE(FM25V02_HOLD_N_PORT_NUM), 
+            0x1<<FM25V02_HOLD_N_PIN);
+        #endif
+    }
     #endif
 }
 

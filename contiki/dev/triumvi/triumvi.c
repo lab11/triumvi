@@ -539,6 +539,7 @@ inline uint8_t isButtonPressed(){
 
 #ifndef VERSION8
 void batteryPackVoltageEn(uint8_t en){
+    GPIO_SET_OUTPUT(CONFIG_PWR_SW_GPIO_BASE , 0x1<<CONFIG_PWR_SW_GPIO_PIN);
     if (en==SENSE_ENABLE)
         GPIO_SET_PIN(CONFIG_PWR_SW_GPIO_BASE , 0x1<<CONFIG_PWR_SW_GPIO_PIN);
     else
@@ -717,6 +718,18 @@ void batteryPackLEDIntensitySet(uint8_t leds, uint8_t iOnVal){
 	sx1509b_led_driver_set_ION(pin, iOnVal);
 }
 
+#ifdef VERSION12
+#ifdef CHARGING_ENABLE
+void batteryChargingEnable(uint8_t en){
+    GPIO_SET_OUTPUT(LTC3200_GPIO_BASE, 0x1<<LTC3200_EN_PIN);
+    if (en>0){
+        GPIO_SET_PIN(LTC3200_GPIO_BASE, 0x1<<LTC3200_EN_PIN);
+    } else {
+        GPIO_CLR_PIN(LTC3200_GPIO_BASE, 0x1<<LTC3200_EN_PIN);
+    }
+}
+#endif
+#endif
 
 uint16_t mysqrt(uint32_t n){
     uint32_t xn = n;

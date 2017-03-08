@@ -51,6 +51,7 @@ typedef struct{
     uint16_t pf;
     uint16_t VRMS;
     uint16_t IRMS;
+    uint8_t inaGain;
 } triumvi_record_t;
 
 
@@ -158,6 +159,12 @@ void batteryPackLEDDriverInit();
 uint8_t batteryPackLEDIntensityDecrease(uint8_t leds);
 uint8_t batteryPackLEDIntensityIncrease(uint8_t leds);
 void batteryPackLEDIntensitySet(uint8_t leds, uint8_t iOnVal);
+
+#ifdef VERSION12
+#ifdef CHARGING_ENABLE
+void batteryChargingEnable(uint8_t en);
+#endif
+#endif
 
 uint16_t mysqrt(uint32_t n);
 

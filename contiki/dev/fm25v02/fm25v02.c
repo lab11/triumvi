@@ -20,6 +20,7 @@
 void
 fm25v02_init()
 {
+  #if defined(VERSION9) || defined(VERSION10) || defined(VERSION11)
   /* Set the HOLD_N and WP_N pins to outputs and high */
   GPIO_SET_OUTPUT(GPIO_PORT_TO_BASE(FM25V02_HOLD_N_PORT_NUM),
                   GPIO_PIN_MASK(FM25V02_HOLD_N_PIN));
@@ -33,6 +34,7 @@ fm25v02_init()
                GPIO_PIN_MASK(FM25V02_HOLD_N_PIN));
   GPIO_SET_PIN(GPIO_PORT_TO_BASE(FM25V02_WP_N_PORT_NUM),
                GPIO_PIN_MASK(FM25V02_WP_N_PIN));
+  #endif
 
   spi_cs_init(FM25V02_CS_N_PORT_NUM, FM25V02_CS_N_PIN);
   SPI_CS_SET(FM25V02_CS_N_PORT_NUM, FM25V02_CS_N_PIN);
