@@ -11,6 +11,7 @@
 #define SPI_MASTER_RADIO_OFF    0x04
 #define SPI_RF_PACKET_SEND      0x05
 #define SPI_MASTER_SET_TIME     0x06
+#define SPI_MASTER_RST_RF_FIFO  0x07
 
 #define MAX_SPI_LENGTH 128
 

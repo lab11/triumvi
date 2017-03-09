@@ -286,6 +286,13 @@ PROCESS_THREAD(spiProcess, ev, data) {
                                 spiInUse = 0;
                             break;
 
+                            case SPI_MASTER_RST_RF_FIFO:
+                                triumviAvailIDX = 0;
+                                triumviFullIDX = 0;
+                                triumviRXBufFull = 0;
+                                spiInUse = 0;
+                            break;
+
                             default:
                                 spiInUse = 0;
                             break;
