@@ -170,6 +170,8 @@ PROCESS_THREAD(mainProcess, ev, data) {
             leds_off(LEDS_GREEN);
             leds_on(LEDS_BLUE);
             #endif
+        } else {
+            GPIO_CLR_PIN(TRIUMVI_DATA_READY_PORT_BASE, TRIUMVI_DATA_READY_MASK);
         }
     }
     PROCESS_END();
@@ -234,7 +236,6 @@ PROCESS_THREAD(spiProcess, ev, data) {
                                 udma_set_channel_control_word(CC2538_SPI0_TX_DMA_CHAN, 
                                     (SPI0TX_DMA_FLAG | udma_xfer_size(packetLen)));
                                 udma_channel_enable(CC2538_SPI0_TX_DMA_CHAN);
-                                GPIO_CLR_PIN(TRIUMVI_DATA_READY_PORT_BASE, TRIUMVI_DATA_READY_MASK);
                             break;
 
                             // do nothing...
@@ -355,7 +356,7 @@ PROCESS_THREAD(decryptProcess, ev, data) {
             cc2538_on_and_transmit();
         }
         // RX buffer is not full
-        else if (triumviRXBufFull==0){
+        else if ((triumviRXBufFull==0) && (data_length>0)){
             triumviRXPackets[triumviAvailIDX].length = data_length + header_length;
             memcpy(triumviRXPackets[triumviAvailIDX].payload, header_ptr, header_length);
             memcpy(triumviRXPackets[triumviAvailIDX].payload+header_length, data_ptr, data_length);
