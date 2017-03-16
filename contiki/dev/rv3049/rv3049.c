@@ -162,3 +162,13 @@ void rv3049_write_register(uint8_t page, uint8_t addr, uint8_t val){
 
     SPI_CS_CLR(RV3049_CS_PORT_NUM, RV3049_CS_PIN);
 }
+
+
+void rv3049_set_trickle_charge_resistor(reickle_charge_resistor_e resistor){
+    uint8_t eeprom_ctrl = rv3049_read_register(RV3049_PAGE_ADDR_EEPROM_CTRL, 0x00);
+    // clear top 4 bits
+    eeprom_ctrl &= 0x0f;
+    // set the corresponding bits
+    eeprom_ctrl |= resistor;
+    rv3049_write_register(RV3049_PAGE_ADDR_EEPROM_CTRL, 0x00, eeprom_ctrl);
+}

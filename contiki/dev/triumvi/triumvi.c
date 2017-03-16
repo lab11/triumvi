@@ -81,13 +81,25 @@ void triumviFramCalibrateDataFitRead(linearFitCalData_t* calData){
 void triumviFramCounterWrite(uint32_t counterVal){
     uint8_t writeBuf[4];
     packData(writeBuf, counterVal, 4);
-    (*fram_write)(FRAM_DATA_MIN_LOC_ADDR-4, 4, writeBuf);
+    (*fram_write)(COUNTER_LOC_ADDR, 4, writeBuf);
 }
 
 uint32_t triumviFramCounterRead(){
     uint8_t readBuf[4];
-    (*fram_read)(FRAM_DATA_MIN_LOC_ADDR-4, 4, readBuf);
+    (*fram_read)(COUNTER_LOC_ADDR, 4, readBuf);
     return (readBuf[3]<<24 | readBuf[2]<<16 | readBuf[1]<<8 | readBuf[0]);
+}
+
+void triumviFramDCOffsetWrite(uint16_t dc_offset, uint8_t inaGainIdx){
+    uint8_t writeBuf[2];
+    packData(writeBuf, dc_offset, 2);
+    (*fram_write)(DC_OFFSET_LOC_ADDR+inaGainIdx*2, 2, writeBuf);
+}
+
+uint16_t triumviFramDCOffsetRead(uint8_t inaGainIdx){
+    uint8_t readBuf[2];
+    (*fram_read)(DC_OFFSET_LOC_ADDR+inaGainIdx*2, 2, readBuf);
+    return (readBuf[1]<<8 | readBuf[0]);
 }
 
 uint16_t getReadWritePtr(uint8_t ptrType){
@@ -411,22 +423,32 @@ void setINAGain(uint8_t gain){
         break;
 
         case 2:
+            GPIO_SET_PIN(GPIO_PORT_TO_BASE(FM25V02_HOLD_N_PORT_NUM), 
+                        0x1<<FM25V02_HOLD_N_PIN);
             ad5274_rdac_write(1023);
         break;
 
         case 3:
+            GPIO_SET_PIN(GPIO_PORT_TO_BASE(FM25V02_HOLD_N_PORT_NUM), 
+                        0x1<<FM25V02_HOLD_N_PIN);
             ad5274_rdac_write(512);
         break;
         
         case 5:
+            GPIO_SET_PIN(GPIO_PORT_TO_BASE(FM25V02_HOLD_N_PORT_NUM), 
+                        0x1<<FM25V02_HOLD_N_PIN);
             ad5274_rdac_write(256);
         break;
 
         case 9:
+            GPIO_SET_PIN(GPIO_PORT_TO_BASE(FM25V02_HOLD_N_PORT_NUM), 
+                        0x1<<FM25V02_HOLD_N_PIN);
             ad5274_rdac_write(128);
         break;
 
         case 17:
+            GPIO_SET_PIN(GPIO_PORT_TO_BASE(FM25V02_HOLD_N_PORT_NUM), 
+                        0x1<<FM25V02_HOLD_N_PIN);
             ad5274_rdac_write(64);
         break;
 

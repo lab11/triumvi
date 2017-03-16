@@ -55,10 +55,18 @@ typedef struct {
   uint16_t year;
 } rv3049_time_t;
 
+typedef enum {
+    RESISTOR_80K = 0x80,
+    RESISTOR_20K = 0x40,
+    RESISTOR_5K = 0x20,
+    RESISTOR_1K = 0x10 
+} reickle_charge_resistor_e;
+
 void rv3049_init();
 int rv3049_read_time(rv3049_time_t* time);
 int rv3049_set_time(rv3049_time_t* time);
 uint8_t rv3049_read_register(uint8_t page, uint8_t addr);
 void rv3049_write_register(uint8_t page, uint8_t addr, uint8_t val);
+void rv3049_set_trickle_charge_resistor(reickle_charge_resistor_e resistor);
 
 #endif

@@ -26,7 +26,9 @@ void (*fram_erase_all)();
 #define CURRENT_FIT_TYPE 0x0
 #define POWER_FIT_TYPE 0x1
 
-#define FRAM_DATA_MIN_LOC_ADDR 192
+#define COUNTER_LOC_ADDR 192
+#define DC_OFFSET_LOC_ADDR 196
+#define FRAM_DATA_MIN_LOC_ADDR 212
 #define READ_PTR_TYPE 0x0
 #define WRITE_PTR_TYPE 0x1
 
@@ -91,6 +93,8 @@ void triumviFramCalibrateDataFitWrite(linearFitCalData_t* calData);
 void triumviFramCalibrateDataFitRead(linearFitCalData_t* calData);
 void triumviFramCounterWrite(uint32_t counterVal);
 uint32_t triumviFramCounterRead();
+void triumviFramDCOffsetWrite(uint16_t dc_offset, uint8_t inaGainIdx);
+uint16_t triumviFramDCOffsetRead(uint8_t inaGainIdx);
 #endif
 
 void triumviLEDinit();
