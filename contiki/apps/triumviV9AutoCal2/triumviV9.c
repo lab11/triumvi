@@ -1241,7 +1241,7 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                         denumerator = REG(flash_addr+(inaGainIdx*16)+8+(MAX_INA_GAIN_IDX+1)*16);
                         offset      = REG(flash_addr+(inaGainIdx*16)+12+(MAX_INA_GAIN_IDX+1)*16);
                         if (offset != 0xffffffff){
-                            if (avgPower > 50){
+                            if (avgPower > 50000){
                                 avgPower = (int)(((int64_t)avgPower)*numerator/denumerator + offset);
                             }
                         }
@@ -1260,7 +1260,7 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                                     avgPower = (int)((float)avgPower*PGAIN9_D1 + PGAIN9_D0);
                                 break;
                                 case 17:
-                                    if (avgPower>50)
+                                    if (avgPower>50000)
                                         avgPower = (int)((float)avgPower*PGAIN17_D1 + PGAIN17_D0);
                                 break;
                                 default:
@@ -1275,7 +1275,7 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                         denumerator = REG(flash_addr+(inaGainIdx*16)+8);
                         offset      = REG(flash_addr+(inaGainIdx*16)+12);
                         if (offset != 0xffffffff){
-                            if (IRMS > 0.4){
+                            if (IRMS > 400){
                                 IRMS = (uint16_t)((((uint64_t)IRMS)*numerator/denumerator) + offset);
                             }
                         }
@@ -1295,7 +1295,7 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                                     IRMS = (int)((float)IRMS*IGAIN9_D1 + IGAIN9_D0);
                                 break;
                                 case 17:
-                                    if (IRMS>0.4)
+                                    if (IRMS>400)
                                         IRMS = (int)((float)IRMS*IGAIN17_D1 + IGAIN17_D0);
                                 break;
                                 default:

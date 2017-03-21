@@ -1267,7 +1267,7 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                             offset      = REG(flash_addr+(i*16)+12+(MAX_INA_GAIN_IDX+1)*16);
                             i += 1;
                         } while (offset == 0xffffffff);
-                        if (avgPower > 50){
+                        if (avgPower > 50000){
                             avgPower = (int)(((int64_t)avgPower)*numerator/denumerator + offset);
                         }
                         #endif
@@ -1281,7 +1281,7 @@ PROCESS_THREAD(triumviProcess, ev, data) {
                             offset      = REG(flash_addr+(i*16)+12);
                             i += 1;
                         } while (offset == 0xffffffff);
-                        if (IRMS > 0.4){
+                        if (IRMS > 400){
                             IRMS = (uint16_t)((((uint64_t)IRMS)*numerator/denumerator) + offset);
                         }
                         #endif
