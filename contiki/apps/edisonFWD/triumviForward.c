@@ -326,6 +326,7 @@ PROCESS_THREAD(decryptProcess, ev, data) {
     uint8_t data_length;
     uint8_t header_length;
     static uint8_t rtc_data_pkt[8];
+    int8_t rssi;
 
     while(1){
         PROCESS_YIELD();
@@ -341,6 +342,7 @@ PROCESS_THREAD(decryptProcess, ev, data) {
         header_ptr = packetbuf_hdrptr();                                   
         data_length = packetbuf_datalen();                               
         data_ptr = packetbuf_dataptr();                                  
+        rssi = (int8_t)packetbuf_attr(PACKETBUF_ATTR_RSSI);
 
         // check for time request packet
         if ((data_length==2) && (data_ptr[0]==TRIUMVI_RTC) && (data_ptr[1]==TRIUMVI_RTC_REQ)){
@@ -357,9 +359,10 @@ PROCESS_THREAD(decryptProcess, ev, data) {
         }
         // RX buffer is not full
         else if ((triumviRXBufFull==0) && (data_length>0)){
-            triumviRXPackets[triumviAvailIDX].length = data_length + header_length;
+            triumviRXPackets[triumviAvailIDX].length = data_length + header_length + 1; // Add RSSI to last byte
             memcpy(triumviRXPackets[triumviAvailIDX].payload, header_ptr, header_length);
             memcpy(triumviRXPackets[triumviAvailIDX].payload+header_length, data_ptr, data_length);
+            memcpy(triumviRXPackets[triumviAvailIDX].payload+header_length+data_length, &rssi, 1);
             // check if fifo is full
             if (((triumviAvailIDX == TRIUMVI_PACKET_BUF_LEN-1) && (triumviFullIDX == 0)) || 
                 ((triumviAvailIDX != TRIUMVI_PACKET_BUF_LEN-1) && (triumviFullIDX == triumviAvailIDX+1))){
