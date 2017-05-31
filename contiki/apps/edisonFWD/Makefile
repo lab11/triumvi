@@ -7,7 +7,7 @@ all: $(CONTIKI_PROJECT)
 
 UIP_CONF_IPV6=0
 
-CONTIKI = ../../../../contiki
+CONTIKI = ../../contiki
 include $(CONTIKI)/Makefile.include
 
 CFLAGS += -DCC2538_RF_CONF_CHANNEL=11
