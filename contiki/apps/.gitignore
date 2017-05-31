@@ -5,3 +5,8 @@
 *.hex
 contiki-torch.a
 obj_torch
+*.a
+obj_edison
+*.map
+*.edison
+
