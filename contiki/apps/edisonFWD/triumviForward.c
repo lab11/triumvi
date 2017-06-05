@@ -44,7 +44,7 @@ typedef struct{
 typedef enum{
     SPI_RESET,
     SPI_WAIT,
-}spiState_t;
+} spiState_t;
 
 
 static triumviPacket_t triumviRXPackets[TRIUMVI_PACKET_BUF_LEN];
@@ -67,6 +67,10 @@ static struct etimer software_RTC_timer;
 #define TRIUMVI_RTC 172
 #define TRIUMVI_RTC_SET 255
 #define TRIUMVI_RTC_REQ 254
+
+// Timer used to detect loss of Triumvi Packets
+static struct etimer packet_rx_timer;
+#define PACKET_RX_TIMEOUT 60 // in seconds
 
 /*---------------------------------------------------------------------------*/
 /* Function prototypes */
@@ -93,7 +97,7 @@ void leds_normal_on(int led) { leds_on(led); }
 
 /*---------------------------------------------------------------------------*/
 PROCESS(mainProcess, "Main Process");
-PROCESS(decryptProcess, "Decrypt Process");
+PROCESS(packetReceiveProcess, "Wireless Packet Receive Process");
 PROCESS(spiProcess, "SPI Process");
 PROCESS(rtcProcess, "Software RTC Process");
 AUTOSTART_PROCESSES(&mainProcess);
@@ -151,7 +155,7 @@ PROCESS_THREAD(mainProcess, ev, data) {
 
     simple_network_set_callback(&rf_rx_handler);
 
-    process_start(&decryptProcess, NULL);
+    process_start(&packetReceiveProcess, NULL);
     process_start(&spiProcess, NULL);
     process_start(&rtcProcess, NULL);
 
@@ -223,7 +227,6 @@ PROCESS_THREAD(spiProcess, ev, data) {
                     spiInUse = 1;
                 }
                 if (spi_cs_int == 1) {
-                    leds_normal_on(LEDS_BLUE);
                     spi_data_ptr += spix_get_data(SPIDEV, spi_data_fifo+spi_data_ptr);
                     spi_cs_int = 0;
                     spiInUse = 1;
@@ -255,7 +258,6 @@ PROCESS_THREAD(spiProcess, ev, data) {
                                     } else {
                                         triumviFullIDX += 1;
                                     }
-                                    leds_normal_off(LEDS_GREEN);
                                 }
                                 resetCnt  = 0;
                                 spiInUse = 0;
@@ -303,9 +305,7 @@ PROCESS_THREAD(spiProcess, ev, data) {
                         }
                     }
                     spi_data_ptr = 0;
-                    leds_normal_off(LEDS_BLUE);
                     leds_debug_on(LEDS_RED);
-                    leds_debug_off(LEDS_GREEN);
                     leds_debug_on(LEDS_BLUE);
                 }
                 process_poll(&mainProcess);
@@ -318,7 +318,7 @@ PROCESS_THREAD(spiProcess, ev, data) {
     PROCESS_END();
 }
 
-PROCESS_THREAD(decryptProcess, ev, data) {
+PROCESS_THREAD(packetReceiveProcess, ev, data) {
     PROCESS_BEGIN();
 
     uint8_t *header_ptr;
@@ -328,67 +328,83 @@ PROCESS_THREAD(decryptProcess, ev, data) {
     static uint8_t rtc_data_pkt[8];
     int8_t rssi;
 
+    // On process start, set timer to expire if no triumvi packets are received.
+    etimer_set(&packet_rx_timer, CLOCK_SECOND*PACKET_RX_TIMEOUT);
+
     while (1) {
         PROCESS_YIELD();
-        leds_normal_on(LEDS_RED);
-        leds_debug_on(LEDS_RED);
-        leds_debug_on(LEDS_GREEN);
-        leds_debug_on(LEDS_BLUE);
 
-        // Get data from radio buffer and parse it
-        header_length = packetbuf_hdrlen();
-        header_ptr = packetbuf_hdrptr();
-        data_length = packetbuf_datalen();
-        data_ptr = packetbuf_dataptr();
-        rssi = (int8_t)packetbuf_attr(PACKETBUF_ATTR_RSSI);
+        if (etimer_expired(&packet_rx_timer)) {
+            // RX timer expired, this means we have not seen a triumvi packet
+            // in a while. Signal the error with the LED.
+            leds_normal_off(LEDS_GREEN);
+            leds_normal_on(LEDS_RED);
+            leds_normal_off(LEDS_BLUE);
 
-        // check for time request packet
-        if ((data_length == 2) && (data_ptr[0] == TRIUMVI_RTC) && (data_ptr[1] == TRIUMVI_RTC_REQ)) {
-            rtc_data_pkt[0] = TRIUMVI_RTC;
-            rtc_data_pkt[1] = TRIUMVI_RTC_SET;
-            rtc_data_pkt[2] = (currentTime.year - 2000);
-            rtc_data_pkt[3] = currentTime.month;
-            rtc_data_pkt[4] = currentTime.day;
-            rtc_data_pkt[5] = currentTime.hours;
-            rtc_data_pkt[6] = currentTime.minutes;
-            rtc_data_pkt[7] = currentTime.seconds;
-            packetbuf_copyfrom(rtc_data_pkt, 8);
-            cc2538_on_and_transmit();
-        }
-        // RX buffer is not full
-        else if ((triumviRXBufFull == 0) && (data_length > 0)) {
-            triumviRXPackets[triumviAvailIDX].length = data_length + header_length + 1; // Add RSSI to last byte
-            memcpy(triumviRXPackets[triumviAvailIDX].payload, header_ptr, header_length);
-            memcpy(triumviRXPackets[triumviAvailIDX].payload+header_length, data_ptr, data_length);
-            memcpy(triumviRXPackets[triumviAvailIDX].payload+header_length+data_length, &rssi, 1);
-            // check if fifo is full
-            if (((triumviAvailIDX == TRIUMVI_PACKET_BUF_LEN-1) && (triumviFullIDX == 0)) ||
-                ((triumviAvailIDX != TRIUMVI_PACKET_BUF_LEN-1) && (triumviFullIDX == triumviAvailIDX+1))){
-                triumviRXBufFull = 1;
-                leds_normal_on(LEDS_GREEN);
+        } else {
+            // Turn on green LED (or keep it on) so we know we are getting
+            // Triumvi packets.
+            leds_normal_on(LEDS_GREEN);
+            leds_normal_off(LEDS_RED);
+            leds_normal_off(LEDS_BLUE);
+
+            leds_debug_on(LEDS_RED);
+            leds_debug_on(LEDS_GREEN);
+            leds_debug_on(LEDS_BLUE);
+
+            // Get data from radio buffer and parse it
+            header_length = packetbuf_hdrlen();
+            header_ptr = packetbuf_hdrptr();
+            data_length = packetbuf_datalen();
+            data_ptr = packetbuf_dataptr();
+            rssi = (int8_t)packetbuf_attr(PACKETBUF_ATTR_RSSI);
+
+            // check for time request packet
+            if ((data_length == 2) && (data_ptr[0] == TRIUMVI_RTC) && (data_ptr[1] == TRIUMVI_RTC_REQ)) {
+                rtc_data_pkt[0] = TRIUMVI_RTC;
+                rtc_data_pkt[1] = TRIUMVI_RTC_SET;
+                rtc_data_pkt[2] = (currentTime.year - 2000);
+                rtc_data_pkt[3] = currentTime.month;
+                rtc_data_pkt[4] = currentTime.day;
+                rtc_data_pkt[5] = currentTime.hours;
+                rtc_data_pkt[6] = currentTime.minutes;
+                rtc_data_pkt[7] = currentTime.seconds;
+                packetbuf_copyfrom(rtc_data_pkt, 8);
+                cc2538_on_and_transmit();
             }
-            // advance pointer
-            if (triumviAvailIDX == TRIUMVI_PACKET_BUF_LEN-1) {
-                triumviAvailIDX = 0;
-            } else {
-                triumviAvailIDX += 1;
+            // RX buffer is not full
+            else if ((triumviRXBufFull == 0) && (data_length > 0)) {
+                triumviRXPackets[triumviAvailIDX].length = data_length + header_length + 1; // Add RSSI to last byte
+                memcpy(triumviRXPackets[triumviAvailIDX].payload, header_ptr, header_length);
+                memcpy(triumviRXPackets[triumviAvailIDX].payload+header_length, data_ptr, data_length);
+                memcpy(triumviRXPackets[triumviAvailIDX].payload+header_length+data_length, &rssi, 1);
+                // check if fifo is full
+                if (((triumviAvailIDX == TRIUMVI_PACKET_BUF_LEN-1) && (triumviFullIDX == 0)) ||
+                    ((triumviAvailIDX != TRIUMVI_PACKET_BUF_LEN-1) && (triumviFullIDX == triumviAvailIDX+1))){
+                    triumviRXBufFull = 1;
+                }
+                // advance pointer
+                if (triumviAvailIDX == TRIUMVI_PACKET_BUF_LEN-1) {
+                    triumviAvailIDX = 0;
+                } else {
+                    triumviAvailIDX += 1;
+                }
             }
+            // Restart timeout
+            etimer_restart(&packet_rx_timer);
+
+            process_poll(&mainProcess);
         }
-        leds_normal_off(LEDS_RED);
-        process_poll(&mainProcess);
     }
     PROCESS_END();
 }
 
 PROCESS_THREAD(rtcProcess, ev, data) {
     PROCESS_BEGIN();
+
+    // Set a timer to ask the host computer for an updated timestamp.
     etimer_set(&software_RTC_timer, CLOCK_SECOND*SOFTWARE_RTC_TICK);
-    currentTime.year = 2000;
-    currentTime.month = 1;
-    currentTime.day = 1;
-    currentTime.hours = 0;
-    currentTime.minutes = 0;
-    currentTime.seconds = 0;
+
     while (1) {
         PROCESS_YIELD();
         if (etimer_expired(&software_RTC_timer)) {
@@ -396,11 +412,12 @@ PROCESS_THREAD(rtcProcess, ev, data) {
             etimer_restart(&software_RTC_timer);
         }
     }
+
     PROCESS_END();
 }
 
 void rf_rx_handler() {
-    process_poll(&decryptProcess);
+    process_poll(&packetReceiveProcess);
 }
 
 static void spiCScallBack(uint8_t port, uint8_t pin) {
