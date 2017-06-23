@@ -1,0 +1,11 @@
+Known issues for version 11:
+-------------------------------------------------------------------------------
+MCU layer:
+1. Q2 does not have enough clearance from J2
+
+
+Potential improvements:
+1. Connect FRAM WP_n, HOLD_n to logic high permanently (addressed in later version)
+2. Remove D1, R1. Using RTC to charge super cap (addressed in later version)
+3. Connect RTC clockout to PD6, and remove Y3, C17, and C18 (addressed in later version)
+
