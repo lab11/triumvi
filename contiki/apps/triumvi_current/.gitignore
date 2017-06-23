@@ -4,3 +4,4 @@
 *.bin
 *.elf
 obj_triumvi/
+*.triumvi
