@@ -14,4 +14,5 @@ for a link to the best compiler to use for the CC2538
 Main Application
 ----------------
 
-Currently, `triumviV9` is the primary application.
+Currently, `triumvi_current` is the primary application. This application supports
+versions 10, 11, 12, 12.1.
