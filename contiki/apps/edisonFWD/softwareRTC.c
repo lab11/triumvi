@@ -8,7 +8,14 @@ typedef struct{
     uint8_t seconds;
 } myTime_t;
 
-static myTime_t currentTime;
+static myTime_t currentTime = {
+    .year= 2000,
+    .month = 1,
+    .day = 1,
+    .hours = 0,
+    .minutes = 0,
+    .seconds = 0,
+};
 
 // set currentTime struct
 void setTime(myTime_t* newTime){
