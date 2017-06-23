@@ -1,0 +1,6 @@
+*.hex
+*.a
+*.map
+*.bin
+*.elf
+obj_triumvi/

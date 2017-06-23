@@ -1,0 +1,2345 @@
+
+/*
+    Author: Ye-Sheng Kuo (samkuo@umich.edu)
+    Todo:
+*/
+#include "contiki.h"
+#include "cpu.h"
+#include "sys/etimer.h"
+#include "sys/rtimer.h"
+#include "dev/watchdog.h"
+#include "dev/sys-ctrl.h"
+#include "dev/gpio.h"
+#include "dev/gptimer.h"
+#include "dev/crypto.h"
+#include "dev/ccm.h"
+#include "dev/random.c"
+#include "net/packetbuf.h"
+#include "net/netstack.h"
+#include "adc.h"
+#include "soc-adc.h"
+#include "ioc.h"
+#include "nvic.h"
+#include "systick.h"
+#include "i2c.h"
+#include "cc2538-rf.h"
+#include "fm25cl64b.h"
+#include "triumvi.h"
+#include "sx1509b.h"
+#include "simple_network_driver.h"
+#include "dev/rom-util.h"
+#ifdef VERSION10
+#include "ad5274.h"
+#endif
+
+#include <stdio.h>
+#include <stdint.h>
+#include <stdbool.h>
+
+#ifdef VERSION12
+// Ip = ADC * 3000/2048/R/CT (mA)
+//#define I_TRANSFORM 70 // 209 ohm sensing resistor, with 1:10000 CT
+//#define I_TRANSFORM 732 // 20 ohm sensing resistor, with 1:10000 CT
+#define I_TRANSFORM 439 // 20 ohm sensing resistor, with 1:6000 CT
+#else
+#define I_TRANSFORM 97 // 45.3 ohm sensing resistor
+#endif
+
+#define FIRSTSAMPLE_STATUSREG  0x0100
+#define EXTERNALVOLT_STATUSREG 0x0080
+#define BATTERYPACK_STATUSREG  0x0040
+#define THREEPHASE_STATUSREG   0x0020
+#define FRAMWRITE_STATUSREG    0x0008
+#define POWERFACTOR_STATUSREG  0x0004
+#define TIMESTAMP_STATUSREG    0x0002
+#define COUNTER_STATUSREG      0x0001
+
+#define FLASH_BASE 0x200000
+#define FLASH_SIZE 0x80000 //rom_util_get_flash_size()
+#define FLASH_ERASE_SIZE 0x800
+
+// Adjusted (DC removal) ADC sample thresholds
+#define UPPERTHRESHOLD0  400 // upper threshold for gain == 17
+#define UPPERTHRESHOLD1  500 // upper threshold for gain == 5, 9
+#define UPPERTHRESHOLD2  500 // upper threshold for gain == 3
+#define LOWERTHRESHOLD0  80 // lower threshold for gain == 1
+#if defined(VERSION10)
+#define LOWERTHRESHOLD1  200 // lower threshold for others
+#elif defined(VERSION11) || defined(VERSION12)
+#define LOWERTHRESHOLD1  150 // lower threshold for others
+#endif
+
+// number of samples per cycle
+#define BUF_SIZE 120        // sample current only, 11-bit resolution, 1 cycles
+#define BUF_SIZE2 228       // sample both current and voltage, 10-bit resolution, 2 cycles
+#define MAX_BUF_SIZE 228    // max(BUF_SIZE, BUF_SIZE2)
+
+// number of calibration cycles
+#define CALIBRATION_CYCLES 512
+#define AMP_CALIBRATION_CYCLE 64
+#define DC_OFFSET_CALIBRATION_CYCLE 128
+
+// The actual usage voltage = 120 * VOLTAGE_NOMINAL_SCALING 
+// Note: The sensor should be calibrated with 120 V source
+#define VOLTAGE_NOMINAL_SCALING 1
+
+// maximum different current setting per gain
+#define MAX_CURRENT_SETTING_PER_GAIN 16
+
+// maximum achievable setting for APS3B12, unit is mA
+#define MAX_CURRENT_SETTING 8750
+// step size for each setting
+#define APS3B12_STEP_SIZE 250
+// start current setting
+#define APS3B12_START_CURRENT 750
+
+// phase lock threshold
+#define PHASE_VARIANCE_THRESHOLD 15
+
+// exponent: first two bits of IRMS and avg power
+// gateway interperts these two Bits and multiplies the corresponding value
+// 0: reading x 1
+// 1: reading x 4
+// 2: reading x 16
+// 3: reading x 64
+//
+// (1<<bitShiftArr[i]) = 1, 4, 16 or 64
+// bitShiftArr[i] must lies in (0, 2, 4, 6)
+
+// INA gain indices
+#if defined(VERSION10)
+#define MAX_INA_GAIN_IDX 3
+const uint8_t inaGainArr[MAX_INA_GAIN_IDX+1] = {1, 5, 9, 17};
+const uint8_t bitShiftArr[MAX_INA_GAIN_IDX+1] = {0, 0, 0, 0};
+const uint8_t exponenttArr[MAX_INA_GAIN_IDX+1] = {0, 0, 0, 0};
+#elif defined(VERSION11)
+#define MAX_INA_GAIN_IDX 4
+const uint8_t inaGainArr[MAX_INA_GAIN_IDX+1] = {1, 3, 5, 9, 17};
+const uint8_t bitShiftArr[MAX_INA_GAIN_IDX+1] = {2, 0, 0, 0, 0};
+const uint8_t exponenttArr[MAX_INA_GAIN_IDX+1] = {1, 0, 0, 0, 0};
+#elif defined(VERSION12)
+#define MAX_INA_GAIN_IDX 4
+const uint8_t inaGainArr[MAX_INA_GAIN_IDX+1] = {1, 3, 5, 9, 17};
+const uint8_t bitShiftArr[MAX_INA_GAIN_IDX+1] = {6, 4, 2, 0, 0};
+const uint8_t exponenttArr[MAX_INA_GAIN_IDX+1] = {3, 2, 1, 0, 0};
+#endif
+#define MIN_INA_GAIN_IDX 0
+
+// voltage isolation filter offset
+#define VOLTAGE_SAMPLE_OFFSET 0
+// voltage scaling constant
+#define VOLTAGE_SCALING 720
+
+// APS3B12 control macro
+#define APS3B12_PACKET_ID 31
+#define APS3B12_ENABLE 1
+#define APS3B12_SET_CURRENT 2
+#define APS3B12_READ 3
+#define APS3B12_READ_CURRENT 0
+#define APS3B12_CURRENT_INFO 3
+#define APS3B12_TRIALS 3
+
+#define DIFF_THRESHOLD 10
+
+#ifdef RTC_ENABLE
+#define TRIUMVI_RTC 0xac
+#define TRIUMVI_RTC_SET 0xff
+#define TRIUMVI_RTC_REQ 0xfe
+
+static rv3049_time_t rtcTime;
+#endif
+
+// 4 bytes reading, 1 byte status reg, 
+// [1 bytes panel ID, 1 bytes circuit ID]
+// 2 bytes PF, 1 byte inaGain, 2 bytes VRMS, 2 bytes IRMS 
+// [6 bytes time stamp (yy, mm, dd, hh, mm, ss)]
+// [4 bytes counter]
+// 5 + 2 + 7 + 6 + 4 = 24
+#define PACKET_PAYLOAD_SIZE 24
+
+#define PACKET_WAVEFORM_OVERHEAD 9
+
+//#define TEST
+
+typedef enum {
+    MODE_PHASE_CALIBRATION,
+    MODE_AMPLITUDE_CALIBRATION,
+    MODE_NORMAL
+} triumvi_mode_t;
+
+typedef enum {
+    GAIN_TOO_LOW,
+    GAIN_OK,
+    GAIN_TOO_HIGH,
+    GAIN_ERROR
+} gainSetting_t;
+
+typedef enum {
+    #ifdef RTC_ENABLE
+    STATE_READ_RTC_TIME,
+    #endif
+    STATE_INIT,
+    STATE_WAITING_VOLTAGE_STABLE,
+    STATE_WAITING_COMPARATOR_STABLE,
+    STATE_BATTERYPACK_LEDBLINK,
+    STATE_TRIUMVI_LEDBLINK
+} triumvi_state_t;
+
+typedef enum {
+    STATE_STD_LOAD_ACTIVATATION,
+    STATE_STD_LOAD_SET,
+    STATE_CALIBRATION_IN_PROGRESS,
+    #ifdef RTC_ENABLE
+    STATE_CALIBRATION_SET_RTC,
+    #endif
+    STATE_CALIBRATION_COMPLETED,
+    STATE_CALIBRATION_NULL
+} triumvi_state_calibration_t;
+
+typedef enum{
+    STATE_AMP_STD_LOAD_SET,
+    STATE_AMP_CALIBRATION_IN_PROGRESS,
+    STATE_AMP_STD_LOAD_RECEIVE,
+    STATE_AMP_STD_LOAD_VERIFY,
+    STATE_AMP_TRANSMIT_COEF,
+    STATE_AMP_NULL
+} triumvi_state_amp_calibration_t;
+
+
+/* global variables */
+
+volatile static triumvi_state_t myState;
+const uint32_t flash_addr = FLASH_BASE - 2*FLASH_ERASE_SIZE + FLASH_SIZE;
+volatile uint32_t flash_data;
+
+uint32_t timerVal[2];
+uint16_t currentADCVal[MAX_BUF_SIZE];
+int adjustedCurrSamples[MAX_BUF_SIZE];
+int voltADCVal[BUF_SIZE2]; 
+
+volatile uint16_t phaseOffset;
+volatile uint16_t dcOffset;
+
+
+volatile static triumvi_mode_t operation_mode;
+
+static struct etimer calibration_timer;
+static struct rtimer myRTimer;
+volatile uint8_t rTimerExpired;
+volatile uint8_t referenceInt;
+volatile uint8_t backOffTime;
+volatile uint8_t backOffHistory;
+volatile uint8_t inaGainIdx;
+volatile uint8_t allInitsAreReadyInt;
+volatile uint8_t rfReceivedInt;
+#ifdef RTC_ENABLE
+volatile uint8_t rtc_packet_received;
+#endif
+
+static uint8_t aps_trials;
+#ifdef AMPLITUDE_CALIBRATION_EN
+volatile int aps3b12_current_value; 
+#endif
+
+
+/* End of global variables */
+
+#include "sineTable.h"
+
+/* function prototypes */
+
+/* functions for calibration process only */
+// return product of voltage and current for a cycle
+int cycleProduct(uint16_t* adcSamples, uint16_t offset, uint16_t currentRef);
+// return the phase has maximum correlation
+uint16_t phaseMatchFilter(uint16_t* adcSamples, uint16_t* currentAVG);
+// gain control, adjust gain if necessary
+gainSetting_t gainCtrl(uint16_t* adcSamples, uint8_t externalVolt);
+// initialize GPIO, peripherals
+void meterInit();
+// samples ADC, and computes power
+int sampleAndCalculate(uint16_t triumviStatusReg);
+// samples current ADC, 11-bit
+void sampleCurrentWaveform();
+// samples current, voltage ADCs, 10-bit each
+void sampleCurrentVoltageWaveform();
+// power gate to current sensing, disable AD5274 (POT) or ADG604 (analog switch)
+void disablePOT();
+// encrypt data using AES, and wirelessly transmit packet
+void encryptAndTransmit(triumvi_record_t* thisSample, 
+                        uint8_t* myNonce, uint32_t nonceCounter);
+
+int currentDataTransform(int currentReading, uint8_t externalVolt);
+int voltDataTransform(int voltReading, uint16_t voltReference);
+#ifdef TRANSMIT_WAVEFORM
+// Send entire waveform
+void waveformTransmit(uint8_t triumviStatusReg);
+#endif
+
+// controlling aps3b12
+void aps3b12_set_current(uint16_t cu);
+void aps3b12_enable(uint8_t en);
+
+#ifdef AMPLITUDE_CALIBRATION_EN
+void aps3b12_read_current();
+// find coefficient for 1st order linear regression
+void linearFit(uint16_t* reading, uint16_t* setting, uint8_t length, 
+                uint32_t* slope_n, uint32_t* slope_d, int* offset);
+#endif
+
+void transmitCalibrationCoef();
+
+void rf_rx_handler();
+
+// functions do not use in data dump mode
+static void disable_all_ioc_override();
+
+
+uint16_t currentRMS(uint16_t triumviStatusReg);
+uint16_t voltageRMS(uint16_t triumviStatusReg);
+
+// ISRs
+static void rtimerEvent(struct rtimer *t, void *ptr);
+static void referenceIntCallBack(uint8_t port, uint8_t pin);
+static void unitReadyCallBack(uint8_t port, uint8_t pin);
+
+#define CURRENT_FIT_FLASH_ADDR(a) (flash_addr+(a*16)+4)
+#define POWER_FIT_FLASH_ADDR(a) (flash_addr+(a*16)+4+(MAX_INA_GAIN_IDX+1)*16)
+#define DC_OFFSET_FLASH_ADDR(a) (flash_addr+(MAX_INA_GAIN_IDX+1)*2*16+a*4)
+/* End of function prototypes */
+
+/*---------------------------------------------------------------------------*/
+PROCESS(startupProcess, "Startup");
+PROCESS(framCheckProecss, "COPY Data from FRAM");
+PROCESS(phaseCalibrationProcess, "Phase Calibration");
+#ifdef AMPLITUDE_CALIBRATION_EN
+PROCESS(amplitudeCalibrationProcess, "Amplitude Calibration");
+#endif
+PROCESS(rf_received_process, "rf receive");
+PROCESS(triumviProcess, "Triumvi");
+AUTOSTART_PROCESSES(&startupProcess);
+/*---------------------------------------------------------------------------*/
+
+// Startup process, check flash
+PROCESS_THREAD(startupProcess, ev, data) {
+    PROCESS_BEGIN();
+    
+    CC2538_RF_CSP_ISRFOFF();
+
+    random_init(0);
+
+    simple_network_set_callback(&rf_rx_handler);
+    process_start(&rf_received_process, NULL);
+
+    // Initialize peripherals
+    meterInit();
+    
+    // Disable sensing frontend
+    disablePOT();
+    meterSenseConfig(VOLTAGE, SENSE_DISABLE);
+    meterVoltageComparator(SENSE_DISABLE);
+
+    // read internal flash
+    flash_data = REG(flash_addr);
+
+    // non-calibrated device
+    if (flash_data==0xffffffff){
+        process_start(&framCheckProecss, NULL);
+        operation_mode = MODE_PHASE_CALIBRATION;
+    }
+    // calibrated device, load phase offset and dc offset
+    else{
+        phaseOffset = (flash_data & 0xffff);
+        dcOffset = ((flash_data & 0xffff0000)>>16);
+        process_start(&triumviProcess, NULL);
+        operation_mode = MODE_NORMAL;
+    }
+    PROCESS_END();
+}
+
+PROCESS_THREAD(framCheckProecss, ev, data) {
+    PROCESS_BEGIN();
+    rom_util_page_erase(flash_addr, FLASH_ERASE_SIZE);
+    etimer_set(&calibration_timer, CLOCK_SECOND>>1);
+    #ifndef TEST
+    triumviLEDON();
+    #endif
+    static uint8_t calDataValid;
+    static linearFitCalData_t linearFitCalibrationData;
+    static phaseOffsetCalData_t phaseData;
+    uint32_t tmp;
+    uint8_t i;
+    uint32_t slope_n, slope_d;
+    int offset;
+    uint32_t dc_offset_data;
+    static uint8_t button = 0;
+    static uint8_t buttonCnt = 0;
+    static uint8_t timerCnt = 0;
+
+    // enable LDO, release power gating
+    // This is critical here for V10 to access FRAM
+    meterSenseVREn(SENSE_ENABLE);
+    meterSenseConfig(VOLTAGE, SENSE_ENABLE);
+    meterSenseConfig(CURRENT, SENSE_ENABLE);
+
+    /* Test for analog mux */
+    #ifdef TEST
+    #ifdef CHARGING_ENABLE
+    batteryChargingEnable(1);
+    #endif
+    while (1){
+        PROCESS_YIELD();
+        if (etimer_expired(&calibration_timer)){
+            #ifdef VERSION10
+            ad5274_init();
+            ad5274_ctrl_reg_write(AD5274_REG_RDAC_RP);
+            #endif
+            if (isButtonPressed()){
+                button = 1;
+            } else if (button==1){
+                button = 0;
+                inaGainIdx += 1;
+                if (inaGainIdx>MAX_INA_GAIN_IDX){
+                    inaGainIdx = 0;
+                    triumviLEDON();
+                } else{
+                    triumviLEDOFF();
+                }
+                setINAGain(inaGainArr[inaGainIdx]);
+            }
+            #ifdef VERSION10
+            i2c_disable(AD527X_SDA_GPIO_NUM, AD527X_SDA_GPIO_PIN, AD527X_SCL_GPIO_NUM, AD527X_SCL_GPIO_PIN); 
+            #endif
+            etimer_set(&calibration_timer, CLOCK_SECOND*0.1);
+            //transmitCalibrationCoef();
+        }
+    }
+    #endif
+    /* End of test */
+
+    #ifdef COUNTER_ENABLE
+    // Reset counter
+    triumviFramCounterWrite(0);
+    #endif
+
+    while(1){
+        PROCESS_YIELD();
+        if (etimer_expired(&calibration_timer)){
+            if (buttonCnt > 1){
+                process_start(&phaseCalibrationProcess, NULL);
+                break;
+            } else if (timerCnt < 200){
+                timerCnt += 1;
+                if (buttonCnt > 2){
+                    triumviLEDOFF();
+                    etimer_set(&calibration_timer, CLOCK_SECOND*2);
+                } else{
+                    if (isButtonPressed()){
+                        button = 1;
+                    } else if (button==1){
+                        button = 0;
+                        buttonCnt += 1;
+                    }
+                    etimer_set(&calibration_timer, CLOCK_SECOND*0.1);
+                }
+            } else {
+                calDataValid = triumviFramCalibrateDataValidRead();
+                // data is valid, copy from FRAM
+                if (calDataValid & 0x01){
+                    // read phase/dc offset calibration data
+                    triumviFramCalibrateDataPhaseRead(&phaseData);
+                    // write phase/dc offset calibration data
+                    tmp = (phaseData.dc_Offset<<16) | phaseData.phase_Offset;
+                    rom_util_program_flash(&tmp, flash_addr, 4);
+                    phaseOffset = phaseData.phase_Offset;
+                    dcOffset = phaseData.dc_Offset;
+                    // write current, power linear fit data
+                    for (i=0; i<MAX_INA_GAIN_IDX+1; i++){
+                        if (calDataValid & (0x01<<(i+1))){
+                            // read current fit data
+                            linearFitCalibrationData.type = CURRENT_FIT_TYPE;
+                            linearFitCalibrationData.gain_idx = i;
+                            triumviFramCalibrateDataFitRead(&linearFitCalibrationData);
+                            slope_n = linearFitCalibrationData.numerator;
+                            slope_d = linearFitCalibrationData.denumerator;
+                            offset = linearFitCalibrationData.offset;
+                            // write current fit data
+                            rom_util_program_flash((uint32_t*)&slope_n, CURRENT_FIT_FLASH_ADDR(i),   4);
+                            rom_util_program_flash((uint32_t*)&slope_d, CURRENT_FIT_FLASH_ADDR(i)+4, 4);
+                            rom_util_program_flash((uint32_t*)&offset,  CURRENT_FIT_FLASH_ADDR(i)+8, 4);
+                            // read power fit data
+                            linearFitCalibrationData.type = POWER_FIT_TYPE;
+                            linearFitCalibrationData.gain_idx = i;
+                            triumviFramCalibrateDataFitRead(&linearFitCalibrationData);
+                            slope_n = linearFitCalibrationData.numerator;
+                            slope_d = linearFitCalibrationData.denumerator;
+                            offset = linearFitCalibrationData.offset;
+                            // write power fit data
+                            rom_util_program_flash((uint32_t*)&slope_n, POWER_FIT_FLASH_ADDR(i),   4);
+                            rom_util_program_flash((uint32_t*)&slope_d, POWER_FIT_FLASH_ADDR(i)+4, 4);
+                            rom_util_program_flash((uint32_t*)&offset,  POWER_FIT_FLASH_ADDR(i)+8, 4);
+                            // write dc offset data
+                            dc_offset_data = triumviFramDCOffsetRead(i);
+                            if (dc_offset_data > 0){
+                                rom_util_program_flash((uint32_t*)&dc_offset_data, DC_OFFSET_FLASH_ADDR(i), 4);
+                            }
+                        }
+                    }
+                    transmitCalibrationCoef();
+                    process_start(&triumviProcess, NULL);
+                    operation_mode = MODE_NORMAL;
+                // no valid data in FRAM, start calibration process
+                } else{
+                    process_start(&phaseCalibrationProcess, NULL);
+                }
+                break;
+            }
+        }
+    }
+
+    PROCESS_END();
+}
+
+
+PROCESS_THREAD(phaseCalibrationProcess, ev, data) {
+    PROCESS_BEGIN();
+
+    static uint16_t cycleCnt = 0;
+    uint16_t i;
+    gainSetting_t gainSetting;
+    static triumvi_state_calibration_t calibration_state = STATE_STD_LOAD_ACTIVATATION;
+    #ifdef DATADUMP
+    uint8_t inaGain;
+    #else
+    uint16_t currentRef;
+    uint16_t calculatedPhase;
+    static uint16_t phaseOffset_array[CALIBRATION_CYCLES];
+    static uint32_t dcOffset_accum = 0;
+    static uint32_t variance = 0;
+    uint32_t tmp = 0;
+    #endif
+    static uint32_t timerExp, currentTime;
+    #ifdef RTC_ENABLE
+    static uint8_t rtc_pkt[2] = {TRIUMVI_RTC, TRIUMVI_RTC_REQ};
+    rtc_packet_received = 0;
+    #endif
+    rfReceivedInt = 0;
+    aps_trials = 0;
+    static phaseOffsetCalData_t phaseData;
+    static uint8_t firstGainError = 0;
+    #ifndef AMPLITUDE_CALIBRATION_EN
+    static uint32_t slope_n, slope_d;
+    static int offset;
+    static linearFitCalData_t calData;
+    static uint32_t dc_offset_data;
+    #endif
+
+    triumviLEDON();
+    etimer_set(&calibration_timer, CLOCK_SECOND*3);
+
+    // enable 5k ohm trickle charge resistor
+    //rv3049_write_register(RV3049_PAGE_ADDR_EEPROM_CTRL, 0x00, 0x22);
+    rv3049_set_trickle_charge_resistor(RESISTOR_5K);
+
+    // enable LDO, release power gating
+    meterSenseVREn(SENSE_ENABLE);
+    meterSenseConfig(VOLTAGE, SENSE_ENABLE);
+    meterSenseConfig(CURRENT, SENSE_ENABLE);
+
+    (*fram_erase_all)();
+
+    while (1){
+        PROCESS_YIELD();
+        switch (calibration_state){
+            case STATE_STD_LOAD_ACTIVATATION:
+                if (etimer_expired(&calibration_timer)){
+                    triumviLEDOFF();
+                    if (aps_trials < APS3B12_TRIALS){
+                        aps3b12_enable(0x1);
+                        etimer_set(&calibration_timer, CLOCK_SECOND*0.5);
+                        aps_trials += 1;
+                    }
+                    else{
+                        etimer_set(&calibration_timer, CLOCK_SECOND*3);
+                        calibration_state = STATE_STD_LOAD_SET;
+                        aps_trials = 0;
+                    }
+                }
+            break;
+
+            case STATE_STD_LOAD_SET:
+                if (etimer_expired(&calibration_timer)){
+                    if (aps_trials < APS3B12_TRIALS){
+                        #ifdef VERSION12
+                        aps3b12_set_current(8000); // 2000 mA
+                        #else
+                        aps3b12_set_current(2000); // 1000 mA
+                        #endif
+                        etimer_set(&calibration_timer, CLOCK_SECOND*1);
+                        aps_trials += 1;
+                    }
+                    else{
+                        etimer_set(&calibration_timer, CLOCK_SECOND*6);
+                        calibration_state = STATE_CALIBRATION_IN_PROGRESS;
+                        aps_trials = 0;
+                    }
+                }
+            break;
+
+            case STATE_CALIBRATION_IN_PROGRESS:
+                if (etimer_expired(&calibration_timer)){
+                    triumviLEDON();
+                    
+                    // Enable digital pot
+                    #ifdef VERSION10
+                    ad5274_init();
+                    ad5274_ctrl_reg_write(AD5274_REG_RDAC_RP);
+                    #endif
+                    setINAGain(inaGainArr[inaGainIdx]);
+                    #ifdef VERSION10
+                    i2c_disable(AD527X_SDA_GPIO_NUM, AD527X_SDA_GPIO_PIN, AD527X_SCL_GPIO_NUM, AD527X_SCL_GPIO_PIN); 
+                    #endif
+
+                    // Enable comparator interrupt
+                    ungate_gpt(GPTIMER_1);
+                    REG(SYSTICK_STCTRL) &= (~SYSTICK_STCTRL_INTEN);
+                    timerExp = get_event_time(GPTIMER_1, GPTIMER_SUBTIMER_A) - 320000;
+                    GPIO_DETECT_RISING(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
+                    meterVoltageComparator(SENSE_ENABLE);
+
+                    // waiting for comparator interrupt
+                    do {
+                        currentTime = get_event_time(GPTIMER_1, GPTIMER_SUBTIMER_A);
+                    }
+                    while ((currentTime > timerExp) && (referenceInt==0));
+
+                    // time out, retry
+                    if (currentTime <= timerExp){
+                        gainSetting = GAIN_TOO_HIGH;
+                    }
+                    // captured interrupt
+                    else{
+                        sampleCurrentWaveform();
+                        referenceInt = 0;
+
+                        // resume systick
+                        REG(SYSTICK_STCTRL) |= SYSTICK_STCTRL_INTEN;
+                        gate_gpt(GPTIMER_1);
+
+                        // check INA gain setting
+                        gainSetting = gainCtrl(currentADCVal, 0x0);
+                    }
+
+                    if (gainSetting == GAIN_OK){
+                        #ifdef DATADUMP
+                        // print data through UART
+                        inaGain = inaGainArr[inaGainIdx];
+                        printf("ADC reference: %u\r\n", getAverage(currentADCVal, BUF_SIZE));
+                        printf("Time difference: %lu\r\n", (timerVal[0]-timerVal[1]));
+                        printf("INA Gain: %u\r\n", inaGain);
+                        for (i=0; i<BUF_SIZE; i+=1){
+                            printf("Current reading: %d\r\n", currentADCVal[i]);
+                        }
+                        #else
+                        // perform phase, dc offset calculation
+                        calculatedPhase = phaseMatchFilter(currentADCVal, &currentRef);
+                        phaseOffset_array[cycleCnt] = calculatedPhase;
+                        dcOffset_accum += currentRef;
+                        #endif
+                        cycleCnt += 1;
+                        
+                        if (cycleCnt < CALIBRATION_CYCLES){
+                            triumviLEDOFF();
+                            etimer_set(&calibration_timer, CLOCK_SECOND*0.1);
+                        }
+                        else{
+                            #ifdef DATADUMP
+                            etimer_set(&calibration_timer, CLOCK_SECOND*1);
+                            #else
+                            variance = getVariance(phaseOffset_array, CALIBRATION_CYCLES);
+                            // cannot lock phase, check if the phase across 360
+                            if (variance > PHASE_VARIANCE_THRESHOLD){
+                                #ifdef DEBUG_ON
+                                for (i=0; i<CALIBRATION_CYCLES; i++){
+                                    printf("phase samples: %u\r\n", phaseOffset_array[i]);
+                                }
+                                printf("variance: %u\r\n", variance);
+                                #endif
+                                for (i=0; i<CALIBRATION_CYCLES; i++){
+                                    if (phaseOffset_array[i] < 180)
+                                        phaseOffset_array[i] += 360;
+                                }
+                                variance = getVariance(phaseOffset_array, CALIBRATION_CYCLES);
+                                #ifdef DEBUG_ON
+                                printf("new variance: %u\r\n", variance);
+                                #endif
+                                if (variance > PHASE_VARIANCE_THRESHOLD){
+                                    if (batteryPackIsAttached()){
+                                        batteryPackVoltageEn(SENSE_ENABLE);
+                                        batteryPackInit();
+                                        batteryPackLEDDriverInit();
+                                        batteryPackLEDOn(BATTERY_PACK_LED_RED);
+                                        i2c_disable(I2C_SDA_GPIO_NUM, I2C_SDA_GPIO_PIN, I2C_SCL_GPIO_NUM, I2C_SCL_GPIO_PIN); 
+                                    }
+                                    while(1){}
+                                }
+                            }
+                            phaseOffset = getAverage(phaseOffset_array, CALIBRATION_CYCLES);
+                            if (phaseOffset >= 360)
+                                phaseOffset -= 360;
+                            dcOffset = (dcOffset_accum/CALIBRATION_CYCLES);
+                            
+                            #ifdef DEBUG_ON
+                            printf("phase offset: %u\r\n", phaseOffset);
+                            printf("dc offset: %u\r\n", dcOffset);
+                            printf("variance: %lu\r\n", variance);
+                            #endif
+
+                            phaseData.dc_Offset = dcOffset;
+                            phaseData.phase_Offset = phaseOffset;
+                            triumviFramCalibrateDataPhaseWrite(&phaseData);
+                            // write to flash
+                            tmp = (dcOffset<<16) | phaseOffset;
+                            rom_util_program_flash(&tmp, flash_addr, 4);
+
+                            if (batteryPackIsAttached()){
+                                batteryPackVoltageEn(SENSE_ENABLE);
+                                batteryPackInit();
+                                batteryPackLEDDriverInit();
+                                batteryPackLEDOn(BATTERY_PACK_LED_GREEN);
+                                i2c_disable(I2C_SDA_GPIO_NUM, I2C_SDA_GPIO_PIN, I2C_SCL_GPIO_NUM, I2C_SCL_GPIO_PIN); 
+                            }
+
+                            // advances state
+                            #ifdef RTC_ENABLE
+                            calibration_state = STATE_CALIBRATION_SET_RTC;
+                            #else
+                            calibration_state = STATE_CALIBRATION_COMPLETED;
+                            #endif
+                            etimer_set(&calibration_timer, CLOCK_SECOND*3);
+                            #endif // end of DATADUMP
+
+                            meterSenseVREn(SENSE_DISABLE);
+                            meterSenseConfig(VOLTAGE, SENSE_DISABLE);
+                            meterSenseConfig(CURRENT, SENSE_DISABLE);
+                        }
+                    // The load is off or something is wrong
+                    } else if (gainSetting == GAIN_ERROR){
+                        if (firstGainError==1){
+                            if (batteryPackIsAttached()){
+                                batteryPackVoltageEn(SENSE_ENABLE);
+                                batteryPackInit();
+                                batteryPackLEDDriverInit();
+                                batteryPackLEDOn(BATTERY_PACK_LED_RED);
+                                i2c_disable(I2C_SDA_GPIO_NUM, I2C_SDA_GPIO_PIN, I2C_SCL_GPIO_NUM, I2C_SCL_GPIO_PIN); 
+                            }
+                            while(1){}
+                        } else{
+                            firstGainError = 1;
+                            setINAGain(inaGainArr[MAX_INA_GAIN_IDX-1]);
+                            triumviLEDOFF();
+                            etimer_set(&calibration_timer, CLOCK_SECOND*1);
+                        }
+                    } else{
+                        triumviLEDOFF();
+                        etimer_set(&calibration_timer, CLOCK_SECOND*1);
+                    }
+                }
+            break;
+
+            #ifdef RTC_ENABLE
+            case STATE_CALIBRATION_SET_RTC:
+                if (etimer_expired(&calibration_timer)){
+                    if ((rtc_packet_received) && (rtcTime.year > 2000)){
+                        calibration_state = STATE_CALIBRATION_COMPLETED;
+                        rv3049_write_register(RV3049_PAGE_ADDR_CONTROL, 0x03, 0x00);
+                    }
+                    else{
+                        packetbuf_copyfrom(rtc_pkt, 2);
+                        cc2538_on_and_transmit();
+                    }
+                    rtc_packet_received = 0;
+                    etimer_set(&calibration_timer, CLOCK_SECOND*0.5);
+                }
+            break;
+            #endif
+
+            case STATE_CALIBRATION_COMPLETED:
+                if (etimer_expired(&calibration_timer)){
+                    #ifdef AMPLITUDE_CALIBRATION_EN
+                    process_start(&amplitudeCalibrationProcess, NULL);
+                    operation_mode = MODE_AMPLITUDE_CALIBRATION;
+                    #else
+                    // Write pre-calibrated data into FRAM and Flash
+                    for (i=0; i<MAX_INA_GAIN_IDX+1; i++){
+                        // use ideal CT model for now
+                        slope_n = 97;
+                        slope_d = 100;
+                        offset = 0;
+                        // current correction
+                        rom_util_program_flash((uint32_t*)&slope_n, CURRENT_FIT_FLASH_ADDR(i), 4);
+                        rom_util_program_flash((uint32_t*)&slope_d, CURRENT_FIT_FLASH_ADDR(i)+4, 4);
+                        rom_util_program_flash((uint32_t*)&offset, CURRENT_FIT_FLASH_ADDR(i)+8, 4);
+                        calData.type = CURRENT_FIT_TYPE;
+                        calData.numerator = slope_n;
+                        calData.denumerator = slope_d;
+                        calData.offset = offset;
+                        calData.gain_idx = i;
+                        triumviFramCalibrateDataFitWrite(&calData);
+
+                        // power correction
+                        rom_util_program_flash((uint32_t*)&slope_n, POWER_FIT_FLASH_ADDR(i),   4);
+                        rom_util_program_flash((uint32_t*)&slope_d, POWER_FIT_FLASH_ADDR(i)+4, 4);
+                        rom_util_program_flash((uint32_t*)&offset,  POWER_FIT_FLASH_ADDR(i)+8, 4);
+                        calData.type = POWER_FIT_TYPE;
+                        calData.numerator = slope_n;
+                        calData.denumerator = slope_d;
+                        calData.offset = offset;
+                        calData.gain_idx = i;
+                        triumviFramCalibrateDataFitWrite(&calData);
+                        // populate dc offset
+                        dc_offset_data = dcOffset;
+                        rom_util_program_flash((uint32_t*)&dc_offset_data, DC_OFFSET_FLASH_ADDR(i), 4);
+                        triumviFramDCOffsetWrite(dcOffset, i);
+                    }
+                    // End of writing pre-calibrated data
+                    GPIO_SET_OUTPUT(GPIO_A_BASE, 0x47);
+                    GPIO_CLR_PIN(GPIO_A_BASE, 0x47);
+                    process_start(&triumviProcess, NULL);
+                    operation_mode = MODE_NORMAL;
+                    // enable 80k trickle charge resistor
+                    //rv3049_write_register(RV3049_PAGE_ADDR_EEPROM_CTRL, 0x00, 0x82);
+                    rv3049_set_trickle_charge_resistor(RESISTOR_80K);
+                    aps3b12_set_current(2000); // 2000 mA
+                    #endif
+                    triumviLEDOFF();
+                    if (batteryPackIsAttached()){
+                        batteryPackLEDOff(BATTERY_PACK_LED_GREEN);
+                        batteryPackVoltageEn(SENSE_DISABLE);
+                    }
+                    calibration_state = STATE_CALIBRATION_NULL;
+                }
+            break;
+
+            case STATE_CALIBRATION_NULL:
+            break;
+
+            default:
+            break;
+        }
+    }
+    PROCESS_END();
+
+}
+
+#ifdef AMPLITUDE_CALIBRATION_EN
+PROCESS_THREAD(amplitudeCalibrationProcess, ev, data){
+    PROCESS_BEGIN();
+
+
+    static uint16_t currentSetting = APS3B12_START_CURRENT; // starts with 1000 mA
+    triumviLEDON();
+    etimer_set(&calibration_timer, CLOCK_SECOND*5);
+    static triumvi_state_amp_calibration_t amplitude_calibration_state = STATE_AMP_STD_LOAD_SET;
+    static uint32_t timerExp, currentTime;
+    uint16_t i, j;
+    int tempPower;
+    int energyCal;
+    static uint32_t sum_power;
+    static uint32_t sum_currentRMS;
+    static uint8_t prevInaGainIdx = MAX_INA_GAIN_IDX+1;
+    static uint16_t current_setting[MAX_CURRENT_SETTING_PER_GAIN];
+    static uint16_t read_current[MAX_CURRENT_SETTING_PER_GAIN];
+    static uint16_t read_power[MAX_CURRENT_SETTING_PER_GAIN];
+    static uint8_t current_set_cnt;
+    static uint8_t amp_cal_cnt;
+    static uint8_t amp_cal_completed;
+    static uint32_t slope_n, slope_d;
+    static int offset;
+    static uint8_t increase_current;
+    static uint32_t diff;
+    gainSetting_t gainSetting;
+    aps_trials = 0;
+    current_set_cnt = 0;
+    amp_cal_completed = 0;
+    increase_current = 0;
+    static linearFitCalData_t calData;
+    static uint32_t dcOffset_accum = 0;
+    static uint32_t dc_offset_data;
+    static uint8_t dc_offset_calibration = 1;
+    static uint8_t verify_cnt;
+    static uint8_t hold_pin_status;
+
+    // enable LDO, release power gating
+    meterSenseVREn(SENSE_ENABLE);
+    meterSenseConfig(VOLTAGE, SENSE_ENABLE);
+    meterSenseConfig(CURRENT, SENSE_ENABLE);
+
+    while (1){
+        PROCESS_YIELD();
+        switch (amplitude_calibration_state){
+            case STATE_AMP_STD_LOAD_SET:
+                if (etimer_expired(&calibration_timer)){
+                    triumviLEDOFF();
+                    if (aps_trials < APS3B12_TRIALS){
+                        aps3b12_set_current(currentSetting);
+                        etimer_set(&calibration_timer, CLOCK_SECOND*0.5);
+                        aps_trials += 1;
+                    }
+                    else{
+                        aps_trials = 0;
+                        sum_currentRMS = 0;
+                        sum_power = 0;
+                        amp_cal_cnt = 0;
+                        if (amp_cal_completed){
+                            if (batteryPackIsAttached()){
+                                batteryPackLEDOff(BATTERY_PACK_LED_GREEN);
+                                batteryPackVoltageEn(SENSE_DISABLE);
+                            }
+                            triumviLEDOFF();
+                            etimer_set(&calibration_timer, CLOCK_SECOND*5);
+                            amplitude_calibration_state = STATE_AMP_TRANSMIT_COEF;
+                        }
+                        else{
+                            verify_cnt = 0;
+                            aps3b12_read_current();
+                            etimer_set(&calibration_timer, CLOCK_SECOND*5);
+                            amplitude_calibration_state = STATE_AMP_STD_LOAD_RECEIVE;
+                        }
+                        
+                    }
+                }
+            break;
+
+            case STATE_AMP_STD_LOAD_RECEIVE:
+                // timer expired, did not received data
+                if (etimer_expired(&calibration_timer)) {
+                    amplitude_calibration_state = STATE_AMP_STD_LOAD_SET;
+                    etimer_set(&calibration_timer, CLOCK_SECOND*1);
+                }
+                else{
+                    CC2538_RF_CSP_ISRFOFF();
+                    amplitude_calibration_state = STATE_AMP_STD_LOAD_VERIFY;
+                }
+            break;
+
+            case STATE_AMP_STD_LOAD_VERIFY:
+                if (etimer_expired(&calibration_timer)) {
+                    if (aps3b12_current_value > currentSetting){
+                        diff = aps3b12_current_value - currentSetting;
+                    }
+                    else if (aps3b12_current_value < currentSetting){
+                        diff = currentSetting - aps3b12_current_value;
+                    }
+                    else{
+                        diff = 0;
+                    }
+
+                    if (diff < DIFF_THRESHOLD){
+                        if (verify_cnt==1){
+                            currentSetting = aps3b12_current_value;
+                            etimer_set(&calibration_timer, CLOCK_SECOND*1);
+                            amplitude_calibration_state = STATE_AMP_CALIBRATION_IN_PROGRESS;
+                        } else {
+                            verify_cnt = 1;
+                            aps3b12_read_current();
+                            etimer_set(&calibration_timer, CLOCK_SECOND*5);
+                            amplitude_calibration_state = STATE_AMP_STD_LOAD_RECEIVE;
+                        }
+                    }
+                    else{
+                        amplitude_calibration_state = STATE_AMP_STD_LOAD_SET;
+                        etimer_set(&calibration_timer, CLOCK_SECOND*0.5);
+                    }
+                }
+            break;
+
+            case STATE_AMP_CALIBRATION_IN_PROGRESS:
+                if (etimer_expired(&calibration_timer)){
+                    triumviLEDON();
+
+                    // Enable digital pot
+                    #ifdef VERSION10
+                    ad5274_init();
+                    ad5274_ctrl_reg_write(AD5274_REG_RDAC_RP);
+                    #endif
+                    setINAGain(inaGainArr[inaGainIdx]);
+                    #ifdef VERSION10
+                    i2c_disable(AD527X_SDA_GPIO_NUM, AD527X_SDA_GPIO_PIN, AD527X_SCL_GPIO_NUM, AD527X_SCL_GPIO_PIN); 
+                    #endif
+
+                    // Enable comparator interrupt
+                    ungate_gpt(GPTIMER_1);
+                    REG(SYSTICK_STCTRL) &= (~SYSTICK_STCTRL_INTEN);
+                    timerExp = get_event_time(GPTIMER_1, GPTIMER_SUBTIMER_A) - 320000;
+                    GPIO_DETECT_RISING(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
+                    meterVoltageComparator(SENSE_ENABLE);
+
+                    // waiting for comparator interrupt
+                    do {
+                        currentTime = get_event_time(GPTIMER_1, GPTIMER_SUBTIMER_A);
+                    }
+                    while ((currentTime > timerExp) && (referenceInt==0));
+
+                    // time out, retry
+                    if (currentTime <= timerExp){
+                        gainSetting = GAIN_TOO_HIGH;
+                    }
+                    // captured interrupt
+                    else{
+                        sampleCurrentWaveform();
+                        referenceInt = 0;
+                        gainSetting = gainCtrl(currentADCVal, 0x0);
+                        REG(SYSTICK_STCTRL) |= SYSTICK_STCTRL_INTEN;
+                        gate_gpt(GPTIMER_1);
+                    }
+
+                    if (gainSetting==GAIN_OK){
+                        if (dc_offset_calibration==1){
+                            dc_offset_data = REG(DC_OFFSET_FLASH_ADDR(inaGainIdx));
+                            if (dc_offset_data == 0xffffffff){
+                                amp_cal_cnt += 1;
+                                dcOffset_accum += getAverage(currentADCVal, BUF_SIZE);
+                                if (amp_cal_cnt == DC_OFFSET_CALIBRATION_CYCLE){
+                                    #if defined(VERSION10) || defined(VERSION11)
+                                    hold_pin_status = GPIO_READ_PIN(GPIO_PORT_TO_BASE(FM25V02_HOLD_N_PORT_NUM), 0x1<<FM25V02_HOLD_N_PIN)>>FM25V02_HOLD_N_PIN;
+                                    GPIO_SET_PIN(GPIO_PORT_TO_BASE(FM25V02_HOLD_N_PORT_NUM), 0x1<<FM25V02_HOLD_N_PIN);
+                                    #endif
+                                    dcOffset_accum /= DC_OFFSET_CALIBRATION_CYCLE;
+                                    rom_util_program_flash((uint32_t*)&dcOffset_accum, DC_OFFSET_FLASH_ADDR(inaGainIdx), 4);
+                                    triumviFramDCOffsetWrite(((uint16_t)dcOffset_accum), inaGainIdx);
+                                    dcOffset_accum = 0;
+                                    amp_cal_cnt = 0;
+                                    increase_current = 1;
+                                    #if defined(VERSION10) || defined(VERSION11)
+                                    if (hold_pin_status>0){
+                                        GPIO_SET_PIN(GPIO_PORT_TO_BASE(FM25V02_HOLD_N_PORT_NUM), 0x1<<FM25V02_HOLD_N_PIN);
+                                    } else {
+                                        GPIO_CLR_PIN(GPIO_PORT_TO_BASE(FM25V02_HOLD_N_PORT_NUM), 0x1<<FM25V02_HOLD_N_PIN);
+                                    }
+                                    #endif
+                                } else {
+                                    etimer_set(&calibration_timer, CLOCK_SECOND*0.1);   
+                                }
+                                
+                            } else {
+                                increase_current = 1;
+                            }
+                            if (increase_current==1){
+                                increase_current = 0;
+                                currentSetting += 1000;
+                                if (currentSetting >= MAX_CURRENT_SETTING){
+                                    currentSetting = APS3B12_START_CURRENT;
+                                    dc_offset_calibration = 0;
+                                }
+                                etimer_set(&calibration_timer, CLOCK_SECOND*1);
+                                amplitude_calibration_state = STATE_AMP_STD_LOAD_SET;
+                            }
+                            triumviLEDOFF();
+                        } else {
+                            energyCal = 0;
+                            for (i=0; i<BUF_SIZE; i++){
+                                j = ((i*3+phaseOffset) >= 360)? i*3+phaseOffset-360 : i*3+phaseOffset;
+                                adjustedCurrSamples[i] = currentDataTransform(adjustedCurrSamples[i], 0x0);
+                                energyCal += (adjustedCurrSamples[i]*stdSineTable[j]);
+                            }
+                            tempPower = (energyCal/BUF_SIZE); // unit is mW
+                            // Fix phase oppsite down
+                            if (tempPower < 0)
+                                tempPower = -1*tempPower;
+
+                            // need to perform flash check, make sure if it's empty to proceed
+                            flash_data = REG(CURRENT_FIT_FLASH_ADDR(inaGainIdx));
+
+                            if (flash_data==0xffffffff){ 
+                                sum_power += (tempPower<<bitShiftArr[inaGainIdx]);
+                                sum_currentRMS += (currentRMS(0)<<bitShiftArr[inaGainIdx]);
+                                amp_cal_cnt += 1;
+                                if (amp_cal_cnt == AMP_CALIBRATION_CYCLE){
+                                    current_setting[current_set_cnt] = currentSetting;
+                                    read_current[current_set_cnt] = sum_currentRMS/AMP_CALIBRATION_CYCLE;
+                                    read_power[current_set_cnt] = (sum_power/AMP_CALIBRATION_CYCLE/VOLTAGE_NOMINAL);
+                                    #ifdef DATADUMP3
+                                    printf("Source Setting: %u\r\n", current_setting[current_set_cnt]);
+                                    printf("IRMS Reading: %u\r\n", read_current[current_set_cnt]);
+                                    #endif
+
+                                    if (((current_set_cnt == MAX_CURRENT_SETTING_PER_GAIN) || (currentSetting >= MAX_CURRENT_SETTING)) && (current_set_cnt > 1)){
+                                        #if defined(VERSION10) || defined(VERSION11)
+                                        hold_pin_status = GPIO_READ_PIN(GPIO_PORT_TO_BASE(FM25V02_HOLD_N_PORT_NUM), 0x1<<FM25V02_HOLD_N_PIN)>>FM25V02_HOLD_N_PIN;
+                                        GPIO_SET_PIN(GPIO_PORT_TO_BASE(FM25V02_HOLD_N_PORT_NUM), 0x1<<FM25V02_HOLD_N_PIN);
+                                        #endif
+                                        linearFit(read_current, current_setting, current_set_cnt, &slope_n, &slope_d, &offset);
+                                        #ifdef DATADUMP3
+                                        printf("B\r\n");
+                                        printf("current correction\r\n");
+                                        printf("Number of points: %u\r\n", current_set_cnt);
+                                        printf("Numerator: %lu\r\n", slope_n);
+                                        printf("Denumerator: %lu\r\n", slope_d);
+                                        printf("Offset: %d\r\n", offset);
+                                        #endif
+                                        rom_util_program_flash((uint32_t*)&slope_n, CURRENT_FIT_FLASH_ADDR(inaGainIdx),   4);
+                                        rom_util_program_flash((uint32_t*)&slope_d, CURRENT_FIT_FLASH_ADDR(inaGainIdx)+4, 4);
+                                        rom_util_program_flash((uint32_t*)&offset,  CURRENT_FIT_FLASH_ADDR(inaGainIdx)+8, 4);
+                                        calData.type = CURRENT_FIT_TYPE;
+                                        calData.numerator = slope_n;
+                                        calData.denumerator = slope_d;
+                                        calData.offset = offset;
+                                        calData.gain_idx = inaGainIdx;
+                                        triumviFramCalibrateDataFitWrite(&calData);
+
+                                        // power correction
+                                        linearFit(read_power, current_setting, current_set_cnt, &slope_n, &slope_d, &offset);
+                                        offset *= VOLTAGE_NOMINAL;
+                                        #ifdef DATADUMP3
+                                        printf("power correction\r\n");
+                                        printf("Numerator: %lu\r\n", slope_n);
+                                        printf("Denumerator: %lu\r\n", slope_d);
+                                        printf("Offset: %d\r\n", offset);
+                                        #endif
+                                        rom_util_program_flash((uint32_t*)&slope_n, POWER_FIT_FLASH_ADDR(inaGainIdx),   4);
+                                        rom_util_program_flash((uint32_t*)&slope_d, POWER_FIT_FLASH_ADDR(inaGainIdx)+4, 4);
+                                        rom_util_program_flash((uint32_t*)&offset,  POWER_FIT_FLASH_ADDR(inaGainIdx)+8, 4);
+                                        calData.type = POWER_FIT_TYPE;
+                                        calData.numerator = slope_n;
+                                        calData.denumerator = slope_d;
+                                        calData.offset = offset;
+                                        calData.gain_idx = inaGainIdx;
+                                        triumviFramCalibrateDataFitWrite(&calData);
+                                        current_set_cnt = 0;
+                                        #if defined(VERSION10) || defined(VERSION11)
+                                        if (hold_pin_status>0){
+                                            GPIO_SET_PIN(GPIO_PORT_TO_BASE(FM25V02_HOLD_N_PORT_NUM), 0x1<<FM25V02_HOLD_N_PIN);
+                                        } else {
+                                            GPIO_CLR_PIN(GPIO_PORT_TO_BASE(FM25V02_HOLD_N_PORT_NUM), 0x1<<FM25V02_HOLD_N_PIN);
+                                        }
+                                        #endif
+                                    } else{
+                                        current_set_cnt += 1;
+                                    }
+                                    increase_current = 1;
+                                    amp_cal_cnt = 0;
+                                } else{
+                                    if ((prevInaGainIdx<=MAX_INA_GAIN_IDX) && (amp_cal_cnt==1) && (inaGainIdx != prevInaGainIdx) && (current_set_cnt > 1)){
+                                        #if defined(VERSION10) || defined(VERSION11)
+                                        hold_pin_status = GPIO_READ_PIN(GPIO_PORT_TO_BASE(FM25V02_HOLD_N_PORT_NUM), 0x1<<FM25V02_HOLD_N_PIN)>>FM25V02_HOLD_N_PIN;
+                                        GPIO_SET_PIN(GPIO_PORT_TO_BASE(FM25V02_HOLD_N_PORT_NUM), 0x1<<FM25V02_HOLD_N_PIN);
+                                        #endif
+                                        linearFit(read_current, current_setting, current_set_cnt, &slope_n, &slope_d, &offset);
+                                        #ifdef DATADUMP3
+                                        printf("A\r\n");
+                                        printf("current correction\r\n");
+                                        printf("Number of points: %u\r\n", current_set_cnt);
+                                        printf("Numerator: %lu\r\n", slope_n);
+                                        printf("Denumerator: %lu\r\n", slope_d);
+                                        printf("Offset: %d\r\n", offset);
+                                        #endif
+                                        rom_util_program_flash((uint32_t*)&slope_n, CURRENT_FIT_FLASH_ADDR(prevInaGainIdx),   4);
+                                        rom_util_program_flash((uint32_t*)&slope_d, CURRENT_FIT_FLASH_ADDR(prevInaGainIdx)+4, 4);
+                                        rom_util_program_flash((uint32_t*)&offset,  CURRENT_FIT_FLASH_ADDR(prevInaGainIdx)+8, 4);
+                                        calData.type = CURRENT_FIT_TYPE;
+                                        calData.numerator = slope_n;
+                                        calData.denumerator = slope_d;
+                                        calData.offset = offset;
+                                        calData.gain_idx = prevInaGainIdx;
+                                        triumviFramCalibrateDataFitWrite(&calData);
+
+                                        // power correction
+                                        linearFit(read_power, current_setting, current_set_cnt, &slope_n, &slope_d, &offset);
+                                        offset *= VOLTAGE_NOMINAL;
+                                        #ifdef DATADUMP3
+                                        printf("power correction\r\n");
+                                        printf("Numerator: %lu\r\n", slope_n);
+                                        printf("Denumerator: %lu\r\n", slope_d);
+                                        printf("Offset: %d\r\n", offset);
+                                        #endif
+                                        rom_util_program_flash((uint32_t*)&slope_n, POWER_FIT_FLASH_ADDR(prevInaGainIdx),   4);
+                                        rom_util_program_flash((uint32_t*)&slope_d, POWER_FIT_FLASH_ADDR(prevInaGainIdx)+4, 4);
+                                        rom_util_program_flash((uint32_t*)&offset,  POWER_FIT_FLASH_ADDR(prevInaGainIdx)+8, 4);
+                                        calData.type = POWER_FIT_TYPE;
+                                        calData.numerator = slope_n;
+                                        calData.denumerator = slope_d;
+                                        calData.offset = offset;
+                                        calData.gain_idx = prevInaGainIdx;
+                                        triumviFramCalibrateDataFitWrite(&calData);
+                                        current_set_cnt = 0;
+                                        #if defined(VERSION10) || defined(VERSION11)
+                                        if (hold_pin_status>0){
+                                            GPIO_SET_PIN(GPIO_PORT_TO_BASE(FM25V02_HOLD_N_PORT_NUM), 0x1<<FM25V02_HOLD_N_PIN);
+                                        } else {
+                                            GPIO_CLR_PIN(GPIO_PORT_TO_BASE(FM25V02_HOLD_N_PORT_NUM), 0x1<<FM25V02_HOLD_N_PIN);
+                                        }
+                                        #endif
+                                    }
+                                    etimer_set(&calibration_timer, CLOCK_SECOND*0.1);
+                                }
+                                prevInaGainIdx = inaGainIdx;
+                            }
+                            // it has been alreay written, advances current setting
+                            else{
+                                increase_current = 1;
+                            }
+                            if (increase_current){
+                                // calibration completed
+                                if (currentSetting >= MAX_CURRENT_SETTING){
+                                    currentSetting = 1000;
+                                    amp_cal_completed = 1;
+                                    if (batteryPackIsAttached()){
+                                        batteryPackVoltageEn(SENSE_ENABLE);
+                                        batteryPackInit();
+                                        batteryPackLEDDriverInit();
+                                        batteryPackLEDOn(BATTERY_PACK_LED_GREEN);
+                                        i2c_disable(I2C_SDA_GPIO_NUM, I2C_SDA_GPIO_PIN, I2C_SCL_GPIO_NUM, I2C_SCL_GPIO_PIN); 
+                                    }
+                                    triumviLEDON();
+                                }
+                                else{
+                                    currentSetting += APS3B12_STEP_SIZE;
+                                }
+                                etimer_set(&calibration_timer, CLOCK_SECOND*1);
+                                amplitude_calibration_state = STATE_AMP_STD_LOAD_SET;
+                                increase_current = 0;
+                            }
+                            if (amp_cal_completed==0){
+                                triumviLEDOFF();
+                            }
+                        }                        
+                    }
+                    else{
+                        triumviLEDOFF();
+                        etimer_set(&calibration_timer, CLOCK_SECOND*0.1);
+                    }
+                }
+            break;
+
+            case STATE_AMP_TRANSMIT_COEF:
+                if (etimer_expired(&calibration_timer)){
+                    if (aps_trials < APS3B12_TRIALS){
+                        aps_trials += 1;
+                        transmitCalibrationCoef();
+                        etimer_set(&calibration_timer, CLOCK_SECOND*0.5);
+                    } else {
+                        aps_trials = 0;
+                        // start measurement process
+                        GPIO_SET_OUTPUT(GPIO_A_BASE, 0x47);
+                        GPIO_CLR_PIN(GPIO_A_BASE, 0x47);
+                        process_start(&triumviProcess, NULL);
+                        operation_mode = MODE_NORMAL;
+                        // enable 80k trickle charge resistor
+                        //rv3049_write_register(RV3049_PAGE_ADDR_EEPROM_CTRL, 0x00, 0x82);
+                        rv3049_set_trickle_charge_resistor(RESISTOR_80K);
+                        amplitude_calibration_state = STATE_AMP_NULL;
+                    }
+                }
+            break;
+
+            case STATE_AMP_NULL:
+            break;
+
+            default:
+            break;
+        }
+    }
+    PROCESS_END();
+
+}
+#endif
+
+PROCESS_THREAD(rf_received_process, ev, data) {
+    PROCESS_BEGIN();
+
+    //uint8_t *header_ptr;
+    uint8_t *data_ptr;
+    uint8_t data_length;
+    //uint8_t header_length;
+
+    while(1){
+        PROCESS_YIELD();
+        //triumviLEDToggle();
+        // Get data from radio buffer and parse it
+        if (rfReceivedInt==1){ 
+            rfReceivedInt = 0;
+            //header_length = packetbuf_hdrlen();
+            //header_ptr = packetbuf_hdrptr();                                   
+            data_length = packetbuf_datalen();                               
+            data_ptr = packetbuf_dataptr();                                  
+
+            #ifdef RTC_ENABLE
+            if ((data_ptr[0] == TRIUMVI_RTC) && (data_ptr[1] == TRIUMVI_RTC_SET)&&(data_length==8)){
+                rtcTime.year    = data_ptr[2] + 2000;
+                rtcTime.month   = data_ptr[3];
+                rtcTime.days    = data_ptr[4];
+                rtcTime.hours   = data_ptr[5];
+                rtcTime.minutes = data_ptr[6];
+                rtcTime.seconds = data_ptr[7];
+                rv3049_set_time(&rtcTime);
+                CC2538_RF_CSP_ISRFOFF();
+                rtc_packet_received = 1;
+            }
+            #endif
+            #ifdef AMPLITUDE_CALIBRATION_EN
+            if (data_ptr[0] == APS3B12_PACKET_ID){
+                if (data_ptr[1] == APS3B12_CURRENT_INFO){
+                    aps3b12_current_value = ((data_ptr[2] << 24) | (data_ptr[3] << 16) 
+                            | (data_ptr[4] << 8) | data_ptr[5]);
+                    process_poll(&amplitudeCalibrationProcess);
+                }
+            }
+            #endif
+        }
+    }
+    PROCESS_END();
+}
+
+PROCESS_THREAD(triumviProcess, ev, data) {
+    PROCESS_BEGIN();
+
+    static triumvi_record_t triumvi_record;
+    // packet preprocessing
+    static uint8_t extAddr[8];
+    NETSTACK_RADIO.get_object(RADIO_PARAM_64BIT_ADDR, extAddr, 8);
+
+    // AES Preprocessing
+    static uint8_t aesKey[] = AES_KEY;
+    static uint8_t myNonce[13] = {0};
+    memcpy(myNonce, extAddr, 8);
+    static uint32_t nonceCounter = 0;
+    aes_load_keys(aesKey, AES_KEY_STORE_SIZE_KEY_SIZE_128, 1, 0);
+    uint16_t rand0, rand1;
+
+	static int avgPower;
+    uint8_t rdy;
+
+    uint16_t triumviStatusReg;
+
+    uint16_t pf;
+    static uint16_t VRMS, IRMS;
+    uint16_t inaGain;
+
+	// Keep a counter of the number of samples we have taken
+	// since we have been on. This will obviously get reset if we lose power.
+	// We would have to store this counter in FRAM for it to be persistent.
+	static uint32_t sampleCount = 0;
+    
+    static uint32_t timerExp, currentTime;
+    uint32_t numerator, denumerator;
+    int offset;
+
+    rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND, 1, &rtimerEvent, NULL);
+
+    #ifdef RTC_ENABLE
+    static uint8_t rtc_pkt[2] = {TRIUMVI_RTC, TRIUMVI_RTC_REQ};
+    myState = STATE_READ_RTC_TIME;
+    static uint8_t spi_buf;
+    rtc_packet_received = 0;
+    static uint8_t rtcTimeCorrect;
+    #else
+    myState = STATE_INIT;
+    #endif
+    uint8_t i;
+
+    while(1){
+        PROCESS_YIELD();
+        switch (myState){
+            #ifdef RTC_ENABLE
+            case STATE_READ_RTC_TIME:
+                if (rTimerExpired==1){
+                    rTimerExpired = 0;
+                    rtcTimeCorrect = 0;
+                    rv3049_read_time(&rtcTime);
+                    spi_buf = rv3049_read_register(RV3049_PAGE_ADDR_CONTROL, 0x03);
+                    // PON Bit in control_status register. if this bit is set,
+                    // Time is corrupted, ask gateway for correct time
+                    if ((spi_buf & 0x20) || (rtcTime.year < 2017)){
+                        packetbuf_copyfrom(rtc_pkt, 2);
+                        cc2538_on_and_transmit();
+
+                        // stays on for 2.5 ms to receive correct time
+                        ungate_gpt(GPTIMER_1);
+                        REG(SYSTICK_STCTRL) &= (~SYSTICK_STCTRL_INTEN);
+                        timerExp = get_event_time(GPTIMER_1, GPTIMER_SUBTIMER_A) - 40000;
+                        do {
+                            currentTime = get_event_time(GPTIMER_1, GPTIMER_SUBTIMER_A);
+                        }
+                        while ((currentTime > timerExp) && (rtc_packet_received==0));
+                        REG(SYSTICK_STCTRL) |= SYSTICK_STCTRL_INTEN;
+                        gate_gpt(GPTIMER_1);
+                        CC2538_RF_CSP_ISRFOFF();
+                        // if time is received from gateway, clear PON bit
+                        if (rtc_packet_received==1){
+                            rtc_packet_received = 0;
+                            rtcTimeCorrect = 1;
+                            rv3049_write_register(RV3049_PAGE_ADDR_CONTROL, 0x03, 0x00);
+                        }
+
+                    } else{
+                        rtcTimeCorrect = 1;
+                    }
+                    myState = STATE_INIT;
+                    rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.5, 1, &rtimerEvent, NULL);
+                }
+            break;
+            #endif
+
+            // initialization state, check READYn is low before moving forward
+            case STATE_INIT:
+                rdy = 0;
+                unitReady();
+                #ifdef CHARGING_ENABLE
+                batteryChargingEnable(0);
+                #endif
+                if (rTimerExpired==1){
+                    rTimerExpired = 0;
+                    if (allUnitsReady())
+                        rdy = 1;
+                    // not all units are ready, go back to sleep
+                    else{
+                        GPIO_DETECT_RISING(TRIUMVI_RDYn_IN_GPIO_BASE, 0x1<<TRIUMVI_RDYn_IN_GPIO_PIN);
+                        GPIO_ENABLE_INTERRUPT(TRIUMVI_RDYn_IN_GPIO_BASE, 0x1<<TRIUMVI_RDYn_IN_GPIO_PIN);
+                        nvic_interrupt_enable(TRIUMVI_RDYn_IN_INT_NVIC_PORT);
+                    }
+                }
+                else if (allInitsAreReadyInt==1){
+                    allInitsAreReadyInt = 0;
+                    rdy = 1;
+                }
+                if (rdy==1){
+                    unitClrReady();
+                    meterSenseVREn(SENSE_ENABLE);
+                    meterSenseConfig(VOLTAGE, SENSE_ENABLE);
+                    rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.4, 1, &rtimerEvent, NULL);
+                    myState = STATE_WAITING_VOLTAGE_STABLE;
+                    // consecutive 4 samples, decreases sampling interval
+                    if (((backOffHistory&0x0f)==0x0f)&&(backOffTime>1)){
+                        backOffTime /= 2;
+                        backOffHistory &= 0x03;
+                    }
+                    backOffHistory = (backOffHistory<<1) | 0x01;
+                }
+            break;
+
+            // voltage is sattled, enable current measurement
+            case STATE_WAITING_VOLTAGE_STABLE:
+                if (rTimerExpired==1){
+                    rTimerExpired = 0;
+                    meterSenseConfig(CURRENT, SENSE_ENABLE);
+                    rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.3, 1, &rtimerEvent, NULL);
+                    myState = STATE_WAITING_COMPARATOR_STABLE;
+                }
+            break;
+
+            case STATE_WAITING_COMPARATOR_STABLE:
+                if (rTimerExpired==1){
+                    rTimerExpired = 0;
+                    // Layout of Status Reg:
+                    // Bit 9: First sample
+                    // Bit 8: External Volt Selected
+                    // Bit 7: Battery Pack attached
+                    // Bit 6: Three Phase Selected
+                    // Bit 5:
+                    // Bit 4: FRAM WRITE Enabled
+                    // Bit 3: Power factor
+                    // Bit 2: RTC Enable
+                    // Bit 1: Counter
+                    triumviStatusReg = 0x0000;
+                    if (externalVoltSel())
+                        triumviStatusReg |= EXTERNALVOLT_STATUSREG;
+                    if (sampleCount == 0)
+                        triumviStatusReg |= FIRSTSAMPLE_STATUSREG;
+                    if (vcapLoopBack())
+                        triumviStatusReg |= THREEPHASE_STATUSREG;
+                    #ifdef FRAM_WRITE
+                    triumviStatusReg |= FRAMWRITE_STATUSREG;
+                    #endif
+
+                    triumviStatusReg |= POWERFACTOR_STATUSREG;
+
+                    #ifdef RTC_ENABLE
+                    if (rtcTimeCorrect==1){
+                        triumviStatusReg |= TIMESTAMP_STATUSREG;
+                    }
+                    #endif
+
+                    #ifdef COUNTER_ENABLE
+                    triumviStatusReg |= COUNTER_STATUSREG;
+                    #endif
+
+                    // Check if configuration board is attached
+                    if (batteryPackIsAttached())
+                        triumviStatusReg |= BATTERYPACK_STATUSREG;
+
+                    // Enable digital pot
+                    #ifdef VERSION10
+                    ad5274_init();
+                    ad5274_ctrl_reg_write(AD5274_REG_RDAC_RP);
+                    #endif
+                    setINAGain(inaGainArr[inaGainIdx]);
+
+                    // Enable comparator interrupt
+                    ungate_gpt(GPTIMER_1);
+                    REG(SYSTICK_STCTRL) &= (~SYSTICK_STCTRL_INTEN);
+                    timerExp = get_event_time(GPTIMER_1, GPTIMER_SUBTIMER_A) - 320000;
+                    GPIO_DETECT_RISING(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
+                    meterVoltageComparator(SENSE_ENABLE);
+
+                    // waiting for comparator interrupt
+                    do {
+                        currentTime = get_event_time(GPTIMER_1, GPTIMER_SUBTIMER_A);
+                    }
+                    while ((currentTime > timerExp) && (referenceInt==0));
+
+                    // time out, retry
+                    if (currentTime <= timerExp){
+                        meterSenseConfig(VOLTAGE, SENSE_DISABLE);
+                        disablePOT();
+                        REG(SYSTICK_STCTRL) |= SYSTICK_STCTRL_INTEN;
+                        gate_gpt(GPTIMER_1);
+                        avgPower = -1;
+                    }
+                    // captured interrupt
+                    else{
+                        // voltage sensing and comparator interrupt can be disabled first (disableALL())
+                        avgPower = sampleAndCalculate(triumviStatusReg);
+                        referenceInt = 0;
+                    }
+
+                    if (avgPower>=0){
+                        sampleCount++;
+                        inaGain = inaGainArr[inaGainIdx];
+                        #ifdef POLYFIT
+                        // use the calibration coefficient stored in Flash, if the INA gain index is not calibrated, use the nearby coef
+                        i = inaGainIdx;
+                        do {
+                            numerator   = REG(POWER_FIT_FLASH_ADDR(i));
+                            denumerator = REG(POWER_FIT_FLASH_ADDR(i)+4);
+                            offset      = REG(POWER_FIT_FLASH_ADDR(i)+8);
+                            i += 1;
+                        } while (offset == 0xffffffff);
+                        if ((inaGainIdx < MAX_INA_GAIN_IDX) || (avgPower>240000)){
+                            avgPower = (int)(((int64_t)avgPower)*numerator/denumerator + offset);
+                        }
+                        #endif
+                        #ifdef THREEPHASE_DELTA_CONFIG
+                        // only divide sqrt(3) if
+                        // 1. Delta connection
+                        // 2. W/O external volt waveform input
+                        if ((triumviStatusReg & THREEPHASE_STATUSREG) && ((triumviStatusReg & EXTERNALVOLT_STATUSREG)==0)){
+                            avgPower = (int)(((int64_t)avgPower)*10000/17321);
+                        }
+                        #endif
+                        IRMS = currentRMS(triumviStatusReg);
+                        VRMS = voltageRMS(triumviStatusReg);
+                        #ifdef POLYFIT
+                        i = inaGainIdx;
+                        do {
+                            numerator   = REG(CURRENT_FIT_FLASH_ADDR(i));
+                            denumerator = REG(CURRENT_FIT_FLASH_ADDR(i)+4);
+                            offset      = REG(CURRENT_FIT_FLASH_ADDR(i)+8);
+                            i += 1;
+                        } while (offset == 0xffffffff);
+                        if ((inaGainIdx < MAX_INA_GAIN_IDX) || (IRMS > 500)){
+                            IRMS = (uint16_t)((((uint64_t)IRMS)*numerator/denumerator) + offset);
+                        }
+                        #endif
+                        #ifdef THREEPHASE_DELTA_CONFIG
+                        // only divide sqrt(3) if
+                        // 1. Delta connection
+                        // 2. W/O external volt waveform input
+                        if ((triumviStatusReg & THREEPHASE_STATUSREG) && ((triumviStatusReg & EXTERNALVOLT_STATUSREG)==0)){
+                            IRMS = (int)(((uint64_t)IRMS)*10000/17321);
+                        }
+                        #endif
+                        if ((IRMS==0) || (avgPower==0))
+                            pf = 0;
+                        else
+                            pf = (uint16_t)((avgPower*1000)/(VRMS*IRMS));
+                        if (pf > 1000)
+                            pf = 1000;
+                        #ifdef DATADUMP2
+                        uint8_t i;
+                        //printf("ADC reference: %u\r\n", dcOffset);
+                        //printf("Time difference: %lu\r\n", (timerVal[0]-timerVal[1]));
+                        //printf("INA Gain: %u\r\n", inaGain);
+                        //for (i=0; i<BUF_SIZE; i+=1)
+                        //    printf("Current reading: %d\r\n", currentADCVal[i]);
+                        printf("INA Gain: %u\r\n", inaGain);
+                        printf("IRMS: %u\r\n", IRMS);
+                        printf("Average Power: %u\r\n", avgPower);
+                        #else
+                        rand0 = random_rand();
+                        rand1 = random_rand();
+                        nonceCounter = (rand0<<16) | rand1;
+                        
+                        // Battery pack attached, turn it on ans samples switches
+                        if (triumviStatusReg & BATTERYPACK_STATUSREG){
+                            batteryPackVoltageEn(SENSE_ENABLE);
+                            sx1509b_init();
+                            sx1509b_high_voltage_input_enable(SX1509B_PORTA, 0x1, SX1509B_HIGH_INPUT_ENABLE);
+                            triumvi_record.panelID = batteryPackReadPanelID();
+                            triumvi_record.circuitID = batteryPackReadCircuitID();
+                            batteryPackVoltageEn(SENSE_DISABLE);
+                            i2c_disable(I2C_SDA_GPIO_NUM, I2C_SDA_GPIO_PIN, 
+                                        I2C_SCL_GPIO_NUM, I2C_SCL_GPIO_PIN); 
+                        }
+                        triumvi_record.avgPower = (exponenttArr[inaGainIdx]<<((sizeof(avgPower)<<3)-2)) + avgPower;
+                        triumvi_record.triumviStatusReg = (uint8_t)(triumviStatusReg & 0xff);
+                        triumvi_record.IRMS = (exponenttArr[inaGainIdx]<<((sizeof(IRMS)<<3)-2)) + IRMS;
+                        triumvi_record.VRMS = VRMS;
+                        triumvi_record.inaGain = inaGain;
+                        triumvi_record.pf = pf;
+                        // Write data into FRAM
+                        #ifdef FRAM_WRITE
+                        triumviFramWrite(triumvi_record, rtctime);
+                        #endif
+                        encryptAndTransmit(&triumvi_record, myNonce, nonceCounter);
+                        #endif
+                        // First sample, blinks battery pack blue LED
+                        if (batteryPackIsUSBAttached() &&
+                            (triumviStatusReg & FIRSTSAMPLE_STATUSREG)){
+                            batteryPackVoltageEn(SENSE_ENABLE);
+                            batteryPackInit();
+                            batteryPackLEDDriverInit();
+                            batteryPackLEDOn(BATTERY_PACK_LED_BLUE);
+                            myState = STATE_BATTERYPACK_LEDBLINK;
+                        }
+                        else{
+                            triumviLEDON();
+                            myState = STATE_TRIUMVI_LEDBLINK;
+                        }
+                        rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.1, 1, &rtimerEvent, NULL);
+                    }
+                    else{
+                        if (triumviStatusReg & BATTERYPACK_STATUSREG){
+                            batteryPackVoltageEn(SENSE_DISABLE);
+                            i2c_disable(I2C_SDA_GPIO_NUM, I2C_SDA_GPIO_PIN, 
+                                        I2C_SCL_GPIO_NUM, I2C_SCL_GPIO_PIN); 
+                        }
+                        rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.1, 1, &rtimerEvent, NULL);
+                        myState = STATE_TRIUMVI_LEDBLINK;
+                    }
+                    #ifdef CHARGING_ENABLE
+                    if (backOffTime==1){
+                        batteryChargingEnable(1);
+                    }
+                    #endif
+                }
+            break;
+
+            case STATE_BATTERYPACK_LEDBLINK:
+                if (rTimerExpired==1){
+                    rTimerExpired = 0;
+                    batteryPackVoltageEn(SENSE_DISABLE);
+                    i2c_disable(I2C_SDA_GPIO_NUM, I2C_SDA_GPIO_PIN, 
+                                I2C_SCL_GPIO_NUM, I2C_SCL_GPIO_PIN); 
+                    rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*backOffTime, 1, &rtimerEvent, NULL);
+                    #ifdef RTC_ENABLE
+                    myState = STATE_READ_RTC_TIME;
+                    #else
+                    myState = STATE_INIT;
+                    #endif
+                }
+            break;
+
+            case STATE_TRIUMVI_LEDBLINK:
+                if (rTimerExpired==1){
+                    rTimerExpired = 0;
+                    triumviLEDOFF();
+                    #ifdef DATADUMP2
+                    rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*0.1, 1, &rtimerEvent, NULL);
+                    #else
+                    rtimer_set(&myRTimer, RTIMER_NOW()+RTIMER_SECOND*backOffTime, 1, &rtimerEvent, NULL);
+                    #endif
+                    #ifdef RTC_ENABLE
+                    myState = STATE_READ_RTC_TIME;
+                    #else
+                    myState = STATE_INIT;
+                    #endif
+                }
+            break;
+
+            default:
+            break;
+        }
+    }
+    PROCESS_END();
+}
+
+
+static void rtimerEvent(struct rtimer *t, void *ptr){
+    rTimerExpired = 1;
+    process_poll(&triumviProcess);
+}
+
+// return phase offset has max product, only be called in calibration mode
+uint16_t phaseMatchFilter(uint16_t* adcSamples, uint16_t* currentAVG){
+    uint16_t i;
+    int prod[360];
+    int maxVal = 0;
+    uint16_t maxVal_phaseOffset = 0;
+    uint16_t currentRef;
+    currentRef = getAverage(adcSamples, BUF_SIZE);
+    for (i=0; i<360; i++){
+        prod[i] = cycleProduct(adcSamples, i, currentRef);
+        if (prod[i] > maxVal){
+            maxVal = prod[i];
+            maxVal_phaseOffset = i;
+        }
+    }
+    *currentAVG = currentRef;
+    return maxVal_phaseOffset;
+}
+
+int cycleProduct(uint16_t* adcSamples, uint16_t offset, uint16_t currentRef){
+    uint16_t i;
+    uint16_t tmp;
+    uint16_t length = BUF_SIZE;
+    int product = 0;
+    for (i=0; i<length; i++){
+        tmp = i*3 + offset;
+        if (tmp>=360)
+            tmp -= 360;
+        product += (adcSamples[i] - currentRef)*stdSineTable[tmp];
+    }
+    return product;
+}
+
+// Fine tune to 3.002 degree / sample
+// Ideally, timerVal[1] - timerVal[0] = 266667
+void sampleCurrentWaveform(){
+	uint16_t sampleCnt = 0;
+	uint16_t temp;
+    #ifdef FIFTYHZ
+    uint8_t i;
+    #endif
+    timerVal[0] = get_event_time(GPTIMER_1, GPTIMER_SUBTIMER_A);
+	while (sampleCnt < BUF_SIZE){
+        #ifdef FIFTYHZ
+        for (i=0; i<59; i++)
+            asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        #else
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        #endif
+		temp = adc_get(I_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_512);
+		currentADCVal[sampleCnt] = ((temp>>4)>2047)? 0 : (temp>>4);
+		sampleCnt++;
+	}
+    timerVal[1] = get_event_time(GPTIMER_1, GPTIMER_SUBTIMER_A);
+}
+
+void meterInit(){
+
+    // GPIO default Input
+    // Set all un-used pins to output and clear output
+    #if defined(DATADUMP) || defined(DATADUMP2) || defined(DEBUG_ON) || defined(DATADUMP3)
+    GPIO_SET_OUTPUT(GPIO_A_BASE, 0x40);
+    GPIO_CLR_PIN(GPIO_A_BASE, 0x40);
+    #else
+    // Port A
+    GPIO_SET_OUTPUT(GPIO_A_BASE, 0x47);
+    GPIO_CLR_PIN(GPIO_A_BASE, 0x47);
+    #endif
+
+    // Port B
+    GPIO_SET_OUTPUT(GPIO_B_BASE, 0x06);
+    GPIO_CLR_PIN(GPIO_B_BASE, 0x06);
+    GPIO_SET_INPUT(GPIO_B_BASE, 
+        (0x1<<TRIUMVI_RDYn_IN_GPIO_PIN) | 
+        (0x1<<CONFIG_PWR_LOOPBAK_GPIO_PIN) |
+        (0x1<<EXT_VOLT_IN_SEL_GPIO_PIN)); 
+
+    // Port C
+    GPIO_SET_OUTPUT(GPIO_C_BASE, 0xeb);
+    GPIO_CLR_PIN(GPIO_C_BASE, 0xeb);
+
+    // Port D
+    GPIO_SET_OUTPUT(GPIO_D_BASE, 0x1f);
+    GPIO_SET_PIN(GPIO_D_BASE, 0x0f);
+    GPIO_CLR_PIN(GPIO_D_BASE, 0x10);
+    GPIO_SET_INPUT(CONFIG_VCAP_LOOPBACK_GPIO_BASE, (0x1<<CONFIG_VCAP_LOOPBACK_GPIO_PIN));
+    #ifdef CHARGING_ENABLE
+    batteryChargingEnable(0);
+    #endif
+    #if !defined(DATADUMP) && !defined(DATADUMP2) && !defined(DEBUG_ON) && !defined(DATADUMP3)
+    // disable all pull-up resistors
+    disable_all_ioc_override();
+    #endif
+
+
+	// ADC for current sense
+	adc_init();
+	ioc_set_over(I_ADC_GPIO_NUM, I_ADC_GPIO_PIN, IOC_OVERRIDE_ANA);
+	ioc_set_over(V_REF_ADC_GPIO_NUM, V_REF_ADC_GPIO_PIN, IOC_OVERRIDE_ANA);
+
+	// External voltage waveform inputs
+	ioc_set_over(EXT_VOLT_IN_GPIO_NUM, EXT_VOLT_IN_GPIO_PIN, IOC_OVERRIDE_ANA);
+	ioc_set_over(EXT_VOLT_IN_SEL_GPIO_NUM, EXT_VOLT_IN_SEL_GPIO_PIN, IOC_OVERRIDE_PDE);
+
+	// Enable interrupt on rising edge
+	ioc_set_over(V_REF_CROSS_INT_GPIO_NUM, V_REF_CROSS_INT_GPIO_PIN, IOC_OVERRIDE_DIS);
+	GPIO_DETECT_EDGE(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
+	GPIO_TRIGGER_SINGLE_EDGE(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
+	// interrupt
+	gpio_register_callback(referenceIntCallBack, V_REF_CROSS_INT_GPIO_NUM, V_REF_CROSS_INT_GPIO_PIN);
+	GPIO_DISABLE_INTERRUPT(V_REF_CROSS_INT_GPIO_BASE, 0x1<<V_REF_CROSS_INT_GPIO_PIN);
+	nvic_interrupt_disable(V_REF_CROSS_INT_NVIC_PORT);
+
+    // READYn_IN
+	GPIO_DETECT_EDGE(TRIUMVI_RDYn_IN_GPIO_BASE, 0x1<<TRIUMVI_RDYn_IN_GPIO_PIN);
+	GPIO_TRIGGER_SINGLE_EDGE(TRIUMVI_RDYn_IN_GPIO_BASE, 0x1<<TRIUMVI_RDYn_IN_GPIO_PIN);
+	// interrupt
+	gpio_register_callback(unitReadyCallBack, TRIUMVI_RDYn_IN_GPIO_NUM, TRIUMVI_RDYn_IN_GPIO_PIN);
+	GPIO_DISABLE_INTERRUPT(TRIUMVI_RDYn_IN_GPIO_BASE, 0x1<<TRIUMVI_RDYn_IN_GPIO_PIN);
+	nvic_interrupt_disable(TRIUMVI_RDYn_IN_INT_NVIC_PORT);
+
+
+	// timer1, used for counting samples
+	ungate_gpt(GPTIMER_1);
+	gpt_set_mode(GPTIMER_1, GPTIMER_SUBTIMER_A, GPTIMER_TAMR_TAMR_PERIODIC);
+	gpt_set_count_dir(GPTIMER_1, GPTIMER_SUBTIMER_A, GPTIMER_TnMR_TnCDIR_COUNT_DOWN);
+	gpt_set_interval_value(GPTIMER_1, GPTIMER_SUBTIMER_A, 0xffffffff);
+	gpt_enable_event(GPTIMER_1, GPTIMER_SUBTIMER_A);
+	gate_gpt(GPTIMER_1);
+
+	rTimerExpired = 0;
+	referenceInt = 0;
+    allInitsAreReadyInt = 0;
+    inaGainIdx = MAX_INA_GAIN_IDX-1; // G = 9
+
+	backOffTime = 4;
+	backOffHistory = 0;
+
+}
+
+// this function check if the ADC samples are within a proper range
+gainSetting_t gainCtrl(uint16_t* adcSamples, uint8_t externalVolt){
+    uint16_t i;
+    uint16_t upperThreshold = (inaGainIdx==MAX_INA_GAIN_IDX)? UPPERTHRESHOLD0 : 
+                              (inaGainIdx==1)? UPPERTHRESHOLD2 : UPPERTHRESHOLD1;
+    uint16_t lowerThreshold = (inaGainIdx==MIN_INA_GAIN_IDX)? LOWERTHRESHOLD0 : LOWERTHRESHOLD1; 
+    uint16_t length = BUF_SIZE;
+    uint16_t currentRef;
+    int currentCal;
+    int maxVal = 0;
+    gainSetting_t res = GAIN_OK;
+    uint32_t dc_offset_data;
+    uint8_t inaGainIdx_copy;
+    
+    // in calibration mode, use ADC sample as reference
+    if (operation_mode==MODE_PHASE_CALIBRATION){
+        currentRef = adc_get(V_REF_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_512);
+        currentRef = ((currentRef>>4)>2047)? 0 : (currentRef>>4);
+    }
+    // using hardcoded value as reference
+    else{
+        inaGainIdx_copy = inaGainIdx;
+        do {
+            dc_offset_data = REG(DC_OFFSET_FLASH_ADDR(inaGainIdx_copy));
+            if (inaGainIdx_copy == MAX_INA_GAIN_IDX){
+                dc_offset_data = dcOffset;
+                break;
+            } else {
+                inaGainIdx_copy += 1;
+            }
+        } while (dc_offset_data == 0xffffffff);
+        
+        if (externalVolt){
+            #ifdef AVG_VREF
+            currentRef = getAverage(adcSamples, BUF_SIZE2);
+            #else
+            currentRef = ((uint16_t)dc_offset_data)>>1;
+            #endif
+            upperThreshold = (upperThreshold>>1);
+            lowerThreshold = (lowerThreshold>>1);
+            length = BUF_SIZE2;
+        }
+        else{
+            #ifdef AVG_VREF
+            currentRef = getAverage(adcSamples, BUF_SIZE);
+            #else
+            currentRef = (uint16_t)dc_offset_data;
+            #endif
+        }
+    }
+
+    // loop the entire samples, substract offset and update max ADC value
+    for (i=0; i<length; i++){
+        currentCal = adcSamples[i] - currentRef;
+        if ((currentCal>upperThreshold)&&(inaGainIdx>MIN_INA_GAIN_IDX)){
+            res = GAIN_TOO_HIGH;
+            inaGainIdx -= 1;
+            setINAGain(inaGainArr[inaGainIdx]);
+            return res;
+        }
+        if (currentCal > maxVal){
+            maxVal = currentCal;
+        }
+        adjustedCurrSamples[i] = currentCal;
+    }
+    
+    if ((maxVal < lowerThreshold) && (inaGainIdx<MAX_INA_GAIN_IDX)){
+        res = GAIN_TOO_LOW;
+        // Mux is off, turn it on
+        inaGainIdx += 1;
+        setINAGain(inaGainArr[inaGainIdx]);
+    } else if ((operation_mode==MODE_PHASE_CALIBRATION) && (maxVal < lowerThreshold) && (inaGainIdx==MAX_INA_GAIN_IDX)){
+        res = GAIN_ERROR;
+    }
+
+    return res;
+}
+
+void encryptAndTransmit(triumvi_record_t* thisSample, 
+                        uint8_t* myNonce, uint32_t nonceCounter){
+    // 1 byte Identifier, 
+    // 4 bytes nonce, 
+    // packet payload, 
+    // 4 byte MIC
+    // 1 + 4 + 4 = 9
+    // 9 bytes extra
+	static uint8_t packetData[PACKET_PAYLOAD_SIZE+9];
+	static uint8_t readingBuf[PACKET_PAYLOAD_SIZE];
+	uint8_t* aData = myNonce;
+	uint8_t* pData = readingBuf;
+	uint8_t myMic[8] = {0x0};
+	uint8_t myPDATA_LEN = PDATA_LEN;
+	uint8_t packetLen = 14; // minimum length, 1 byte ID, 4 bytes nonce, 5 bytes payload, 4 byte MIC
+	uint16_t randBackOff;
+    #ifdef COUNTER_ENABLE
+    uint32_t counter_val;
+    #endif
+
+	packetData[0] = TRIUMVI_PKT_IDENTIFIER;
+	if (thisSample->triumviStatusReg & BATTERYPACK_STATUSREG){
+        readingBuf[myPDATA_LEN] = thisSample->panelID;
+        readingBuf[myPDATA_LEN+1] = thisSample->circuitID;
+        myPDATA_LEN += 2;
+        packetLen += 2;
+	}
+	readingBuf[4] = thisSample->triumviStatusReg;
+	packData(&packetData[1], nonceCounter, 4);
+	packData(&myNonce[9], nonceCounter, 4);
+	packData(readingBuf, thisSample->avgPower, 4);
+    packData(&readingBuf[myPDATA_LEN], thisSample->pf, 2);
+
+    readingBuf[myPDATA_LEN+2] = thisSample->VRMS&0xff;
+    readingBuf[myPDATA_LEN+3] = ((thisSample->VRMS>>8)<<6) | (thisSample->inaGain&0x3f);
+    packData(&readingBuf[myPDATA_LEN+4], thisSample->IRMS, 2);
+    myPDATA_LEN += 6;
+    packetLen += 6;
+
+    #ifdef RTC_ENABLE
+    if (thisSample->triumviStatusReg & TIMESTAMP_STATUSREG){
+        readingBuf[myPDATA_LEN] = (rtcTime.year - 2000);
+        readingBuf[myPDATA_LEN+1] = rtcTime.month;
+        readingBuf[myPDATA_LEN+2] = rtcTime.days;
+        readingBuf[myPDATA_LEN+3] = rtcTime.hours;
+        readingBuf[myPDATA_LEN+4] = rtcTime.minutes;
+        readingBuf[myPDATA_LEN+5] = rtcTime.seconds;
+        myPDATA_LEN += 6;
+        packetLen += 6;
+    }
+    #endif
+
+    #ifdef COUNTER_ENABLE
+    if (thisSample->triumviStatusReg & COUNTER_STATUSREG){
+        #if defined(VERSION10) || defined(VERSION11)
+        GPIO_SET_PIN(GPIO_PORT_TO_BASE(FM25V02_HOLD_N_PORT_NUM), 
+            0x1<<FM25V02_HOLD_N_PIN);
+        #endif
+        counter_val = triumviFramCounterRead();
+        packData(&readingBuf[myPDATA_LEN], counter_val, 4);
+        myPDATA_LEN += 4;
+        packetLen += 4;
+    }
+    #endif
+
+	ccm_auth_encrypt_start(LEN_LEN, 0, myNonce, aData, ADATA_LEN,
+		pData, myPDATA_LEN, MIC_LEN, NULL);
+	while(ccm_auth_encrypt_check_status()!=AES_CTRL_INT_STAT_RESULT_AV){}
+	ccm_auth_encrypt_get_result(myMic, MIC_LEN);
+	memcpy(&packetData[5], readingBuf, myPDATA_LEN);
+	memcpy(&packetData[5+myPDATA_LEN], myMic, MIC_LEN);
+	packetbuf_copyfrom(packetData, packetLen);
+
+    // Random delay before transmits a packet
+	randBackOff = random_rand();
+	clock_delay_usec(randBackOff);
+	clock_delay_usec(randBackOff);
+
+    REG(RFCORE_XREG_TXPOWER) = 0xff; // 7dBm
+	cc2538_on_and_transmit();
+	CC2538_RF_CSP_ISRFOFF();
+
+    #ifdef TRANSMIT_WAVEFORM
+    // transmit entire waveform
+    waveformTransmit(thisSample->triumviStatusReg);
+    #endif
+
+    #ifdef COUNTER_ENABLE
+    if (thisSample->triumviStatusReg & COUNTER_STATUSREG){
+        counter_val = triumviFramCounterRead();
+        counter_val += 1;
+        triumviFramCounterWrite(counter_val);
+        #if defined(VERSION10) || defined(VERSION11)
+        GPIO_CLR_PIN(GPIO_PORT_TO_BASE(FM25V02_HOLD_N_PORT_NUM), 
+            0x1<<FM25V02_HOLD_N_PIN);
+        #endif
+    }
+    #endif
+}
+
+#ifdef TRANSMIT_WAVEFORM
+void waveformTransmit(uint8_t triumviStatusReg){
+    static uint8_t packetData[PACKET_WAVEFORM_OVERHEAD+((BUF_SIZE*3)>>2)];
+    uint16_t random_packet_id = random_rand();
+    uint8_t half_cycle_size = (triumviStatusReg & EXTERNALVOLT_STATUSREG)? (BUF_SIZE2>>2)+1 : (BUF_SIZE>>1);
+    uint8_t i;
+    uint8_t offset;
+    packetData[0] = TRIUMVI_PKT_WAVE_IDENTIFIER0;
+    packetData[1] = TRIUMVI_PKT_WAVE_IDENTIFIER1;
+    packetData[2] = (random_packet_id & 0xff00)>>8;
+    packetData[3] = random_packet_id & 0xfe; // clear last bit
+    packetData[4] = (triumviStatusReg & EXTERNALVOLT_STATUSREG)? I_TRANSFORM<<1 : I_TRANSFORM;
+    packetData[5] = inaGainArr[inaGainIdx];
+    packetData[6] = (dcOffset & 0xff00)>>8;
+    packetData[7] = dcOffset&0xff;
+    packetData[8] = half_cycle_size;
+    offset = half_cycle_size;
+
+    for (i=0; i<(half_cycle_size>>1); i++){
+        packetData[PACKET_WAVEFORM_OVERHEAD+i*3]   = ((currentADCVal[i*2]&0x0ff0)>>4);
+        packetData[PACKET_WAVEFORM_OVERHEAD+i*3+1] = ((currentADCVal[i*2]&0x000f)<<4) + ((currentADCVal[i*2+1]&0x0f00)>>8);
+        packetData[PACKET_WAVEFORM_OVERHEAD+i*3+2] = currentADCVal[i*2+1]&0x00ff;
+    }
+    packetbuf_copyfrom(packetData, ((half_cycle_size*3)>>1)+PACKET_WAVEFORM_OVERHEAD);
+    cc2538_on_and_transmit();
+    CC2538_RF_CSP_ISRFOFF();
+
+    clock_delay_usec(random_packet_id);
+    clock_delay_usec(random_packet_id);
+
+    // BUF_SIZE2 = 228 (2 cycles, --> 114 / cycle
+    // transmit 114/2+1 in first packet, 114/2-1 in 2nd packet
+    if (triumviStatusReg & EXTERNALVOLT_STATUSREG){
+        packetData[8] = (BUF_SIZE2>>2)-1;
+        half_cycle_size = (BUF_SIZE2>>2)-1;
+    }
+
+    // 2nd packet
+    packetData[3] |= 0x01; // set last bit
+    for (i=0; i<(half_cycle_size>>1); i++){
+        packetData[PACKET_WAVEFORM_OVERHEAD+i*3]   = ((currentADCVal[offset+i*2]&0x0ff0)>>4);
+        packetData[PACKET_WAVEFORM_OVERHEAD+i*3+1] = ((currentADCVal[offset+i*2]&0x000f)<<4) + ((currentADCVal[offset+i*2+1]&0x0f00)>>8);
+        packetData[PACKET_WAVEFORM_OVERHEAD+i*3+2] = currentADCVal[offset+i*2+1]&0x00ff;
+    }
+    packetbuf_copyfrom(packetData, ((half_cycle_size*3)>>1)+PACKET_WAVEFORM_OVERHEAD);
+    cc2538_on_and_transmit();
+    CC2538_RF_CSP_ISRFOFF();
+
+}
+#endif
+
+int sampleAndCalculate(uint16_t triumviStatusReg){
+    int tempPower;
+    int tempPower2 = 0;
+    uint16_t i, j, k;
+    uint8_t numOfCycles = 8;
+    uint8_t numOfBitShift = 3; // log2(numOfCycles)
+    uint16_t voltRef;
+    int energyCal = 0;
+    gainSetting_t gainSetting;
+
+    if (triumviStatusReg & EXTERNALVOLT_STATUSREG){
+        for (i=0; i<numOfCycles; i++){
+            sampleCurrentVoltageWaveform();
+            gainSetting = gainCtrl(currentADCVal, 0x1);
+            if (gainSetting == GAIN_OK){
+                voltRef = getAverage32(voltADCVal, BUF_SIZE2);
+                energyCal = 0;
+                for (j=0; j<BUF_SIZE2; j++){
+                    k = ((j + VOLTAGE_SAMPLE_OFFSET)>=BUF_SIZE2)? 
+                        (j+VOLTAGE_SAMPLE_OFFSET-BUF_SIZE2) : 
+                        j+VOLTAGE_SAMPLE_OFFSET;
+                    adjustedCurrSamples[j] = currentDataTransform(adjustedCurrSamples[j], 0x1);
+                    voltADCVal[k] = voltDataTransform(voltADCVal[k], voltRef);
+                    energyCal += (adjustedCurrSamples[j]*voltADCVal[k])/1000;
+                }
+                tempPower = (energyCal/BUF_SIZE2); // unit is mW
+                // Fix phase oppsite down
+                if (tempPower < 0)
+                    tempPower = -1*tempPower;
+                tempPower2 += tempPower;
+            }
+            else{
+                tempPower2 = -1;
+                break;
+            }
+        }
+        REG(SYSTICK_STCTRL) |= SYSTICK_STCTRL_INTEN;
+        gate_gpt(GPTIMER_1);
+        meterSenseConfig(VOLTAGE, SENSE_DISABLE);
+        disablePOT();
+        if (tempPower2 < 0)
+            return -1;
+        else
+            return (tempPower2>>numOfBitShift);
+    }
+    else{
+        sampleCurrentWaveform();
+        meterSenseConfig(VOLTAGE, SENSE_DISABLE);
+        gainSetting = gainCtrl(currentADCVal, 0x0);
+        disablePOT();
+        REG(SYSTICK_STCTRL) |= SYSTICK_STCTRL_INTEN;
+        gate_gpt(GPTIMER_1);
+        if (gainSetting==GAIN_OK){
+            for (i=0; i<BUF_SIZE; i++){
+                j = ((i*3+phaseOffset) >= 360)? i*3+phaseOffset-360 : i*3+phaseOffset;
+                adjustedCurrSamples[i] = currentDataTransform(adjustedCurrSamples[i], 0x0);
+                energyCal += (adjustedCurrSamples[i]*stdSineTable[j]);
+            }
+            tempPower = (energyCal*VOLTAGE_NOMINAL_SCALING/BUF_SIZE); // unit is mW
+            // Fix phase oppsite down
+            if (tempPower < 0)
+                tempPower = -1*tempPower;
+            return tempPower;
+        }
+    }
+    return -1;
+}
+
+void disablePOT(){
+    meterSenseConfig(CURRENT, SENSE_DISABLE);
+    meterSenseVREn(SENSE_DISABLE);
+    #ifdef VERSION10
+    i2c_disable(AD527X_SDA_GPIO_NUM, AD527X_SDA_GPIO_PIN, 
+                AD527X_SCL_GPIO_NUM, AD527X_SCL_GPIO_PIN); 
+    #endif
+}
+
+int currentDataTransform(int currentReading, uint8_t externalVolt){
+    uint8_t inaGain = inaGainArr[inaGainIdx];
+    uint8_t bitShift = bitShiftArr[inaGainIdx];
+    float tmp = (externalVolt)? currentReading*I_TRANSFORM*2/inaGain : currentReading*I_TRANSFORM/inaGain;
+    return (((int)tmp)>>bitShift);
+}
+
+int voltDataTransform(int voltReading, uint16_t voltReference){
+    return (voltReading - voltReference)*VOLTAGE_SCALING;
+}
+
+
+
+void sampleCurrentVoltageWaveform(){
+	uint16_t sampleCnt = 0;
+	uint16_t temp;
+    #ifdef FIFTYHZ
+    uint8_t i;
+    #endif
+	timerVal[0] = get_event_time(GPTIMER_1, GPTIMER_SUBTIMER_A);
+	while (sampleCnt < BUF_SIZE2){
+        #ifdef FIFTYHZ
+        for (i=0; i<59; i++)
+            asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        #else
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        asm("nop");
+        #endif
+		temp = adc_get(I_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_256);
+		currentADCVal[sampleCnt] = ((temp>>5)>1023)? 0 : (temp>>5);
+		temp = adc_get(EXT_VOLT_IN_ADC_CHANNEL, SOC_ADC_ADCCON_REF_EXT_SINGLE, SOC_ADC_ADCCON_DIV_256);
+		voltADCVal[sampleCnt] = ((temp>>5)>1023)? 0 : (temp>>5);
+		sampleCnt++;
+	}
+	timerVal[1] = get_event_time(GPTIMER_1, GPTIMER_SUBTIMER_A);
+}
+
+
+static void disable_all_ioc_override() {
+	uint8_t portnum = 0;
+	uint8_t pinnum = 0;
+	for(portnum = 0; portnum < 4; portnum++) {
+		for(pinnum = 0; pinnum < 8; pinnum++) {
+			ioc_set_over(portnum, pinnum, IOC_OVERRIDE_DIS);
+		}
+	}
+}
+
+// interrupt when all units are ready
+static void unitReadyCallBack(uint8_t port, uint8_t pin){
+	GPIO_DISABLE_INTERRUPT(TRIUMVI_RDYn_IN_GPIO_BASE, 0x1<<TRIUMVI_RDYn_IN_GPIO_PIN);
+	nvic_interrupt_disable(TRIUMVI_RDYn_IN_INT_NVIC_PORT);
+	process_poll(&triumviProcess);
+    allInitsAreReadyInt = 1;
+}
+
+static void referenceIntCallBack(uint8_t port, uint8_t pin){
+    meterVoltageComparator(SENSE_DISABLE);
+    referenceInt = 1;
+}
+
+uint16_t currentRMS(uint16_t triumviStatusReg){
+    uint16_t i;
+    uint32_t result = 0;
+    uint64_t result64 = 0;
+    uint16_t length = (triumviStatusReg & EXTERNALVOLT_STATUSREG)? BUF_SIZE2 : BUF_SIZE;
+
+    for (i=0; i<length; i++){
+        result64 += (adjustedCurrSamples[i]*adjustedCurrSamples[i]);
+    }
+    result = (uint32_t)(result64/length);
+    return mysqrt(result);
+}
+
+// unit is V
+uint16_t voltageRMS(uint16_t triumviStatusReg){
+    uint16_t i;
+    float tmp;
+    float result = 0;
+    if (triumviStatusReg & EXTERNALVOLT_STATUSREG){
+        for (i=0; i<BUF_SIZE2; i++){
+            tmp = voltADCVal[i]/1000;
+            result += tmp*tmp;
+        }
+        result /= BUF_SIZE2;
+        return mysqrt((uint32_t)result);
+    }
+    return VOLTAGE_NOMINAL*VOLTAGE_NOMINAL_SCALING;
+    
+    
+}
+
+void aps3b12_set_current(uint16_t cu){
+    uint8_t pkt[4] = {APS3B12_PACKET_ID, APS3B12_SET_CURRENT, 
+        (cu&0xff00)>>8, (cu&0xff)};
+    packetbuf_copyfrom(pkt, 4);
+    cc2538_on_and_transmit();
+    CC2538_RF_CSP_ISRFOFF();
+}
+
+void aps3b12_enable(uint8_t en){
+    uint8_t pkt[4] = {APS3B12_PACKET_ID, APS3B12_ENABLE, (en&0x1), 0x0};
+    packetbuf_copyfrom(pkt, 4);
+    cc2538_on_and_transmit();
+    CC2538_RF_CSP_ISRFOFF();
+}
+
+void rf_rx_handler(){
+    process_poll(&rf_received_process);
+    rfReceivedInt = 1;
+}   
+
+#ifdef AMPLITUDE_CALIBRATION_EN
+void aps3b12_read_current(){
+    uint8_t pkt[4] = {APS3B12_PACKET_ID, APS3B12_READ, APS3B12_READ_CURRENT, 0x0};
+    packetbuf_copyfrom(pkt, 4);
+    cc2538_on_and_transmit();
+}
+
+void linearFit(uint16_t* reading, uint16_t* setting, uint8_t length, 
+                uint32_t* slope_n, uint32_t* slope_d, int* offset){
+    uint8_t i;
+    int32_t readingAvg = getAverage(reading, length);
+    int32_t settingAvg = getAverage(setting, length);
+    int32_t tmp0 = 0;
+    uint32_t tmp1 = 0;
+    for (i=0; i<length; i++){
+        tmp0 += ((reading[i] - readingAvg)*(setting[i] - settingAvg));
+        tmp1 += ((reading[i] - readingAvg)*(reading[i] - readingAvg));
+    }
+    *slope_n = tmp0;
+    *slope_d = tmp1;
+    *offset = settingAvg - (((uint64_t)readingAvg)*tmp0/tmp1);
+}
+#endif
+
+void transmitCalibrationCoef(){
+    static uint8_t packetData[8+26*3];
+    static uint8_t calDataValid;
+    static linearFitCalData_t linearFitCalibrationData;
+    static phaseOffsetCalData_t phaseData;
+    uint8_t i;
+    uint16_t dc_offset_data;
+    uint8_t numCalCoef = 0;
+
+    triumviFramCalibrateDataPhaseRead(&phaseData);
+    calDataValid = triumviFramCalibrateDataValidRead();
+
+    packetData[0] = TRIUMVI_PKT_CALIBRATIONCOEF_IDENTIFIER0;
+    packetData[1] = TRIUMVI_PKT_CALIBRATIONCOEF_IDENTIFIER1;
+    packetData[2] = (phaseData.phase_Offset & 0xff);
+    packetData[3] = (phaseData.phase_Offset & 0xff00)>>8;
+    packetData[4] = (phaseData.dc_Offset & 0xff);
+    packetData[5] = (phaseData.dc_Offset & 0xff00)>>8;
+    packetData[6] = calDataValid;
+    packetData[7] = calDataValid & 0x01;
+    if (calDataValid & 0x01){
+        for (i=0; i<MAX_INA_GAIN_IDX+1; i++){
+            if (calDataValid & (0x01<<(i+1))){
+                packetData[7] |= (0x01<<(i+1));
+                // read current fit data
+                linearFitCalibrationData.type = CURRENT_FIT_TYPE;
+                linearFitCalibrationData.gain_idx = i;
+                triumviFramCalibrateDataFitRead(&linearFitCalibrationData);
+                packData(&packetData[8+numCalCoef*26], linearFitCalibrationData.numerator, 4);
+                packData(&packetData[8+numCalCoef*26+4], linearFitCalibrationData.denumerator, 4);
+                packData(&packetData[8+numCalCoef*26+8], linearFitCalibrationData.offset, 4);
+                // read power fit data
+                linearFitCalibrationData.type = POWER_FIT_TYPE;
+                linearFitCalibrationData.gain_idx = i;
+                triumviFramCalibrateDataFitRead(&linearFitCalibrationData);
+                packData(&packetData[8+numCalCoef*26+12], linearFitCalibrationData.numerator, 4);
+                packData(&packetData[8+numCalCoef*26+16], linearFitCalibrationData.denumerator, 4);
+                packData(&packetData[8+numCalCoef*26+20], linearFitCalibrationData.offset, 4);
+                // read dc offset data
+                dc_offset_data = triumviFramDCOffsetRead(i);
+                packData(&packetData[8+numCalCoef*26+24], dc_offset_data, 2);
+                if ((numCalCoef==2) || (i==MAX_INA_GAIN_IDX)){
+                    packetbuf_copyfrom(packetData, 8+26*(numCalCoef+1));
+                    cc2538_on_and_transmit();
+                    CC2538_RF_CSP_ISRFOFF();
+                    clock_delay_usec(random_rand());
+                    clock_delay_usec(random_rand());
+                    packetData[7] = calDataValid & 0x01;
+                    numCalCoef = 0;
+                } else {
+                    numCalCoef += 1;
+                }
+            }
+        }
+    }
+}
